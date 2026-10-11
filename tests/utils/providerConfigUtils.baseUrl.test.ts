@@ -26,21 +26,6 @@ describe("extractProviderBaseUrl", () => {
       },
       "https://codex.example.com/v1",
     ],
-    [
-      "opencode / mcode",
-      { options: { baseURL: "https://opencode.example.com/v1" } },
-      "https://opencode.example.com/v1",
-    ],
-    [
-      "openclaw / pi",
-      { baseUrl: "https://openclaw.example.com/v1" },
-      "https://openclaw.example.com/v1",
-    ],
-    [
-      "hermes",
-      { base_url: "https://hermes.example.com/v1" },
-      "https://hermes.example.com/v1",
-    ],
   ])("reads the %s shape", (_app, settingsConfig, expected) => {
     expect(extractProviderBaseUrl(settingsConfig)).toBe(expected);
   });

@@ -88,8 +88,8 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
-fn pi_provider_deeplink_is_not_a_second_add_provider_entry() {
-    let url = "ccswitch://v1/import?resource=provider&app=pi&name=Pi";
+fn unknown_app_provider_deeplink_is_rejected() {
+    let url = "ccswitch://v1/import?resource=provider&app=not-an-app&name=Nope";
     assert!(parse_deeplink_url(url).is_err());
 }
 
@@ -861,10 +861,9 @@ fn test_parse_mcp_apps() {
     assert!(!apps.codex);
     assert!(apps.gemini);
 
-    let apps = parse_mcp_apps("grokbuild,opencode,hermes").unwrap();
+    let apps = parse_mcp_apps("grokbuild,gemini").unwrap();
     assert!(apps.grokbuild);
-    assert!(apps.opencode);
-    assert!(apps.hermes);
+    assert!(apps.gemini);
 
     let err = parse_mcp_apps("invalid").unwrap_err();
     assert!(err.to_string().contains("Invalid app"));

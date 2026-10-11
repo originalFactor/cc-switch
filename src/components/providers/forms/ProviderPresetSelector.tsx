@@ -11,11 +11,7 @@ import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
 import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
-import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
-import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
-import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
-import type { McodeProviderPreset } from "@/config/mcodeProviderPresets";
-import type { PiProviderPreset } from "@/config/piProviderPresets";
+import type { GrokBuildProviderPreset } from "@/config/grokBuildProviderPresets";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
@@ -67,11 +63,7 @@ export type AnyPreset =
   | CodexProviderPreset
   | GeminiProviderPreset
   | ClaudeDesktopProviderPreset
-  | OpenCodeProviderPreset
-  | OpenClawProviderPreset
-  | HermesProviderPreset
-  | PiProviderPreset
-  | McodeProviderPreset;
+  | GrokBuildProviderPreset;
 
 export type PresetEntry = {
   id: string;
@@ -225,17 +217,19 @@ function PresetIconBox({ preset }: { preset?: AnyPreset }) {
     );
   }
   let inner: React.ReactNode;
+  // Grok Build 的预设类型没有 theme 字段，按可选读取。
+  const theme = (preset as { theme?: { icon?: string } } | undefined)?.theme;
   if (!preset) {
     inner = (
       <SlidersHorizontal className="h-4 w-4 text-fg-2" strokeWidth={1.5} />
     );
-  } else if (preset.theme?.icon === "claude") {
+  } else if (theme?.icon === "claude") {
     inner = <ClaudeIcon size={16} />;
-  } else if (preset.theme?.icon === "codex") {
+  } else if (theme?.icon === "codex") {
     inner = <CodexIcon size={16} />;
-  } else if (preset.theme?.icon === "gemini") {
+  } else if (theme?.icon === "gemini") {
     inner = <GeminiIcon size={16} />;
-  } else if (preset.theme?.icon === "generic") {
+  } else if (theme?.icon === "generic") {
     inner = <Zap className="h-4 w-4 text-fg-2" strokeWidth={1.5} />;
   } else {
     inner = (

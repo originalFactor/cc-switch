@@ -198,7 +198,7 @@ describe("SkillsStorageSheet", () => {
         failedSkills: [{ directory: "pdf", error: "symlink failed" }],
       },
       {
-        app: "hermes",
+        app: "gemini",
         ok: false,
         error: "permission denied",
         failedSkills: [],
@@ -214,7 +214,7 @@ describe("SkillsStorageSheet", () => {
     const [title, options] = m.toastWarning.mock.calls[0];
     expect(title).toBe("skills.storageSheet.resyncPartial");
     expect(options.description).toContain("Codex");
-    expect(options.description).toContain("Hermes: permission denied");
+    expect(options.description).toContain("Gemini CLI: permission denied");
     expect(m.toastSuccess).not.toHaveBeenCalled();
   });
 

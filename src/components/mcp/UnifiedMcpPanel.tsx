@@ -84,14 +84,7 @@ const IMPORT_SOURCE_FILES: Record<
   codex: { file: "~/.codex/config.toml" },
   gemini: { file: "~/.gemini/settings.json" },
   grokbuild: { file: "~/.grok/config.toml" },
-  opencode: { file: "~/.config/opencode/opencode.json" },
-  hermes: { file: "~/.hermes/config.yaml" },
-  pi: { file: "~/.pi/agent/mcp.json" },
-  mcode: { file: "~/.minimax/mcp.json" },
 };
-
-/** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
-const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set(["mcode", "pi"]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
 interface WriteFailure {
@@ -113,7 +106,7 @@ interface ImportReport {
 
 /**
  * MCP 全局页（v7）：页头 + 应用矩阵 + 添加 / 编辑抽屉。
- * 以这里为准写进勾选的应用；不支持的应用（Claude Desktop、OpenClaw）没有列。
+ * 以这里为准写进勾选的应用；不支持的应用（Claude Desktop）没有列。
  */
 const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   onInteractionBlockedChange,
@@ -292,8 +285,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   };
 
   /**
-   * 记下重新同步的逐应用结果。成功的应用清掉它的失败记录——数据库里的开关已经写进去了；
-   * MiniMax Code 例外：它写失败时开关没有入库，重新同步补不上，行上的失败要留着按想要的值重试。
+   * 记下重新同步的逐应用结果。成功的应用清掉它的失败记录——数据库里的开关已经写进去了。
    */
   const applyResyncOutcomes = (outcomes: McpAppSyncOutcome[]) => {
     const okApps = new Set<McpAppId>();
@@ -312,40 +304,27 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       const next = { ...prev };
       for (const key of Object.keys(next)) {
         const app = key.split("\u0000")[1] as McpAppId;
-        if (okApps.has(app) && !WRITE_THEN_SAVE_APPS.has(app)) delete next[key];
+        if (okApps.has(app)) delete next[key];
       }
       return next;
     });
     return outcomes.filter((outcome) => !outcome.ok);
   };
 
-  const rowFailsFor = (app: McpAppId) =>
-    Object.entries(fails).filter(([key]) => key.endsWith(`\u0000${app}`));
-
   const retryApp = async (app: McpAppId) => {
     if (!beginWrite()) return;
     try {
-      const entries = rowFailsFor(app);
       let ok = true;
-      if (WRITE_THEN_SAVE_APPS.has(app) && entries.length > 0) {
-        // MiniMax Code / Pi 写失败时开关没入库：按每行想要的值再写一次
-        for (const [key, failure] of entries) {
-          const id = key.split("\u0000")[0];
-          const { failed } = await writeMany([{ id, app }], failure.desired);
-          if (failed) ok = false;
-        }
-      } else {
-        // 其余应用的开关已经入库：按这里的开关把这个应用整个重写一遍
-        try {
-          const outcomes = await resyncMutation.mutateAsync([app]);
-          ok = applyResyncOutcomes(outcomes).length === 0;
-        } catch (error) {
-          ok = false;
-          setAppFails((prev) => ({
-            ...prev,
-            [app]: extractErrorMessage(error) || String(error),
-          }));
-        }
+      // 应用的开关已经入库：按这里的开关把这个应用整个重写一遍
+      try {
+        const outcomes = await resyncMutation.mutateAsync([app]);
+        ok = applyResyncOutcomes(outcomes).length === 0;
+      } catch (error) {
+        ok = false;
+        setAppFails((prev) => ({
+          ...prev,
+          [app]: extractErrorMessage(error) || String(error),
+        }));
       }
       if (ok) {
         toast.success(

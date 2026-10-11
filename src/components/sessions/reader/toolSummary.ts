@@ -177,22 +177,6 @@ const RAW_NAME_VERBS: Partial<Record<ReaderStyleId, Record<string, string>>> = {
   // Claude Code CLI 把 Edit 显示为 Update
   claude: { Edit: "Update", MultiEdit: "Update" },
   gemini: { google_web_search: "GoogleSearch" },
-  opencode: { glob: "Glob", list: "List", websearch: "WebSearch" },
-};
-
-/** OpenCode TUI 的工具前缀符号 */
-const OPENCODE_ICONS: Record<ToolKind, string> = {
-  shell: "$",
-  read: "→",
-  search: "✱",
-  edit: "←",
-  write: "←",
-  web: "%",
-  mcp: "⚙",
-  agent: "│",
-  ask: "→",
-  todo: "⚙",
-  other: "⚙",
 };
 
 const PATH_KINDS: ReadonlySet<ToolKind> = new Set([
@@ -254,7 +238,7 @@ export const formatStepTitle = (
     target += detail;
     detail = undefined;
   }
-  if (call.kind === "mcp" && style.titleFormat !== "icon") {
+  if (call.kind === "mcp") {
     // MCP 的对象是 server.tool，参数首个字段放进括号
     if (style.titleFormat === "call") {
       verb = call.title;
@@ -273,9 +257,6 @@ export const formatStepTitle = (
   let text: string;
   if (style.titleFormat === "call") {
     text = target ? `${verb}(${target})` : verb;
-  } else if (style.titleFormat === "icon") {
-    icon = call.rawName === "websearch" ? "◈" : OPENCODE_ICONS[call.kind];
-    text = [icon, verb, target].filter(Boolean).join(" ");
   } else {
     text = target ? `${verb} ${target}` : verb;
   }
@@ -323,9 +304,6 @@ export interface StepMeta {
   /** 输出行数（有 diff 计数时不给） */
   lineCount?: number;
   diff?: { added: number; removed: number; files: number };
-  /** OpenCode 每步 tokens / 费用（showStepCost） */
-  tokens?: number;
-  costUsd?: number;
 }
 
 const STATUS_TONE: Record<ToolStatus, StatusTone> = {
@@ -357,7 +335,7 @@ export const formatStepMeta = (
     if (total > 0) meta.durationMs = total;
     return meta;
   }
-  const { call, result, cost } = step;
+  const { call, result } = step;
   const exitCode = result?.exitCode;
   if (
     exitCode !== undefined &&
@@ -375,10 +353,6 @@ export const formatStepMeta = (
     };
   } else if (result && result.lineCount > 0) {
     meta.lineCount = result.lineCount;
-  }
-  if (style.showStepCost && cost) {
-    meta.tokens = cost.tokens;
-    meta.costUsd = cost.costUsd;
   }
   return meta;
 };
@@ -417,9 +391,6 @@ export interface TurnSummary {
   /** 提问到本轮最后一条消息的时长；没有时间戳时用各步耗时之和 */
   durationMs?: number;
   kindCounts: Partial<Record<ToolKind, number>>;
-  /** OpenCode step-finish 合计（决策 D13：摘要显示合计） */
-  tokens?: number;
-  costUsd?: number;
 }
 
 /** 轮内全部工具步骤（展开合并步骤） */
@@ -427,13 +398,6 @@ export const toolStepsOf = (turn: SessionTurn): ToolStep[] =>
   turn.steps.flatMap((step) =>
     step.kind === "merged" ? step.children : step.kind === "tool" ? [step] : [],
   );
-
-const sumDefined = (values: (number | undefined)[]) => {
-  const present = values.filter(
-    (value): value is number => value !== undefined,
-  );
-  return present.length ? present.reduce((a, b) => a + b, 0) : undefined;
-};
 
 /** 折叠摘要行：`执行过程 · N 步 · M 个命令 · 改了 K 个文件 · F 个失败 · ⏱ 2m14s` */
 export const summarizeTurn = (turn: SessionTurn): TurnSummary => {
@@ -470,7 +434,5 @@ export const summarizeTurn = (turn: SessionTurn): TurnSummary => {
     thinkingCount: turn.steps.filter((step) => step.kind === "thinking").length,
     durationMs,
     kindCounts,
-    tokens: sumDefined(turn.stepCosts.map((cost) => cost.tokens)),
-    costUsd: sumDefined(turn.stepCosts.map((cost) => cost.costUsd)),
   };
 };

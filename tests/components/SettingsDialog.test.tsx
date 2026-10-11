@@ -413,12 +413,12 @@ describe("SettingsPage", () => {
     const startNavigation = () => {
       const view = renderSettingsPage({
         section: "appConfig",
-        appConfigScrollTarget: "pi",
+        appConfigScrollTarget: "gemini",
       });
       const container =
         view.container.querySelector<HTMLDivElement>("#main-content")!;
       const target =
-        view.container.querySelector<HTMLElement>("#app-config-pi")!;
+        view.container.querySelector<HTMLElement>("#app-config-gemini")!;
       Object.defineProperties(container, {
         clientHeight: { value: 500 },
         scrollHeight: { value: 1500 },

@@ -24,10 +24,6 @@ const DIRECTORY_FIELD: Record<DirectoryAppId, keyof Settings> = {
   codex: "codexConfigDir",
   gemini: "geminiConfigDir",
   grokbuild: "grokConfigDir",
-  opencode: "opencodeConfigDir",
-  openclaw: "openclawConfigDir",
-  hermes: "hermesConfigDir",
-  pi: "piConfigDir",
 };
 
 const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
@@ -35,10 +31,6 @@ const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
   codex: "settings.browsePlaceholderCodex",
   gemini: "settings.browsePlaceholderGemini",
   grokbuild: "settings.browsePlaceholderGrok",
-  opencode: "settings.browsePlaceholderOpencode",
-  openclaw: "settings.browsePlaceholderOpenclaw",
-  hermes: "settings.browsePlaceholderHermes",
-  pi: "settings.browsePlaceholderPi",
 };
 
 const DIRECTORY_APPS: DirectoryAppId[] = [
@@ -46,10 +38,6 @@ const DIRECTORY_APPS: DirectoryAppId[] = [
   "codex",
   "gemini",
   "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
 ];
 
 const normalizeDir = (value: unknown) =>

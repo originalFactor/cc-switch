@@ -131,7 +131,7 @@ const createPrompts = (): Record<string, Prompt> => ({
   },
 });
 
-const APPS: AppId[] = ["claude", "codex", "gemini", "hermes"];
+const APPS: AppId[] = ["claude", "codex", "gemini", "grokbuild"];
 
 function Harness(props: Partial<PromptPanelProps> & { client: QueryClient }) {
   const { client, ...rest } = props;
@@ -378,8 +378,8 @@ describe("PromptPanel", () => {
     expect(within(menu).getByText("prompts.deleteBlocked")).toBeInTheDocument();
   });
 
-  it("disabling says the file was emptied and undo re-enables it", async () => {
-    renderPanel({ appId: "hermes" });
+  it("disabling reports it and undo re-enables it", async () => {
+    renderPanel({ appId: "codex" });
     await waitForPanelReady();
 
     fireEvent.click(disableButton("Aurora Prompt"));
@@ -387,15 +387,13 @@ describe("PromptPanel", () => {
     await waitFor(() =>
       expect(mocks.toastSuccess).toHaveBeenCalledWith(
         "prompts.toast.disabled:Aurora Prompt",
-        expect.objectContaining({
-          description: "prompts.toast.hermesOff",
-        }),
+        expect.objectContaining({ closeButton: true }),
       ),
     );
     act(() => lastUndo()?.());
     await waitFor(() =>
       expect(promptsApi.enablePrompt).toHaveBeenCalledWith(
-        "hermes",
+        "codex",
         "record-index-47",
       ),
     );
@@ -496,7 +494,7 @@ describe("PromptPanel", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("copies a prompt to other apps, leaving Hermes unchecked by default", async () => {
+  it("copies a prompt to other apps, leaving apps with a same-name prompt unchecked", async () => {
     vi.mocked(promptsApi.getPrompts).mockImplementation(
       async (app): Promise<Record<string, Prompt>> =>
         app === "codex"
@@ -523,7 +521,6 @@ describe("PromptPanel", () => {
       expect(within(dialog).getByLabelText(/Gemini CLI/)).toBeChecked(),
     );
     expect(within(dialog).getByLabelText(/Codex/)).not.toBeChecked();
-    expect(within(dialog).getByLabelText(/Hermes/)).not.toBeChecked();
     expect(
       within(dialog).getByText("prompts.copyDialog.sameName"),
     ).toBeInTheDocument();
@@ -543,7 +540,13 @@ describe("PromptPanel", () => {
         }),
       ),
     );
-    expect(promptsApi.upsertPrompt).toHaveBeenCalledTimes(1);
+    // 没勾的应用不写：Codex 已有同名条目，默认不勾
+    expect(promptsApi.upsertPrompt).toHaveBeenCalledWith(
+      "grokbuild",
+      expect.any(String),
+      expect.objectContaining({ name: "Harbor Prompt" }),
+    );
+    expect(promptsApi.upsertPrompt).toHaveBeenCalledTimes(2);
   });
 
   it("serializes toggle writes and reports the interaction as blocked", async () => {
@@ -819,12 +822,12 @@ describe("PromptPanel", () => {
     });
   });
 
-  it("uses the Hermes rule in the page help", async () => {
-    renderPanel({ appId: "hermes" });
+  it("shows the page help", async () => {
+    renderPanel();
     await waitForPanelReady();
 
     expect(
-      screen.getByRole("button", { name: "prompts.helpHermesTitle" }),
+      screen.getByRole("button", { name: "prompts.helpTitle" }),
     ).toBeInTheDocument();
   });
 
@@ -835,8 +838,8 @@ describe("PromptPanel", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: /Claude Code/ }));
-    await user.click(await screen.findByRole("button", { name: /Hermes/ }));
+    await user.click(await screen.findByRole("button", { name: /Gemini CLI/ }));
 
-    expect(onAppChange).toHaveBeenCalledWith("hermes");
+    expect(onAppChange).toHaveBeenCalledWith("gemini");
   });
 });

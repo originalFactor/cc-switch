@@ -217,27 +217,8 @@ describe("SessionReader", () => {
       ).toBeInTheDocument();
     });
 
-    it("OpenCode：$ / → 图标标题，摘要合计 tokens 与费用", () => {
-      renderReader("opencode", fixtures.opencode);
-      expect(stepButton(/\$ bunx biome --version/)).toHaveAttribute(
-        "aria-expanded",
-        "true",
-      );
-      const summaries = screen.getAllByRole("button", {
-        name: /执行过程/,
-      });
-      expect(summaries[0].textContent).toMatch(/tok/);
-      expect(summaries[0].textContent).toMatch(/\$0\.0\d+/);
-    });
-
-    it("Pi：小写动词与 ● 状态符", () => {
-      renderReader("pi", fixtures.pi);
-      const failed = stepButton(/bash pnpm test -- LoginButton（失败）/);
-      expect(within(failed).getByText("●")).toBeInTheDocument();
-    });
-
     it("其余来源用通用动词（i18n）", () => {
-      renderReader("hermes", fixtures.generic);
+      renderReader("generic", fixtures.generic);
       fireEvent.click(
         screen.getAllByRole("button", { name: /^展开执行过程/ })[0],
       );

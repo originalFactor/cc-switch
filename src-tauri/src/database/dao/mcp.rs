@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -23,8 +23,6 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let enabled_codex: bool = row.get(8)?;
     let enabled_gemini: bool = row.get(9)?;
     let enabled_grokbuild: bool = row.get(10)?;
-    let enabled_opencode: bool = row.get(11)?;
-    let enabled_hermes: bool = row.get(12)?;
 
     let server = serde_json::from_str(&server_config_str).unwrap_or_default();
     let tags = serde_json::from_str(&tags_str).unwrap_or_default();
@@ -40,10 +38,6 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 codex: enabled_codex,
                 gemini: enabled_gemini,
                 grokbuild: enabled_grokbuild,
-                opencode: enabled_opencode,
-                hermes: enabled_hermes,
-                mcode: row.get(13)?,
-                pi: row.get(14)?,
             },
             description,
             homepage,
@@ -90,12 +84,8 @@ impl Database {
             AppType::Codex => Some("enabled_codex"),
             AppType::Gemini => Some("enabled_gemini"),
             AppType::GrokBuild => Some("enabled_grokbuild"),
-            AppType::OpenCode => Some("enabled_opencode"),
-            AppType::Hermes => Some("enabled_hermes"),
-            // These applications intentionally have no MCP flag in the SSOT.
-            AppType::Mcode => Some("enabled_mcode"),
-            AppType::Pi => Some("enabled_pi"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            // This application intentionally has no MCP flag in the SSOT.
+            AppType::ClaudeDesktop => None,
         };
 
         if let Some(column) = column {
@@ -124,8 +114,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 server.id,
                 server.name,
@@ -141,10 +131,6 @@ impl Database {
                 server.apps.codex,
                 server.apps.gemini,
                 server.apps.grokbuild,
-                server.apps.opencode,
-                server.apps.hermes,
-                server.apps.mcode,
-                server.apps.pi,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -263,24 +249,11 @@ mod tests {
         let original = test_server();
         db.save_mcp_server(&original).expect("seed server");
 
-        for app in [AppType::ClaudeDesktop, AppType::OpenClaw] {
-            let returned = db
-                .update_mcp_server_app_enabled("shared-server", &app, true)
-                .expect("toggle unsupported app")
-                .expect("server exists");
-            assert_eq!(returned.apps, original.apps);
-        }
-    }
-
-    #[test]
-    fn pi_mcp_flag_round_trips_through_the_database() {
-        let db = Database::memory().expect("create memory db");
-        db.save_mcp_server(&test_server()).expect("seed server");
+        let app = AppType::ClaudeDesktop;
         let returned = db
-            .update_mcp_server_app_enabled("shared-server", &AppType::Pi, true)
-            .expect("toggle pi")
+            .update_mcp_server_app_enabled("shared-server", &app, true)
+            .expect("toggle unsupported app")
             .expect("server exists");
-        assert!(returned.apps.pi);
-        assert!(db.get_all_mcp_servers().unwrap()["shared-server"].apps.pi);
+        assert_eq!(returned.apps, original.apps);
     }
 }

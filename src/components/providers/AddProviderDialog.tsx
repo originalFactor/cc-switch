@@ -33,7 +33,6 @@ import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPres
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
-import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { ManagedAuthProvider } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
@@ -44,8 +43,6 @@ interface AddProviderDialogProps {
   appId: AppId;
   onSubmit: (
     provider: Omit<Provider, "id"> & {
-      providerKey?: string;
-      suggestedDefaults?: OpenClawSuggestedDefaults;
       ensureClaudeDesktopOfficialSeed?: boolean;
       ensureGrokBuildOfficialSeed?: boolean;
       editorSave?: ProviderEditorSave;
@@ -63,15 +60,7 @@ export function AddProviderDialog({
   modeView,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode and OpenClaw don't support universal providers
-  const showUniversalTab =
-    appId !== "opencode" &&
-    appId !== "openclaw" &&
-    appId !== "hermes" &&
-    appId !== "pi" &&
-    appId !== "mcode" &&
-    appId !== "grokbuild" &&
-    appId !== "claude-desktop";
+  const showUniversalTab = appId !== "grokbuild" && appId !== "claude-desktop";
   // 两步：先选预设，再填写（每次打开都从第 1 步开始）
   const [step, setStep] = useState<"pick" | "form">("pick");
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
@@ -172,28 +161,6 @@ export function AddProviderDialog({
     }
     closeDialog();
   }, [authSettingsTarget, closeDialog, step]);
-  const formReadyToken = useMemo(
-    () => Symbol("provider-form-ready"),
-    [appId, open],
-  );
-  const currentFormReadyToken = useRef(formReadyToken);
-  currentFormReadyToken.current = formReadyToken;
-  const [formReadyState, setFormReadyState] = useState({
-    token: formReadyToken,
-    ready: appId !== "pi",
-  });
-  const isFormReady =
-    formReadyState.token === formReadyToken
-      ? formReadyState.ready
-      : appId !== "pi";
-  const handleSubmitReadyChange = useCallback(
-    (ready: boolean) => {
-      if (currentFormReadyToken.current === formReadyToken) {
-        setFormReadyState({ token: formReadyToken, ready });
-      }
-    },
-    [formReadyToken],
-  );
 
   const handleUniversalProviderSave = useCallback(
     async (provider: UniversalProvider) => {
@@ -252,8 +219,6 @@ export function AddProviderDialog({
 
       // 构造基础提交数据
       const providerData: Omit<Provider, "id"> & {
-        providerKey?: string;
-        suggestedDefaults?: OpenClawSuggestedDefaults;
         ensureClaudeDesktopOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
       } = {
@@ -282,23 +247,11 @@ export function AddProviderDialog({
           values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID;
       }
 
-      // Apps whose native catalog has a stable provider key use it as the
-      // managed provider identity.
-      if (
-        (appId === "opencode" ||
-          appId === "openclaw" ||
-          appId === "hermes" ||
-          appId === "pi" ||
-          appId === "mcode") &&
-        values.providerKey
-      ) {
-        providerData.providerKey = values.providerKey;
-      }
       const hasCustomEndpoints =
         providerData.meta?.custom_endpoints &&
         Object.keys(providerData.meta.custom_endpoints).length > 0;
 
-      if (!hasCustomEndpoints && values.presetCategory !== "omo") {
+      if (!hasCustomEndpoints) {
         const urlSet = new Set<string>();
 
         const addUrl = (rawUrl?: string) => {
@@ -399,22 +352,6 @@ export function AddProviderDialog({
           if (config) {
             addUrl(extractGrokBuildBaseUrl(config));
           }
-        } else if (appId === "opencode") {
-          const options = parsedConfig.options as
-            | Record<string, any>
-            | undefined;
-          if (options?.baseURL) {
-            addUrl(options.baseURL);
-          }
-        } else if (appId === "openclaw") {
-          // OpenClaw uses baseUrl directly
-          if (parsedConfig.baseUrl) {
-            addUrl(parsedConfig.baseUrl as string);
-          }
-        } else if (appId === "hermes") {
-          if (parsedConfig.base_url) {
-            addUrl(parsedConfig.base_url as string);
-          }
         }
 
         const urls = Array.from(urlSet);
@@ -434,11 +371,6 @@ export function AddProviderDialog({
             custom_endpoints: customEndpoints,
           };
         }
-      }
-
-      // OpenClaw: pass suggestedDefaults for model registration
-      if (appId === "openclaw" && values.suggestedDefaults) {
-        providerData.suggestedDefaults = values.suggestedDefaults;
       }
 
       const editorBase =
@@ -493,7 +425,7 @@ export function AddProviderDialog({
           form="provider-form"
           variant="solid"
           size="regular"
-          disabled={isFormSubmitting || !isFormReady}
+          disabled={isFormSubmitting}
         >
           {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
           {t("common.add")}
@@ -511,7 +443,6 @@ export function AddProviderDialog({
       onCancel={closeDialog}
       onManageAuthAccounts={setAuthSettingsTarget}
       onSubmittingChange={setIsFormSubmitting}
-      onSubmitReadyChange={handleSubmitReadyChange}
       showButtons={false}
       claudeLiveBase={
         appId === "claude" ? (claudeLiveBase ?? undefined) : undefined
@@ -552,11 +483,7 @@ export function AddProviderDialog({
       onClose={handlePanelClose}
       footer={footer}
       contentClassName={
-        step === "pick"
-          ? "flex h-full flex-col space-y-0 p-0"
-          : appId === "pi"
-            ? "pb-0 pt-4"
-            : "pt-4"
+        step === "pick" ? "flex h-full flex-col space-y-0 p-0" : "pt-4"
       }
     >
       <PresetStepContext.Provider value={stepState}>

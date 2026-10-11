@@ -3620,7 +3620,7 @@ mod tests {
         for raw in [
             include_str!("../../../../tests/fixtures/sessions/codex.messages.json"),
             include_str!("../../../../tests/fixtures/sessions/claude.messages.json"),
-            include_str!("../../../../tests/fixtures/sessions/opencode.messages.json"),
+            include_str!("../../../../tests/fixtures/sessions/gemini.messages.json"),
         ] {
             let fixture: Value = serde_json::from_str(raw).unwrap();
             for block in fixture

@@ -135,49 +135,6 @@ describe("buildTurns · 6 份契约 fixture", () => {
     expect(rows.every((row) => row.turn !== 0)).toBe(true);
   });
 
-  it("OpenCode：step-finish 费用落到该段最后一步，纯文本段落到最终回复", () => {
-    const [t1, t2] = turnsOf("opencode");
-    expect(t1.stepCosts.map((cost) => cost.tokens)).toEqual([
-      18734, 21960, 22410,
-    ]);
-    const tools = t1.steps.filter((step) => step.kind === "tool");
-    expect(tools[0].cost).toMatchObject({ tokens: 18734, costUsd: 0.0123 });
-    expect(tools[1].cost).toBeUndefined();
-    expect(tools[3].cost).toMatchObject({ tokens: 21960 });
-    expect(t1.final?.cost).toMatchObject({ tokens: 22410, reason: "stop" });
-
-    // 提问消息里的 @agent 事件算提问前的事件
-    expect(t2.leadingEvents.map((e) => e.block.kind)).toEqual(["other"]);
-    expect(t2.final).toBeUndefined();
-    expect(t2.steps.at(-1)?.cost).toMatchObject({ tokens: 30112 });
-  });
-
-  it("Pi：用户自己跑的命令单步成功直接显示；中断轮也有最终回复", () => {
-    const turns = turnsOf("pi");
-    expect(turns[0].leadingEvents.map((e) => e.block.kind)).toEqual([
-      "model_change",
-      "thinking_level",
-    ]);
-    const userBash = turns[2];
-    expect(userBash.question).toBeUndefined();
-    expect(userBash.steps).toHaveLength(1);
-    expect(userBash.steps[0]).toMatchObject({
-      kind: "tool",
-      status: "success",
-      call: { byUser: true },
-    });
-    const aborted = turns[3];
-    expect(aborted.aborted).toBe(true);
-    expect(aborted.final?.text).toContain("text-gray-800");
-    expect(aborted.trailingEvents.map((e) => e.block.kind)).toEqual([
-      "aborted",
-      "compaction",
-    ]);
-    expect(turns[4].trailingEvents.map((e) => e.block.text)).toEqual([
-      "truncated",
-    ]);
-  });
-
   it("generic：无配对的结果成通用「工具输出」步骤；纯对话轮没有过程", () => {
     const [t1, t2, t3] = turnsOf("generic");
     expect(t1.steps.map((step) => step.kind)).toEqual(["note", "tool", "tool"]);
@@ -470,20 +427,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     ]);
     expect(turn.steps[1]).toMatchObject({ body: "more" });
     expect(turn.trailingEvents.map((e) => e.block.kind)).toEqual(["error"]);
-  });
-
-  it("step-finish 段内没有步骤也没有最终回复：只计入轮费用", () => {
-    const [turn] = buildTurns([
-      msg("user", [text("q")]),
-      msg("assistant", [
-        { type: "step", phase: "start" },
-        { type: "step", phase: "finish", tokens: 5, costUsd: 0.5 },
-      ]),
-    ]);
-    expect(turn.final).toBeUndefined();
-    expect(turn.stepCosts).toEqual([
-      { tokens: 5, costUsd: 0.5, reason: undefined },
-    ]);
   });
 });
 

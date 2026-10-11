@@ -7,7 +7,7 @@ import {
   type Range,
 } from "@tanstack/react-virtual";
 import { toast } from "@/lib/toast";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   ChevronDown,
@@ -17,17 +17,15 @@ import {
 } from "lucide-react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import {
-  piKeys,
   useDeleteSessionMutation,
   useSessionsQuery,
   useSettingsQuery,
 } from "@/lib/query";
-import { piApi, sessionsApi, type AppId } from "@/lib/api";
+import { sessionsApi, type AppId } from "@/lib/api";
 import type { SessionMeta } from "@/types";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
-import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   DropdownMenu,
@@ -185,13 +183,6 @@ export function SessionManagerPage({
       // 同上
     }
   }, [expanded]);
-
-  const piSessionDiscovery = useQuery({
-    queryKey: piKeys.sessionDiscovery,
-    queryFn: () => piApi.getSessionDiscovery(),
-    enabled: appFilter === "pi",
-    staleTime: 30 * 1000,
-  });
 
   // 下拉里只列「应用」页设为显示的应用；Claude Code 的会话在 Claude Desktop 显示时也算
   const availableApps = useMemo(() => {
@@ -927,8 +918,6 @@ export function SessionManagerPage({
     );
   };
 
-  const piStatus = piSessionDiscovery.data?.status;
-
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
@@ -1204,39 +1193,6 @@ export function SessionManagerPage({
             </p>
           )}
 
-          {appFilter === "pi" && piStatus === "requires_project_context" && (
-            <div role="status" className="mx-6 mt-3 shrink-0">
-              <Notice
-                tone="warning"
-                title={
-                  <>
-                    {t("sessionManager.piRelativeSessionDir")}{" "}
-                    <code className="font-mono text-caption">
-                      {piSessionDiscovery.data?.status ===
-                      "requires_project_context"
-                        ? piSessionDiscovery.data.configuredPath
-                        : ""}
-                    </code>
-                  </>
-                }
-              />
-            </div>
-          )}
-          {appFilter === "pi" &&
-            (piStatus === "unavailable" || piSessionDiscovery.isError) && (
-              <div role="alert" className="mx-6 mt-3 shrink-0">
-                <Notice
-                  tone="danger"
-                  title={t("sessionManager.piDiscoveryUnavailable", {
-                    error:
-                      piSessionDiscovery.data?.status === "unavailable"
-                        ? piSessionDiscovery.data.reason
-                        : extractErrorMessage(piSessionDiscovery.error),
-                  })}
-                />
-              </div>
-            )}
-
           {selectionMode && (
             <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap px-6 pt-2 text-caption text-fg-2">
               <span className="tabular-nums">
@@ -1312,13 +1268,6 @@ export function SessionManagerPage({
               >
                 {renderList()}
               </div>
-              {appFilter === "hermes" && (
-                <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-3">
-                  {t("sessionManager.hermesLimit", {
-                    defaultValue: "Hermes 只显示最近 500 个会话",
-                  })}
-                </p>
-              )}
               <div className="flex-1" />
             </>
           )}

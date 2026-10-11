@@ -30,10 +30,7 @@ pub enum ToolSource {
     Claude,
     Codex,
     Gemini,
-    OpenCode,
-    /// Pi 与 OpenClaw（同构）
-    Pi,
-    /// Hermes / Grok Build 等：按名称关键字推断
+    /// Grok Build 等：按名称关键字推断
     Generic,
 }
 
@@ -117,33 +114,6 @@ pub fn normalize_tool(
                 let server = name.split('/').next().unwrap_or_default();
                 return NormalizedTool::mcp(server);
             }
-            _ => Other,
-        },
-        ToolSource::OpenCode => match raw_name {
-            "bash" => Shell,
-            "read" => Read,
-            "grep" | "glob" | "list" | "ast_grep_search" | "codesearch" => Search,
-            "edit" | "patch" => Edit,
-            "write" => Write,
-            "webfetch" | "websearch" => Web,
-            "task" | "background_output" | "background_cancel" => Agent,
-            "question" => Ask,
-            "todowrite" | "todoread" => Todo,
-            "invalid" => Other,
-            // 待核实：OpenCode 的 MCP 工具名形如 `server_tool`（内置表之外含 `_` 的名字）
-            name if name.contains('_') => {
-                let server = name.split('_').next().unwrap_or_default();
-                return NormalizedTool::mcp(server);
-            }
-            _ => Other,
-        },
-        ToolSource::Pi => match raw_name {
-            "bash" | "bashExecution" => Shell,
-            "read" => Read,
-            "grep" | "find" | "ls" => Search,
-            "edit" => Edit,
-            "write" => Write,
-            "fetch" => Web,
             _ => Other,
         },
         ToolSource::Generic => generic_kind(raw_name),
@@ -851,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_tool_gemini_opencode_pi_generic() {
+    fn normalize_tool_gemini_and_generic() {
         use ToolKind::*;
         assert_eq!(kind(ToolSource::Gemini, "run_shell_command"), Shell);
         assert_eq!(kind(ToolSource::Gemini, "read_many_files"), Read);
@@ -863,23 +833,6 @@ mod tests {
             normalize_tool(ToolSource::Gemini, "github/search_issues", None),
             NormalizedTool::mcp("github")
         );
-
-        assert_eq!(kind(ToolSource::OpenCode, "bash"), Shell);
-        assert_eq!(kind(ToolSource::OpenCode, "ast_grep_search"), Search);
-        assert_eq!(kind(ToolSource::OpenCode, "patch"), Edit);
-        assert_eq!(kind(ToolSource::OpenCode, "background_output"), Agent);
-        assert_eq!(kind(ToolSource::OpenCode, "question"), Ask);
-        assert_eq!(kind(ToolSource::OpenCode, "todowrite"), Todo);
-        assert_eq!(kind(ToolSource::OpenCode, "invalid"), Other);
-        assert_eq!(
-            normalize_tool(ToolSource::OpenCode, "context7_resolve-library-id", None),
-            NormalizedTool::mcp("context7")
-        );
-
-        assert_eq!(kind(ToolSource::Pi, "bashExecution"), Shell);
-        assert_eq!(kind(ToolSource::Pi, "ls"), Search);
-        assert_eq!(kind(ToolSource::Pi, "fetch"), Web);
-        assert_eq!(kind(ToolSource::Pi, "custom"), Other);
 
         assert_eq!(kind(ToolSource::Generic, "terminal"), Shell);
         assert_eq!(kind(ToolSource::Generic, "read_file"), Read);
@@ -1095,7 +1048,7 @@ mod tests {
             ..SessionMessage::default()
         };
         let q = || vec![SessionBlock::text("q")];
-        let by_user = tool_call_block(ToolSource::Pi, "u1", "bash", &json!({}), || None);
+        let by_user = tool_call_block(ToolSource::Claude, "u1", "bash", &json!({}), || None);
         let mut messages = vec![
             msg("system", false, q()),
             msg("user", false, q()),

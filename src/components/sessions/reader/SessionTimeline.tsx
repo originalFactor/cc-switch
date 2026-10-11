@@ -4,12 +4,7 @@ import { ChevronRight, Copy } from "lucide-react";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
 import { useReaderT } from "./i18n";
-import {
-  formatCost,
-  formatDuration,
-  formatTokens,
-  type TurnSummary,
-} from "./toolSummary";
+import { formatDuration, type TurnSummary } from "./toolSummary";
 
 export interface SessionTimelineProps {
   turnKey: string;
@@ -68,15 +63,6 @@ export const SessionTimeline = memo(function SessionTimeline({
         duration: formatDuration(summary.durationMs),
       }),
     });
-  }
-  if (summary.tokens !== undefined) {
-    parts.push({
-      key: "tok",
-      text: rt("summaryTokens", { tokens: formatTokens(summary.tokens) }),
-    });
-  }
-  if (summary.costUsd !== undefined) {
-    parts.push({ key: "cost", text: formatCost(summary.costUsd) });
   }
   const steps = summary.stepCount || stepTotal;
   const actionLabel = expanded ? rt("collapseTimeline") : rt("expandTimeline");

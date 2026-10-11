@@ -113,7 +113,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT** (single source of truth): providers, MCP, prompts, Skills, projects, usage, and other data are all stored in `~/.cc-switch/cc-switch.db` (SQLite)
 - **Device-level settings**: settings that belong to this machine only, such as directory overrides and backup policy, are stored in `~/.cc-switch/settings.json` and are not cloud-synced
-- **Two write modes**: for switch-mode tools (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), switching first backfills the current live config into the current provider (except for Claude Desktop), then writes the new provider; for coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code), all providers coexist in a single live file and nothing is backfilled
+- **Two write modes**: for switch-mode tools (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), switching first backfills the current live config into the current provider (except for Claude Desktop), then writes the new provider
 - **Atomic writes**: all live configs are written via "temp file + rename" to avoid corruption
 - **Concurrency safety**: the database connection is protected by a Mutex to avoid race conditions
 - **Layered architecture**: Commands (parameter validation and forwarding) → Services (business logic) → DAO → Database; the Commands layer stays thin
@@ -143,7 +143,7 @@ Backend (Tauri 2 + Rust)
 ```
 ├── src/                      # Frontend (React + TypeScript)
 │   ├── components/           # One directory per feature: providers, mcp, prompts, skills, sessions,
-│   │                         #   proxy, usage, profiles, hermes, openclaw, workspace, settings, ui, etc.
+│   │                         #   proxy, usage, profiles, workspace, settings, ui, etc.
 │   ├── config/               # Provider presets per tool (*ProviderPresets.ts), MCP presets
 │   ├── hooks/                # Custom hooks (business logic)
 │   ├── lib/api/              # Tauri invoke wrappers (lib/query/ holds the TanStack Query config)
@@ -160,7 +160,7 @@ Backend (Tauri 2 + Rust)
 │   │   ├── mcp/              # MCP sync for each tool
 │   │   ├── session_manager/  # Session scanning and terminal resume
 │   │   ├── deeplink/         # ccswitch:// protocol
-│   │   └── *_config.rs, pi_config/  # Live config read/write for each tool
+│   │   └── *_config.rs        # Live config read/write for each tool
 │   └── tests/                # Backend integration tests
 ├── tests/                    # Frontend tests (vitest)
 ├── docs/                     # User manual, guides, release notes
@@ -368,7 +368,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT**（单一事实源）：供应商、MCP、提示词、Skills、项目和用量等数据都存储在 `~/.cc-switch/cc-switch.db`（SQLite）
 - **设备级设置**：目录覆盖、备份策略等只属于本机的设置存放在 `~/.cc-switch/settings.json`，不参与云同步
-- **两种写入模式**：切换式工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）切换时，先把当前 live 配置回填到当前供应商（Claude Desktop 除外），再写入新供应商；共存式工具（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code）的所有供应商共存于同一个 live 文件，不做回填
+- **两种写入模式**：切换式工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）切换时，先把当前 live 配置回填到当前供应商（Claude Desktop 除外），再写入新供应商
 - **原子写入**：所有 live 配置都通过“临时文件 + 重命名”写入，避免配置损坏
 - **并发安全**：数据库连接由 Mutex 保护，避免竞态条件
 - **分层架构**：Commands（参数校验与转发）→ Services（业务逻辑）→ DAO → Database，Commands 层保持精简
@@ -398,7 +398,7 @@ Backend (Tauri 2 + Rust)
 ```
 ├── src/                      # 前端（React + TypeScript）
 │   ├── components/           # 按功能分目录：providers、mcp、prompts、skills、sessions、
-│   │                         #   proxy、usage、profiles、hermes、openclaw、workspace、settings、ui 等
+│   │                         #   proxy、usage、profiles、workspace、settings、ui 等
 │   ├── config/               # 各工具的供应商预设（*ProviderPresets.ts）、MCP 预设
 │   ├── hooks/                # 自定义 hooks（业务逻辑）
 │   ├── lib/api/              # Tauri invoke 封装（lib/query/ 为 TanStack Query 配置）
@@ -415,7 +415,7 @@ Backend (Tauri 2 + Rust)
 │   │   ├── mcp/              # 各工具的 MCP 同步
 │   │   ├── session_manager/  # 会话扫描与终端恢复
 │   │   ├── deeplink/         # ccswitch:// 协议
-│   │   └── *_config.rs、pi_config/  # 各工具 live 配置的读写
+│   │   └── *_config.rs        # 各工具 live 配置的读写
 │   └── tests/                # 后端集成测试
 ├── tests/                    # 前端测试（vitest）
 ├── docs/                     # 用户手册、使用攻略、发布说明

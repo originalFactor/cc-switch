@@ -94,7 +94,7 @@ describe("McpFormModal (drawer)", () => {
       name: "my-server",
       server: { type: "stdio", command: "uvx", args: ["mcp-server-fetch"] },
     });
-    expect(entry.apps).toMatchObject({ ...ALL_ON, openclaw: false });
+    expect(entry.apps).toMatchObject(ALL_ON);
     expect(onSave).toHaveBeenCalled();
   });
 
@@ -186,7 +186,7 @@ describe("McpFormModal (drawer)", () => {
   });
 
   it("keeps hidden apps' flags when overwriting an existing server from a batch", async () => {
-    // Hermes 从侧栏隐藏了：覆盖 figma 时它在 Hermes 的开关要原样带回，不能被当成关掉
+    // Grok Build 从侧栏隐藏了：覆盖 figma 时它在 Grok Build 的开关要原样带回，不能被当成关掉
     renderForm({
       visibleAppIds: ["claude", "codex"],
       existingServers: {
@@ -194,7 +194,7 @@ describe("McpFormModal (drawer)", () => {
           id: "figma",
           name: "figma",
           server: { type: "http", url: "http://127.0.0.1:3845/mcp" },
-          apps: { claude: false, hermes: true } as McpServer["apps"],
+          apps: { claude: false, grokbuild: true } as McpServer["apps"],
         },
       },
     });
@@ -221,7 +221,7 @@ describe("McpFormModal (drawer)", () => {
     expect(figma.apps).toMatchObject({
       claude: true,
       codex: true,
-      hermes: true,
+      grokbuild: true,
     });
   });
 
@@ -235,7 +235,7 @@ describe("McpFormModal (drawer)", () => {
         env: { TOKEN: "keep-me" },
         startup_timeout_ms: 30000,
       },
-      apps: { claude: true, codex: false, hermes: true } as McpServer["apps"],
+      apps: { claude: true, codex: false, grokbuild: true } as McpServer["apps"],
     };
     renderForm({ editingId: "serena", initialData: server });
 
@@ -260,7 +260,7 @@ describe("McpFormModal (drawer)", () => {
         env: { TOKEN: "keep-me" },
         startup_timeout_ms: 30000,
       },
-      apps: { claude: true, codex: false, hermes: true },
+      apps: { claude: true, codex: false, grokbuild: true },
     });
   });
 
@@ -291,10 +291,10 @@ describe("McpFormModal (drawer)", () => {
         id: "x",
         name: "x",
         server: { type: "stdio", command: "uvx" },
-        apps: { claude: false, hermes: true } as McpServer["apps"],
+        apps: { claude: false, grokbuild: true } as McpServer["apps"],
       },
     });
-    expect(screen.queryByText("Hermes")).not.toBeInTheDocument();
+    expect(screen.queryByText("Grok Build")).not.toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("checkbox", { name: /Claude Code/ }),
     );
@@ -302,7 +302,7 @@ describe("McpFormModal (drawer)", () => {
     await waitFor(() => expect(mocks.upsert).toHaveBeenCalled());
     expect(mocks.upsert.mock.calls[0][0].apps).toMatchObject({
       claude: true,
-      hermes: true,
+      grokbuild: true,
     });
   });
 

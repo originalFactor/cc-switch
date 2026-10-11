@@ -113,8 +113,6 @@ function isEditableTarget(target: EventTarget | null) {
 
 /**
  * Skills 全局页（v7）：「已安装」矩阵 +「发现」合成一页。
- * Pi 列常驻（应用页里隐藏 Pi 时才不显示）；Pi 的状态来自后端对 ~/.pi/agent/skills 的目录检查，
- * get_installed_skills 返回前会用这个检查结果覆盖 apps.pi，所以这里显示的不是数据库里的开关。
  */
 const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   initialView = "installed",
@@ -525,7 +523,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const uninstallIds = async (ids: string[]) => {
     if (!beginWrite(true)) return;
     const done: InstalledSkill[] = [];
-    let piWarning: string | undefined;
     let backupPath: string | undefined;
     try {
       for (const id of ids) {
@@ -533,13 +530,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         try {
           const result = await uninstallMutation.mutateAsync(id);
           if (skill) done.push(skill);
-          if (result.preservedPiPath) {
-            piWarning = t("skills.uninstallPiPreserved", {
-              path: result.preservedPiPath,
-            });
-          } else if (result.piCleanupIncomplete) {
-            piWarning = t("skills.uninstallPiCleanupIncomplete");
-          }
           if (result.backupPath) backupPath = result.backupPath;
         } catch (error) {
           toast.error(t("common.error"), {
@@ -563,14 +553,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         : t("skillsPage.toast.uninstalledMany", { count: done.length });
     const options = {
       description:
-        piWarning ??
-        (done.length === 1 && backupPath
+        done.length === 1 && backupPath
           ? t("skills.backup.location", { path: backupPath })
-          : t("skillsPage.toast.backupAt", { path: BACKUP_DIR })),
+          : t("skillsPage.toast.backupAt", { path: BACKUP_DIR }),
       closeButton: true,
     };
-    if (piWarning) toast.warning(text, options);
-    else toast.success(text, options);
+    toast.success(text, options);
   };
 
   const updateIds = async (ids: string[], allowOpenDialog = false) => {
@@ -1259,7 +1247,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               </div>
               <div className="flex shrink-0">
                 {appIds.map((app) => {
-                  const isPi = app === "pi";
                   const onInScope = scope.rows.filter(
                     (skill) => skill.apps[app],
                   ).length;
@@ -1283,15 +1270,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       scopeKind={scope.kind}
                       noun={noun}
                       disabled={controlsDisabled}
-                      title={isPi ? t("skillsPage.piColumnTitle") : undefined}
-                      help={
-                        isPi
-                          ? {
-                              title: t("skillsPage.piHelpTitle"),
-                              body: t("skillsPage.piHelp"),
-                            }
-                          : undefined
-                      }
                       extraAction={{
                         label:
                           statusFilter === appFilter

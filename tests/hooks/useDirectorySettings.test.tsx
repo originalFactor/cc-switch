@@ -70,10 +70,7 @@ describe("useDirectorySettings", () => {
       if (app === "codex") return "/remote/codex";
       if (app === "gemini") return "/remote/gemini";
       if (app === "grokbuild") return "/remote/grok";
-      if (app === "opencode") return "/remote/opencode";
-      if (app === "openclaw") return "/remote/openclaw";
-      if (app === "pi") return "/remote/pi";
-      return "/remote/hermes";
+      return "/remote/unknown";
     });
     selectConfigDirectoryMock.mockReset();
   });
@@ -94,10 +91,6 @@ describe("useDirectorySettings", () => {
       codex: "/remote/codex",
       gemini: "/remote/gemini",
       grokbuild: "/remote/grok",
-      opencode: "/remote/opencode",
-      openclaw: "/remote/openclaw",
-      hermes: "/remote/hermes",
-      pi: "/remote/pi",
     });
   });
 
@@ -241,12 +234,12 @@ describe("useDirectorySettings", () => {
     expect(result.current.resolvedDirs.appConfig).toBe("/home/mock/.cc-switch");
   });
 
-  it("updates openclaw directory when browsing succeeds", async () => {
-    selectConfigDirectoryMock.mockResolvedValue("/picked/openclaw");
+  it("updates grokbuild directory when browsing succeeds", async () => {
+    selectConfigDirectoryMock.mockResolvedValue("/picked/grok");
 
     const { result } = renderHook(() =>
       useDirectorySettings({
-        settings: createSettings({ openclawConfigDir: undefined }),
+        settings: createSettings({ grokConfigDir: undefined }),
         onUpdateSettings,
       }),
     );
@@ -254,14 +247,14 @@ describe("useDirectorySettings", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(async () => {
-      await result.current.browseDirectory("openclaw");
+      await result.current.browseDirectory("grokbuild");
     });
 
-    expect(selectConfigDirectoryMock).toHaveBeenCalledWith("/remote/openclaw");
+    expect(selectConfigDirectoryMock).toHaveBeenCalledWith("/remote/grok");
     expect(onUpdateSettings).toHaveBeenCalledWith({
-      openclawConfigDir: "/picked/openclaw",
+      grokConfigDir: "/picked/grok",
     });
-    expect(result.current.resolvedDirs.openclaw).toBe("/picked/openclaw");
+    expect(result.current.resolvedDirs.grokbuild).toBe("/picked/grok");
   });
 
   it("resetAllDirectories applies provided resolved values", async () => {
@@ -276,8 +269,6 @@ describe("useDirectorySettings", () => {
         codex: "/server/codex",
         gemini: "/server/gemini",
         grokbuild: "/server/grok",
-        opencode: "/server/opencode",
-        openclaw: "/server/openclaw",
       });
     });
 
@@ -285,7 +276,5 @@ describe("useDirectorySettings", () => {
     expect(result.current.resolvedDirs.codex).toBe("/server/codex");
     expect(result.current.resolvedDirs.gemini).toBe("/server/gemini");
     expect(result.current.resolvedDirs.grokbuild).toBe("/server/grok");
-    expect(result.current.resolvedDirs.opencode).toBe("/server/opencode");
-    expect(result.current.resolvedDirs.openclaw).toBe("/server/openclaw");
   });
 });

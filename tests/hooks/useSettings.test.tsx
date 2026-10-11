@@ -14,7 +14,6 @@ const updateTrayMenuMock = vi.fn();
 const getCurrentMock = vi.fn();
 const getAllMock = vi.fn();
 const getQueryDataMock = vi.fn();
-const invalidatePiDirectoryCachesMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastSuccessMock = vi.fn();
 
@@ -43,8 +42,6 @@ vi.mock("@/hooks/useSettingsMetadata", () => ({
 }));
 
 vi.mock("@/lib/query", () => ({
-  invalidatePiDirectoryCaches: (...args: unknown[]) =>
-    invalidatePiDirectoryCachesMock(...args),
   useSettingsQuery: (...args: unknown[]) => useSettingsQueryMock(...args),
   useSaveSettingsMutation: () => ({
     mutateAsync: mutateAsyncMock,
@@ -93,10 +90,7 @@ const createSettingsFormMock = (overrides: Record<string, unknown> = {}) => ({
     claudeConfigDir: "/claude",
     codexConfigDir: "/codex",
     geminiConfigDir: "/gemini",
-    opencodeConfigDir: "/opencode",
-    openclawConfigDir: "/openclaw",
-    hermesConfigDir: "/hermes",
-    piConfigDir: "/pi",
+    grokConfigDir: "/grok",
     language: "zh",
   },
   isLoading: false,
@@ -152,7 +146,6 @@ describe("useSettings hook", () => {
     applyClaudeOnboardingSkipMock.mockReset();
     clearClaudeOnboardingSkipMock.mockReset();
     syncCurrentProvidersLiveMock.mockReset();
-    invalidatePiDirectoryCachesMock.mockReset();
     getCurrentMock.mockReset();
     getAllMock.mockReset();
     getQueryDataMock.mockReset();
@@ -168,10 +161,7 @@ describe("useSettings hook", () => {
       claudeConfigDir: "/server/claude",
       codexConfigDir: "/server/codex",
       geminiConfigDir: "/server/gemini",
-      opencodeConfigDir: "/server/opencode",
-      openclawConfigDir: "/server/openclaw",
-      hermesConfigDir: "/server/hermes",
-      piConfigDir: "/server/pi",
+      grokConfigDir: "/server/grok",
       language: "zh",
     };
 
@@ -264,8 +254,7 @@ describe("useSettings hook", () => {
       claudeConfigDir: "/server/claude",
       codexConfigDir: undefined,
       geminiConfigDir: "/server/gemini",
-      opencodeConfigDir: "/server/opencode",
-      openclawConfigDir: "/server/openclaw",
+      grokConfigDir: "/server/grok",
       language: "en",
     };
     useSettingsQueryMock.mockReturnValue({
@@ -278,7 +267,7 @@ describe("useSettings hook", () => {
         ...serverSettings,
         claudeConfigDir: "  /custom/claude  ",
         codexConfigDir: "   ",
-        openclawConfigDir: "  /custom/openclaw  ",
+        grokConfigDir: "  /custom/grok  ",
         language: "en",
         enableClaudePluginIntegration: true, // 状态从 false 变为 true
       },
@@ -306,7 +295,7 @@ describe("useSettings hook", () => {
     const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
     expect(payload.claudeConfigDir).toBe("/custom/claude");
     expect(payload.codexConfigDir).toBeUndefined();
-    expect(payload.openclawConfigDir).toBe("/custom/openclaw");
+    expect(payload.grokConfigDir).toBe("/custom/grok");
     expect(payload.language).toBe("en");
     expect(setAppConfigDirOverrideMock).toHaveBeenCalledWith("/override/app");
     // 状态改变，应该调用 API
@@ -361,26 +350,6 @@ describe("useSettings hook", () => {
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
     // 目录未变化，不应触发同步
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
-  });
-
-  it("sanitizes the Pi directory without projecting providers", async () => {
-    settingsFormMock = createSettingsFormMock({
-      settings: {
-        ...serverSettings,
-        piConfigDir: "  /custom/pi  ",
-      },
-    });
-
-    const { result } = renderHook(() => useSettings());
-
-    await act(async () => {
-      await result.current.saveSettings(undefined, { silent: true });
-    });
-
-    const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
-    expect(payload.piConfigDir).toBe("/custom/pi");
-    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
-    expect(invalidatePiDirectoryCachesMock).toHaveBeenCalledTimes(1);
   });
 
   it("shows toast when Claude plugin sync fails but continues flow", async () => {
@@ -496,11 +465,7 @@ describe("useSettings hook", () => {
       claude: "/server/claude",
       codex: undefined,
       gemini: "/server/gemini",
-      grokbuild: undefined,
-      opencode: "/server/opencode",
-      openclaw: "/server/openclaw",
-      hermes: "/server/hermes",
-      pi: "/server/pi",
+      grokbuild: "/server/grok",
     });
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });

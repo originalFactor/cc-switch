@@ -142,7 +142,7 @@ function renderPage(
   render(
     <SkillsPage
       renderViewTabs={(trailing) => trailing}
-      visibleAppIds={["claude", "codex", "pi"]}
+      visibleAppIds={["claude", "codex", "gemini"]}
       installTargets={["codex", "claude"]}
       onInstallTargetsChange={vi.fn()}
       installTo={installTo as never}
@@ -330,10 +330,7 @@ describe("SkillsPage (Discover)", () => {
           claude: true,
           codex: true,
           gemini: false,
-          opencode: false,
-          openclaw: false,
-          hermes: false,
-          pi: false,
+          grokbuild: false,
         },
         installedAt: 1,
         updatedAt: 1,

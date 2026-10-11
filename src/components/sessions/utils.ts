@@ -5,17 +5,12 @@ import type { SessionMeta } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
 
-/** 会话来源：9 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
+/** 会话来源：4 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
 export const SESSION_APP_IDS = [
   "claude",
   "codex",
-  "opencode",
-  "hermes",
   "gemini",
-  "pi",
   "grokbuild",
-  "openclaw",
-  "mcode",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -29,16 +24,10 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   codex: ["~/.codex/sessions", "~/.codex/archived_sessions"],
   gemini: ["~/.gemini/tmp/<project>/chats"],
   grokbuild: ["~/.grok/sessions", "~/.grok/archived_sessions"],
-  opencode: ["~/.local/share/opencode"],
-  openclaw: ["~/.openclaw/agents/<agent>/sessions"],
-  hermes: ["~/.hermes/state.db", "~/.hermes/sessions"],
-  pi: ["~/.pi/agent/sessions"],
-  mcode: ["~/.minimax"],
 };
 
-/** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) && session.providerId !== "mcode";
+  Boolean(session.sourcePath);
 
 export interface SessionProjectGroup {
   key: string;

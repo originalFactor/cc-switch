@@ -245,16 +245,16 @@ describe("useAddProviderMutation", () => {
     expect(secondProvider.id).toBe("unbound-official-2");
   });
 
-  it("adds a Pi provider without a separate default-model command", async () => {
+  it("ignores providerKey and generates a fresh id", async () => {
     const { wrapper } = createWrapper();
-    const { result } = renderHook(() => useAddProviderMutation("pi"), {
+    const { result } = renderHook(() => useAddProviderMutation("gemini"), {
       wrapper,
     });
 
     const provider = await act(async () =>
       result.current.mutateAsync({
-        name: "Pi Provider",
-        providerKey: "pi-provider",
+        name: "Gemini Provider",
+        providerKey: "gemini-provider",
         settingsConfig: {
           api: "openai-responses",
           baseUrl: "https://example.com/v1",
@@ -265,34 +265,34 @@ describe("useAddProviderMutation", () => {
     );
 
     expect(apiMocks.add).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "pi-provider" }),
-      "pi",
+      expect.objectContaining({ id: "generated-uuid" }),
+      "gemini",
       undefined,
       undefined,
     );
-    expect(provider.id).toBe("pi-provider");
+    expect(provider.id).toBe("generated-uuid");
   });
 
-  it("reports a Pi provider add failure", async () => {
+  it("reports a provider add failure", async () => {
     apiMocks.add.mockRejectedValueOnce(new Error("provider add failed"));
     const { wrapper } = createWrapper();
-    const { result } = renderHook(() => useAddProviderMutation("pi"), {
+    const { result } = renderHook(() => useAddProviderMutation("codex"), {
       wrapper,
     });
 
     await act(async () => {
       await expect(
         result.current.mutateAsync({
-          name: "Pi Provider",
-          providerKey: "pi-provider",
+          name: "Codex Provider",
+          providerKey: "codex-provider",
           settingsConfig: { models: [{ id: "model-a" }] },
         }),
       ).rejects.toThrow("provider add failed");
     });
 
     expect(apiMocks.add).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "pi-provider" }),
-      "pi",
+      expect.objectContaining({ id: "generated-uuid" }),
+      "codex",
       undefined,
       undefined,
     );

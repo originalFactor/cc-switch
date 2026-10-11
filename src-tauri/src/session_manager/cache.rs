@@ -7,7 +7,6 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::io;
-use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::SystemTime;
 
@@ -77,8 +76,7 @@ impl Fingerprint {
 /// 计算源的指纹。
 ///
 /// - 普通文件：自身的 mtime / len
-/// - 目录（OpenCode 旧版消息目录）：目录本身 + 一级子项；子项增删或改写都会改变指纹
-/// - SQLite：数据库文件 + `-wal` 文件（WAL 模式下新写入先落在 wal 里，主库 mtime 不变）
+/// - 目录：目录本身 + 一级子项；子项增删或改写都会改变指纹
 pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
     match location {
         SourceLocation::Path { path, .. } => {
@@ -95,15 +93,6 @@ pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
             }
             Ok(fp)
         }
-        SourceLocation::Sqlite { db, .. } => {
-            let mut fp = Fingerprint::of_metadata(&fs::metadata(db)?);
-            if let Some(wal) = sqlite_wal_path(db) {
-                if let Ok(meta) = fs::metadata(wal) {
-                    fp.merge(Fingerprint::of_metadata(&meta));
-                }
-            }
-            Ok(fp)
-        }
     }
 }
 
@@ -111,67 +100,16 @@ pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
 ///
 /// - Grok Build 的 sourcePath 是 `summary.json`，正文在同目录的 `chat_history.jsonl`，
 ///   而 `summary.json` 只在一轮结束时改写——只看它的话，一轮进行中刷新会命中旧缓存。
-/// - OpenCode 旧版 storage 的 sourcePath 是 `storage/message/{sessionID}/`，正文在
-///   `storage/part/{messageID}/` 下，流式输出时只改写 part 文件，消息文件不动。
 pub fn source_fingerprint(source: &ValidatedSource) -> io::Result<Fingerprint> {
     let mut fp = fingerprint(&source.location)?;
-    let SourceLocation::Path { path, .. } = &source.location else {
-        return Ok(fp);
-    };
-    match source.provider_id.as_str() {
-        "grokbuild" => {
-            let history = path.with_file_name(GROK_CHAT_HISTORY);
-            if let Ok(meta) = fs::metadata(&history) {
-                fp.merge(Fingerprint::of_metadata(&meta));
-            }
+    let SourceLocation::Path { path, .. } = &source.location;
+    if source.provider_id == "grokbuild" {
+        let history = path.with_file_name(GROK_CHAT_HISTORY);
+        if let Ok(meta) = fs::metadata(&history) {
+            fp.merge(Fingerprint::of_metadata(&meta));
         }
-        "opencode" if path.is_dir() => merge_opencode_parts(path, &mut fp),
-        _ => {}
     }
     Ok(fp)
-}
-
-/// 把 `storage/part/{messageID}/` 目录及其中的 part 文件并入指纹。
-/// 消息文件名就是 `{messageID}.json`；按文件名找目录，不必为算指纹读出 JSON。
-fn merge_opencode_parts(message_dir: &Path, fp: &mut Fingerprint) {
-    let Some(part_root) = message_dir
-        .parent()
-        .and_then(Path::parent)
-        .map(|storage| storage.join("part"))
-    else {
-        return;
-    };
-    let Ok(messages) = fs::read_dir(message_dir) else {
-        return;
-    };
-    for message in messages.flatten() {
-        let path = message.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(message_id) = path.file_stem() else {
-            continue;
-        };
-        let part_dir = part_root.join(message_id);
-        let Ok(meta) = fs::metadata(&part_dir) else {
-            continue;
-        };
-        fp.merge(Fingerprint::of_metadata(&meta));
-        let Ok(parts) = fs::read_dir(&part_dir) else {
-            continue;
-        };
-        for part in parts.flatten() {
-            if let Ok(child) = part.metadata() {
-                fp.merge(Fingerprint::of_metadata(&child));
-                fp.len = fp.len.wrapping_add(1);
-            }
-        }
-    }
-}
-
-fn sqlite_wal_path(db: &Path) -> Option<std::path::PathBuf> {
-    let name = db.file_name()?.to_string_lossy().into_owned();
-    Some(db.with_file_name(format!("{name}-wal")))
 }
 
 /// 缓存键：(provider_id, sourcePath)。sourcePath 用前端传来的原值，与删除时一致。
@@ -466,48 +404,6 @@ mod tests {
         let ranges = chunk_ranges(&[100, big, 100, big / 2, big / 2, 1]);
         assert_eq!(ranges, vec![(0, 1), (1, 2), (2, 4), (4, 6)]);
     }
-
-    /// 审查 #7825：Grok 一轮进行中只往 chat_history.jsonl 追加，summary.json 不变，
-    /// 指纹也必须变；其它 provider 不受影响
-    /// OpenCode 旧版 storage：流式输出只改写 `part/{messageID}/` 下的文件，
-    /// 消息目录不变，指纹也必须变
-    #[test]
-    fn opencode_legacy_fingerprint_follows_part_files() {
-        let dir = tempdir().unwrap();
-        let storage = dir.path().join("storage");
-        let message_dir = storage.join("message").join("ses_1");
-        let part_dir = storage.join("part").join("msg_1");
-        std::fs::create_dir_all(&message_dir).unwrap();
-        std::fs::create_dir_all(&part_dir).unwrap();
-        std::fs::write(message_dir.join("msg_1.json"), "{\"id\":\"msg_1\"}").unwrap();
-        let part = part_dir.join("prt_1.json");
-        std::fs::write(&part, "{\"text\":\"a\"}").unwrap();
-        let source = ValidatedSource {
-            provider_id: "opencode".to_string(),
-            raw: message_dir.to_string_lossy().into_owned(),
-            location: SourceLocation::Path {
-                path: message_dir.clone(),
-                root: storage.clone(),
-            },
-        };
-
-        let before = source_fingerprint(&source).unwrap();
-        assert_ne!(
-            before,
-            fingerprint(&source.location).unwrap(),
-            "part 应计入指纹"
-        );
-
-        // 同一个 part 文件变长
-        std::fs::write(&part, "{\"text\":\"ab\"}").unwrap();
-        let grown = source_fingerprint(&source).unwrap();
-        assert_ne!(grown, before);
-
-        // 新增 part 文件
-        std::fs::write(part_dir.join("prt_2.json"), "{}").unwrap();
-        assert_ne!(source_fingerprint(&source).unwrap(), grown);
-    }
-
     #[test]
     fn grok_fingerprint_follows_chat_history() {
         use std::io::Write;
@@ -627,20 +523,6 @@ mod tests {
         cache.insert(key("a"), fp(1), Arc::new(transcript_of_bytes(1)));
         cache.remove("claude", "a");
         assert!(cache.get(&key("a"), fp(1)).is_none());
-    }
-
-    #[test]
-    fn sqlite_fingerprint_includes_wal() {
-        let dir = tempdir().unwrap();
-        let db = dir.path().join("state.db");
-        std::fs::write(&db, "x").unwrap();
-        let location = SourceLocation::Sqlite {
-            db: db.clone(),
-            session_id: "s".into(),
-        };
-        let before = fingerprint(&location).unwrap();
-        std::fs::write(dir.path().join("state.db-wal"), "wal").unwrap();
-        assert_ne!(fingerprint(&location).unwrap(), before);
     }
 
     fn text(role: &str, text: &str) -> SessionMessage {

@@ -16,271 +16,6 @@ use support::{
 };
 
 #[test]
-fn mcode_import_ignores_native_metadata_and_continues_after_conflicts() {
-    let _guard = test_mutex().lock().unwrap();
-    reset_test_fs();
-    let state = create_test_state().unwrap();
-    let path = ensure_test_home().join(".minimax/mcp.json");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    for id in ["a-conflict", "b-shared"] {
-        let server: McpServer = serde_json::from_value(json!({
-            "id":id, "name":id, "server":{"type":"http","url":"https://example.com/mcp"},
-            "apps":{"claude":true}
-        }))
-        .unwrap();
-        state.db.save_mcp_server(&server).unwrap();
-    }
-    let original = json!({"mcpServers":{
-        "a-conflict":{"command":"different"},
-        "b-shared":{"type":"streamable-http","url":"https://example.com/mcp","timeout":5000,"description":"native","tools":[{"name":"tool"}]},
-        "c-new":{"command":"node"}
-    }});
-    fs::write(&path, original.to_string()).unwrap();
-    let error = McpService::import_from_all_apps(&state)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("a-conflict"));
-    assert!(!error.contains("b-shared"));
-    let servers = state.db.get_all_mcp_servers().unwrap();
-    assert!(!servers["a-conflict"].apps.mcode);
-    assert!(servers["b-shared"].apps.mcode && servers["b-shared"].apps.claude);
-    assert!(servers["c-new"].apps.mcode);
-    McpService::sync_enabled_for_app(&state, &AppType::Mcode).unwrap();
-    let written: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    for field in ["timeout", "description", "tools"] {
-        assert_eq!(
-            written["mcpServers"]["b-shared"][field],
-            original["mcpServers"]["b-shared"][field]
-        );
-    }
-    assert_eq!(
-        written["mcpServers"]["a-conflict"],
-        original["mcpServers"]["a-conflict"]
-    );
-}
-
-#[test]
-fn mcode_write_failures_keep_managed_mcp_state_for_all_write_entries() {
-    let _guard = test_mutex().lock().unwrap();
-    reset_test_fs();
-    let state = create_test_state().unwrap();
-    let path = ensure_test_home().join(".minimax/mcp.json");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let server: McpServer = serde_json::from_value(json!({
-        "id":"managed", "name":"Managed", "server":{"command":"node"}, "apps":{"mcode":true}
-    }))
-    .unwrap();
-    state.db.save_mcp_server(&server).unwrap();
-    fs::write(&path, "invalid json").unwrap();
-    assert!(McpService::toggle_app(&state, &server.id, AppType::Mcode, false).is_err());
-    let mut disabled = server.clone();
-    disabled.apps.mcode = false;
-    assert!(McpService::upsert_server(&state, disabled.clone()).is_err());
-    let mut edited = server.clone();
-    edited.server = json!({"command":"replacement"});
-    assert!(McpService::upsert_server(&state, edited).is_err());
-    assert!(McpService::delete_server(&state, &server.id).is_err());
-    let current = &state.db.get_all_mcp_servers().unwrap()[&server.id];
-    assert!(current.apps.mcode);
-    assert_eq!(current.server, server.server);
-    assert_eq!(fs::read_to_string(&path).unwrap(), "invalid json");
-    state.db.save_mcp_server(&disabled).unwrap();
-    assert!(McpService::toggle_app(&state, &server.id, AppType::Mcode, true).is_err());
-    assert!(
-        !state.db.get_all_mcp_servers().unwrap()[&server.id]
-            .apps
-            .mcode
-    );
-    fs::write(&path, "{}").unwrap();
-    McpService::toggle_app(&state, &server.id, AppType::Mcode, true).unwrap();
-    assert!(
-        state.db.get_all_mcp_servers().unwrap()[&server.id]
-            .apps
-            .mcode
-    );
-    McpService::toggle_app(&state, &server.id, AppType::Mcode, false).unwrap();
-    assert!(
-        !state.db.get_all_mcp_servers().unwrap()[&server.id]
-            .apps
-            .mcode
-    );
-}
-
-#[test]
-fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
-    let _guard = test_mutex().lock().unwrap();
-    reset_test_fs();
-    let state = create_test_state().unwrap();
-    let path = ensure_test_home().join(".minimax/mcp.json");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let native = json!({"mcpServers":{"context7":{"command":"native-server","enabled":true}}});
-    fs::write(&path, native.to_string()).unwrap();
-    let server = McpServer {
-        id: "context7".into(),
-        name: "Context7".into(),
-        server: json!({"command":"managed-server"}),
-        apps: McpApps {
-            claude: true,
-            ..Default::default()
-        },
-        description: None,
-        homepage: None,
-        docs: None,
-        tags: vec![],
-    };
-    state.db.save_mcp_server(&server).unwrap();
-    let error = McpService::import_from_all_apps(&state).unwrap_err();
-    assert!(error.to_string().contains("context7"));
-    assert!(
-        !state.db.get_all_mcp_servers().unwrap()["context7"]
-            .apps
-            .mcode
-    );
-    McpService::sync_enabled_for_app(&state, &AppType::Mcode).unwrap();
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap(),
-        native
-    );
-    McpService::toggle_app(&state, "context7", AppType::Mcode, true).unwrap();
-    McpService::import_from_all_apps(&state).unwrap();
-    McpService::toggle_app(&state, "context7", AppType::Mcode, false).unwrap();
-    let disabled: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert!(disabled["mcpServers"].get("context7").is_none());
-}
-
-#[test]
-fn pi_toggle_writes_its_mcp_json_and_keeps_pi_fields() {
-    let _guard = test_mutex().lock().unwrap();
-    reset_test_fs();
-    let state = create_test_state().unwrap();
-    let path = ensure_test_home().join(".pi/agent/mcp.json");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
-        &path,
-        json!({"mcpServers":{"docs":{"command":"old","exposure":"direct","timeout":30}}})
-            .to_string(),
-    )
-    .unwrap();
-    let read = || -> serde_json::Value {
-        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap()
-    };
-    let server: McpServer = serde_json::from_value(json!({
-        "id":"docs", "name":"Docs", "server":{"type":"stdio","command":"node","args":["s.js"]}, "apps":{}
-    }))
-    .unwrap();
-    state.db.save_mcp_server(&server).unwrap();
-
-    McpService::toggle_app(&state, "docs", AppType::Pi, true).unwrap();
-    let docs = &read()["mcpServers"]["docs"];
-    assert_eq!(docs["command"], "node");
-    assert_eq!(docs["args"], json!(["s.js"]));
-    assert_eq!(docs["exposure"], "direct");
-    assert_eq!(docs["timeout"], 30);
-    assert!(state.db.get_all_mcp_servers().unwrap()["docs"].apps.pi);
-
-    // 取消勾选只在 Pi 里禁用，保留条目和 Pi 自己的设置
-    McpService::toggle_app(&state, "docs", AppType::Pi, false).unwrap();
-    let disabled = &read()["mcpServers"]["docs"];
-    assert_eq!(disabled["enabled"], false);
-    assert_eq!(disabled["exposure"], "direct");
-    assert!(!state.db.get_all_mcp_servers().unwrap()["docs"].apps.pi);
-
-    // 在 CC Switch 里删除服务器才删掉条目
-    McpService::delete_server(&state, "docs").unwrap();
-    assert!(read()["mcpServers"].get("docs").is_none());
-
-    // Pi 不支持 SSE：拒绝写入，数据库也不勾选
-    let sse: McpServer = serde_json::from_value(json!({
-        "id":"remote", "name":"Remote", "server":{"type":"sse","url":"https://example.com/sse"}, "apps":{}
-    }))
-    .unwrap();
-    state.db.save_mcp_server(&sse).unwrap();
-    assert!(McpService::toggle_app(&state, "remote", AppType::Pi, true).is_err());
-    assert!(!state.db.get_all_mcp_servers().unwrap()["remote"].apps.pi);
-    assert!(read()["mcpServers"].get("remote").is_none());
-}
-
-/// 审查 #7862：导入 → 取消勾选 → 重新勾选（含批量禁用后撤销：前端逐个 toggle）
-/// 不能丢掉 timeout、toolExposure、oauth 等 Pi 自己的设置
-#[test]
-fn pi_disable_then_enable_round_trip_keeps_pi_settings() {
-    let _guard = test_mutex().lock().unwrap();
-    reset_test_fs();
-    let state = create_test_state().unwrap();
-    let path = ensure_test_home().join(".pi/agent/mcp.json");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let pi_settings = json!({
-        "timeout": 30000,
-        "exposure": "direct",
-        "toolExposure": {"delete_*": "hidden"},
-        "oauth": {"clientName": "custom-client"}
-    });
-    let mut servers = serde_json::Map::new();
-    for id in ["a", "b"] {
-        let mut entry = pi_settings.clone();
-        entry["command"] = json!("node");
-        entry["args"] = json!([format!("{id}.js")]);
-        servers.insert(id.into(), entry);
-    }
-    fs::write(&path, json!({"mcpServers": servers}).to_string()).unwrap();
-    McpService::import_from_all_apps(&state).unwrap();
-    let read = || -> serde_json::Value {
-        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap()
-    };
-
-    for id in ["a", "b"] {
-        McpService::toggle_app(&state, id, AppType::Pi, false).unwrap();
-    }
-    for id in ["a", "b"] {
-        McpService::toggle_app(&state, id, AppType::Pi, true).unwrap();
-    }
-    let written = read();
-    for id in ["a", "b"] {
-        let entry = &written["mcpServers"][id];
-        assert_eq!(entry["enabled"], true, "{id}");
-        assert_eq!(entry["args"], json!([format!("{id}.js")]), "{id}");
-        for field in ["timeout", "exposure", "toolExposure", "oauth"] {
-            assert_eq!(entry[field], pi_settings[field], "{id}.{field}");
-        }
-    }
-
-    // 条目在 Pi 里被删掉后再勾选：从导入时保存的 Pi 字段重建
-    fs::write(&path, json!({"mcpServers": {}}).to_string()).unwrap();
-    McpService::toggle_app(&state, "a", AppType::Pi, false).unwrap();
-    McpService::toggle_app(&state, "a", AppType::Pi, true).unwrap();
-    let rebuilt = &read()["mcpServers"]["a"];
-    for field in ["timeout", "exposure", "toolExposure", "oauth"] {
-        assert_eq!(rebuilt[field], pi_settings[field], "a.{field}");
-    }
-}
-
-#[test]
-fn pi_import_keeps_disabled_entries_unchecked() {
-    let _guard = test_mutex().lock().unwrap();
-    reset_test_fs();
-    let state = create_test_state().unwrap();
-    let path = ensure_test_home().join(".pi/agent/mcp.json");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
-        &path,
-        json!({"mcpServers":{
-            "on":{"url":"https://example.com/mcp"},
-            "off":{"command":"node","enabled":false,"exposure":"deferred"}
-        }})
-        .to_string(),
-    )
-    .unwrap();
-    McpService::import_from_all_apps(&state).unwrap();
-    let servers = state.db.get_all_mcp_servers().unwrap();
-    assert!(servers["on"].apps.pi);
-    assert_eq!(servers["on"].server["type"], "http");
-    assert!(!servers["off"].apps.pi);
-    assert_eq!(servers["off"].server["exposure"], "deferred");
-}
-
-#[test]
 fn import_default_config_claude_persists_provider() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -715,10 +450,6 @@ command = "echo"
                 codex: true,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -862,10 +593,6 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 codex: false, // 初始未启用
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -930,10 +657,6 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -978,10 +701,6 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1015,10 +734,6 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1198,10 +913,6 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1256,10 +967,6 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1314,10 +1021,6 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1373,10 +1076,6 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1455,10 +1154,6 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1597,10 +1292,6 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1622,10 +1313,6 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 codex: false,
                 gemini: false,
                 grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                pi: false,
             },
             description: None,
             homepage: None,
@@ -1662,16 +1349,7 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
     let all = McpService::resync_targets(None).expect("default targets");
     assert_eq!(
         all.iter().map(|app| app.as_str()).collect::<Vec<_>>(),
-        vec![
-            "claude",
-            "codex",
-            "gemini",
-            "grokbuild",
-            "opencode",
-            "hermes",
-            "pi",
-            "mcode"
-        ]
+        vec!["claude", "codex", "gemini", "grokbuild"]
     );
     assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);
 
@@ -1680,10 +1358,9 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
     assert_eq!(only_codex, vec![AppType::Codex]);
 
     assert_eq!(
-        McpService::resync_targets(Some(&["pi".to_string()])).unwrap(),
-        vec![AppType::Pi]
+        McpService::resync_targets(Some(&["grokbuild".to_string()])).unwrap(),
+        vec![AppType::GrokBuild]
     );
-    assert!(McpService::resync_targets(Some(&["openclaw".to_string()])).is_err());
     assert!(McpService::resync_targets(Some(&["not-an-app".to_string()])).is_err());
 }
 

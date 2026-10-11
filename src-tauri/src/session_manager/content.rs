@@ -3,7 +3,7 @@
 //! 前端回传的 `sourcePath`、[`ContentRef`]、[`ImageRef`] 都不可信：
 //!
 //! - [`validate_source`]：`sourcePath` 必须落在对应 provider 的会话根目录下（规范化后比较，
-//!   符号链接解析到真实位置再判断），SQLite 源只认 provider 自己的数据库
+//!   符号链接解析到真实位置再判断）
 //! - [`resolve_content_ref`]：按 kind 校验后读取全文，单次 ≤ 32MB
 //! - [`load_image`]：内联图片走 ContentRef 校验并解码，本地图片只允许会话相关目录，≤ 20MB
 
@@ -14,12 +14,10 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use base64::Engine;
-use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::Value;
 
 use super::model::{ContentRef, ImageRef, ImageSource};
-use super::providers::{hermes, opencode};
 use super::{canonicalize_existing_path, provider_roots};
 
 /// 单次读取的全文上限
@@ -50,10 +48,8 @@ pub struct ValidatedSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceLocation {
-    /// 文件或目录（OpenCode 旧版存储是消息目录）；`path` 与 `root` 均已规范化
+    /// 文件或目录；`path` 与 `root` 均已规范化
     Path { path: PathBuf, root: PathBuf },
-    /// SQLite 中的一个会话；`db` 已规范化且等于 provider 自己的数据库
-    Sqlite { db: PathBuf, session_id: String },
 }
 
 impl ValidatedSource {
@@ -61,7 +57,6 @@ impl ValidatedSource {
     pub fn load_path(&self) -> String {
         match &self.location {
             SourceLocation::Path { path, .. } => path.to_string_lossy().into_owned(),
-            SourceLocation::Sqlite { .. } => self.raw.clone(),
         }
     }
 
@@ -70,44 +65,16 @@ impl ValidatedSource {
         match &self.location {
             SourceLocation::Path { path, .. } if path.is_file() => Some(path.with_extension("")),
             SourceLocation::Path { path, .. } => Some(path.clone()),
-            SourceLocation::Sqlite { .. } => None,
         }
     }
 }
 
 /// 校验 `sourcePath` 归属，见模块文档。
 pub fn validate_source(provider_id: &str, source_path: &str) -> Result<ValidatedSource, String> {
-    let location = match provider_id {
-        "mcode" => {
-            let id = source_path
-                .strip_prefix("mcode:")
-                .filter(|id| !id.is_empty())
-                .ok_or("Invalid MCode session source")?;
-            SourceLocation::Sqlite {
-                db: canonicalize_existing_path(
-                    &super::providers::mcode::database_path(),
-                    "MCode database",
-                )?,
-                session_id: id.to_string(),
-            }
-        }
-        "opencode" if source_path.starts_with("sqlite:") => validate_sqlite_source(
-            source_path,
-            opencode::parse_sqlite_source(source_path),
-            &crate::opencode_config::get_opencode_db_path(),
-        )?,
-        "hermes" if source_path.starts_with("sqlite:") => validate_sqlite_source(
-            source_path,
-            hermes::parse_sqlite_source(source_path),
-            &crate::hermes_config::get_hermes_dir().join("state.db"),
-        )?,
-        _ => {
-            let roots = provider_roots(provider_id)?;
-            let source = codex_source_or_sibling(provider_id, Path::new(source_path));
-            let (root, path) = resolve_under_roots(provider_id, &source, &roots)?;
-            SourceLocation::Path { path, root }
-        }
-    };
+    let roots = provider_roots(provider_id)?;
+    let source = codex_source_or_sibling(provider_id, Path::new(source_path));
+    let (root, path) = resolve_under_roots(provider_id, &source, &roots)?;
+    let location = SourceLocation::Path { path, root };
     Ok(ValidatedSource {
         provider_id: provider_id.to_string(),
         raw: source_path.to_string(),
@@ -164,20 +131,6 @@ pub(super) fn resolve_under_roots(
     ))
 }
 
-fn validate_sqlite_source(
-    raw: &str,
-    parsed: Option<(PathBuf, String)>,
-    expected_db: &Path,
-) -> Result<SourceLocation, String> {
-    let (db, session_id) = parsed.ok_or_else(|| format!("Invalid SQLite session source: {raw}"))?;
-    let db = canonicalize_existing_path(&db, "session database")?;
-    let expected = canonicalize_existing_path(expected_db, "session database")?;
-    if db != expected {
-        return Err("Session database is not the provider's own database".to_string());
-    }
-    Ok(SourceLocation::Sqlite { db, session_id })
-}
-
 // ── ContentRef ──────────────────────────────────────────────────────
 
 /// 分页后的全文（§5.1 `BlockContent`）。`offset` / `limit` / `total_len` 均按字符计。
@@ -223,26 +176,8 @@ pub fn resolve_content_ref(
             let value: Value = serde_json::from_slice(&line).map_err(|_| STALE.to_string())?;
             extract_text(&value, pointer)
         }
-        ContentRef::Sqlite {
-            table,
-            id,
-            column,
-            pointer,
-        } => {
-            let SourceLocation::Sqlite { db, session_id } = &source.location else {
-                return Err(STALE.to_string());
-            };
-            let raw = read_sqlite_cell(&source.provider_id, db, session_id, table, id, column)?;
-            if pointer.is_empty() {
-                return Ok(raw);
-            }
-            let value: Value = serde_json::from_str(&raw).map_err(|_| STALE.to_string())?;
-            extract_text(&value, pointer)
-        }
         ContentRef::File { rel_path, pointer } => {
-            let SourceLocation::Path { root, .. } = &source.location else {
-                return Err(OUTSIDE.to_string());
-            };
+            let SourceLocation::Path { root, .. } = &source.location;
             let file = safe_join(root, rel_path)?;
             let bytes = read_limited(&file, MAX_TEXT_BYTES, TOO_LARGE_TEXT)?;
             let value: Value = if source.provider_id == "gemini" {
@@ -267,9 +202,7 @@ pub fn resolve_content_ref(
         }
         ContentRef::Sidecar { rel_path } => {
             let base = source.sidecar_base().ok_or_else(|| OUTSIDE.to_string())?;
-            let SourceLocation::Path { root, .. } = &source.location else {
-                return Err(OUTSIDE.to_string());
-            };
+            let SourceLocation::Path { root, .. } = &source.location;
             let base = canonicalize_existing_path(&base, "sidecar directory")
                 .map_err(|_| "附属输出目录不存在".to_string())?;
             if !base.starts_with(root) {
@@ -288,9 +221,7 @@ pub(crate) const GROK_CHAT_HISTORY: &str = "chat_history.jsonl";
 /// `ContentRef::Jsonl` 指向的文件。一般就是会话源本身；Grok Build 的源是 `summary.json`，
 /// 正文在同目录固定名的 `chat_history.jsonl`——只认这一个文件名，规范化后仍须在会话根内。
 fn jsonl_path(source: &ValidatedSource) -> Result<PathBuf, String> {
-    let SourceLocation::Path { path, root } = &source.location else {
-        return Err(STALE.to_string());
-    };
+    let SourceLocation::Path { path, root } = &source.location;
     if source.provider_id != "grokbuild" {
         return Ok(path.clone());
     }
@@ -429,55 +360,6 @@ fn pretty_json(value: &Value) -> Result<String, String> {
     serde_json::to_string_pretty(value).map_err(|_| NOT_TEXT.to_string())
 }
 
-/// 各 provider 允许回取的 (表, 列)；id 与 session_id 用参数绑定，确保只能读本会话的行
-fn sqlite_allowed(provider_id: &str, table: &str, column: &str) -> bool {
-    let (tables, columns): (&[&str], &[&str]) = match provider_id {
-        "opencode" => (
-            &["part", "message", "session_message"],
-            &["data", "content"],
-        ),
-        // Hermes：正文、推理全文、tool_calls JSON（参数按 pointer 取）
-        "hermes" => (&["messages"], &["content", "reasoning", "tool_calls"]),
-        _ => (&[], &[]),
-    };
-    tables.contains(&table) && columns.contains(&column)
-}
-
-fn read_sqlite_cell(
-    provider_id: &str,
-    db: &Path,
-    session_id: &str,
-    table: &str,
-    id: &str,
-    column: &str,
-) -> Result<String, String> {
-    if !sqlite_allowed(provider_id, table, column) {
-        return Err("不支持的内容引用".to_string());
-    }
-    let conn = Connection::open_with_flags(
-        db,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|_| "无法打开会话数据库".to_string())?;
-    // 表名、列名来自上面的白名单，可以安全拼接
-    let sql = format!(
-        "SELECT length(CAST({column} AS BLOB)), {column} FROM {table} WHERE id = ?1 AND session_id = ?2"
-    );
-    let (size, cell): (Option<i64>, rusqlite::types::Value) = conn
-        .query_row(&sql, rusqlite::params![id, session_id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .map_err(|_| STALE.to_string())?;
-    if size.unwrap_or(0) as u64 > MAX_TEXT_BYTES {
-        return Err(TOO_LARGE_TEXT.to_string());
-    }
-    match cell {
-        rusqlite::types::Value::Text(text) => Ok(text),
-        rusqlite::types::Value::Blob(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
-        _ => Err(NOT_TEXT.to_string()),
-    }
-}
-
 /// 把相对路径拼到 `base` 下：只允许普通路径段，拼好后规范化（解析符号链接）再确认仍在 `base` 内。
 fn safe_join(base: &Path, rel_path: &str) -> Result<PathBuf, String> {
     let rel = Path::new(rel_path);
@@ -598,9 +480,8 @@ fn canonical_local_image(path: &str) -> Result<PathBuf, String> {
 /// 本地图片允许的目录（均已规范化）：会话根、会话附属目录、provider 自有目录
 fn local_image_dirs(source: &ValidatedSource) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let SourceLocation::Path { root, .. } = &source.location {
-        dirs.push(root.clone());
-    }
+    let SourceLocation::Path { root, .. } = &source.location;
+    dirs.push(root.clone());
     if let Some(base) = source.sidecar_base() {
         dirs.push(base);
     }
@@ -630,19 +511,12 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         return Some(dir.clone());
     }
 
-    use super::providers::{
-        claude, codex, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi,
-    };
+    use super::providers::{claude, codex, gemini, grokbuild};
     let sessions = match source.provider_id.as_str() {
         "codex" => codex::scan_sessions(),
         "claude" => claude::scan_sessions(),
-        "opencode" => opencode::scan_sessions(),
-        "openclaw" => openclaw::scan_sessions(),
         "gemini" => gemini::scan_sessions(),
         "grokbuild" => grokbuild::scan_sessions(),
-        "hermes" => hermes::scan_sessions(),
-        "pi" => pi::scan_sessions(),
-        "mcode" => mcode::scan_sessions(),
         _ => return None,
     };
     let project = sessions
@@ -770,25 +644,6 @@ mod tests {
             let err = resolve_under_roots("claude", &link, &roots).unwrap_err();
             assert!(err.contains("outside provider roots"));
         }
-    }
-
-    #[test]
-    fn sqlite_source_must_be_provider_database() {
-        let dir = tempdir().unwrap();
-        let own = dir.path().join("opencode.db");
-        let other = dir.path().join("other.db");
-        std::fs::write(&own, "").unwrap();
-        std::fs::write(&other, "").unwrap();
-
-        let raw = format!("sqlite:{}:ses_1", own.display());
-        let ok = validate_sqlite_source(&raw, opencode::parse_sqlite_source(&raw), &own).unwrap();
-        assert!(
-            matches!(ok, SourceLocation::Sqlite { ref session_id, .. } if session_id == "ses_1")
-        );
-
-        let raw = format!("sqlite:{}:ses_1", other.display());
-        assert!(validate_sqlite_source(&raw, opencode::parse_sqlite_source(&raw), &own).is_err());
-        assert!(hermes::parse_sqlite_source("sqlite:/x/state.db#").is_none());
     }
 
     /// 超长注入文本与压缩摘要只下发预览：`full` 必须能取回原文（Claude 与 Codex 解析器）
@@ -919,85 +774,6 @@ mod tests {
             std::os::unix::fs::symlink(&target, dir.join(GROK_CHAT_HISTORY)).unwrap();
             assert_eq!(resolve_content_ref(&source, &full).unwrap_err(), OUTSIDE);
         }
-    }
-
-    /// Hermes：推理全文与 tool_calls 参数按白名单列回取，仍限定本会话的行
-    #[test]
-    fn hermes_sqlite_refs_cover_reasoning_and_tool_calls() {
-        if crate::config::sqlite_unsupported_in_temp_dir() {
-            return;
-        }
-        use super::super::model::SessionBlock;
-        use super::super::providers::hermes;
-
-        let dir = tempdir().unwrap();
-        let db = dir.path().join("state.db");
-        let conn = Connection::open(&db).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE messages (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
-                 role TEXT NOT NULL, content TEXT, tool_call_id TEXT, tool_calls TEXT,
-                 tool_name TEXT, timestamp REAL NOT NULL, reasoning TEXT);",
-        )
-        .unwrap();
-        let reasoning = "r".repeat(1000);
-        let command = "c".repeat(1000);
-        let calls = serde_json::json!([
-            { "id": "c1", "function": { "name": "terminal", "arguments": serde_json::json!({ "command": command }).to_string() } },
-            { "id": "c2", "name": "terminal", "arguments": serde_json::json!({ "command": command }).to_string() },
-        ]);
-        conn.execute(
-            "INSERT INTO messages (session_id, role, content, tool_calls, timestamp, reasoning)
-             VALUES ('s1', 'assistant', 'ok', ?1, 1.0, ?2)",
-            rusqlite::params![calls.to_string(), reasoning],
-        )
-        .unwrap();
-        drop(conn);
-
-        let messages =
-            hermes::load_messages_sqlite(&format!("sqlite:{}#s1", db.display())).unwrap();
-        let source = ValidatedSource {
-            provider_id: "hermes".into(),
-            raw: String::new(),
-            location: SourceLocation::Sqlite {
-                db: db.canonicalize().unwrap(),
-                session_id: "s1".into(),
-            },
-        };
-        let mut seen = Vec::new();
-        for block in messages.iter().flat_map(|m| &m.blocks) {
-            let full = match block {
-                SessionBlock::Thinking { full: Some(f), .. } => f,
-                SessionBlock::ToolCall {
-                    input_full: Some(f),
-                    ..
-                } => f,
-                _ => continue,
-            };
-            seen.push(resolve_content_ref(&source, full).unwrap());
-        }
-        let args = serde_json::json!({ "command": command }).to_string();
-        assert_eq!(seen, vec![reasoning, args.clone(), args]);
-
-        // 别的会话读不到这一行；白名单外的列被拒
-        let other = ValidatedSource {
-            location: SourceLocation::Sqlite {
-                db: db.canonicalize().unwrap(),
-                session_id: "s2".into(),
-            },
-            ..source.clone()
-        };
-        let cell = |column: &str| ContentRef::Sqlite {
-            table: "messages".into(),
-            id: "1".into(),
-            column: column.into(),
-            pointer: String::new(),
-        };
-        assert_eq!(
-            resolve_content_ref(&other, &cell("reasoning")).unwrap_err(),
-            STALE
-        );
-        assert!(resolve_content_ref(&source, &cell("role")).is_err());
     }
 
     /// Gemini：多条思考合并成一个块，全文按同一口径格式化（不是 JSON）
@@ -1212,51 +988,6 @@ mod tests {
             .unwrap_err();
             assert_eq!(err, OUTSIDE);
         }
-    }
-
-    #[test]
-    fn sqlite_ref_is_scoped_to_whitelist_and_session() {
-        if crate::config::sqlite_unsupported_in_temp_dir() {
-            return;
-        }
-        let dir = tempdir().unwrap();
-        let db = dir.path().join("opencode.db");
-        let conn = Connection::open(&db).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE part (id TEXT, session_id TEXT, data TEXT);
-             INSERT INTO part VALUES ('p1', 'ses_1', '{\"state\":{\"output\":\"hello\"}}');
-             INSERT INTO part VALUES ('p2', 'ses_2', '{\"state\":{\"output\":\"other\"}}');",
-        )
-        .unwrap();
-        drop(conn);
-        let source = ValidatedSource {
-            provider_id: "opencode".into(),
-            raw: String::new(),
-            location: SourceLocation::Sqlite {
-                db,
-                session_id: "ses_1".into(),
-            },
-        };
-        let sqlite = |table: &str, id: &str, column: &str| ContentRef::Sqlite {
-            table: table.into(),
-            id: id.into(),
-            column: column.into(),
-            pointer: "/state/output".into(),
-        };
-        assert_eq!(
-            resolve_content_ref(&source, &sqlite("part", "p1", "data")).unwrap(),
-            "hello"
-        );
-        // 其他会话的行读不到
-        assert_eq!(
-            resolve_content_ref(&source, &sqlite("part", "p2", "data")).unwrap_err(),
-            STALE
-        );
-        // 表 / 列不在白名单
-        assert!(resolve_content_ref(&source, &sqlite("sqlite_master", "p1", "sql")).is_err());
-        assert!(
-            resolve_content_ref(&source, &sqlite("part; DROP TABLE part", "p1", "data")).is_err()
-        );
     }
 
     #[test]

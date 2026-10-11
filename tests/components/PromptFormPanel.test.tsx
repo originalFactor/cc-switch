@@ -78,16 +78,14 @@ describe("PromptFormPanel", () => {
 
   it("explains a missing name only after a save attempt", () => {
     const onSave = vi.fn();
-    render(
-      <PromptFormPanel appId="hermes" onSave={onSave} onClose={vi.fn()} />,
-    );
+    render(<PromptFormPanel appId="codex" onSave={onSave} onClose={vi.fn()} />);
 
     expect(
-      screen.queryByText("prompts.nameRequiredHermes"),
+      screen.queryByText("prompts.nameRequired"),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "prompts.addSubmit" }));
 
-    expect(screen.getByText("prompts.nameRequiredHermes")).toBeInTheDocument();
+    expect(screen.getByText("prompts.nameRequired")).toBeInTheDocument();
     expect(screen.getByLabelText(/prompts.name/)).toHaveAttribute(
       "aria-invalid",
       "true",
@@ -98,7 +96,7 @@ describe("PromptFormPanel", () => {
   it("names the overwritten file on the save button of the enabled prompt", () => {
     render(
       <PromptFormPanel
-        appId="hermes"
+        appId="claude"
         editingId="team"
         initialData={active}
         onSave={vi.fn()}
@@ -107,54 +105,13 @@ describe("PromptFormPanel", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "prompts.saveAndOverwrite:SOUL.md" }),
+      screen.getByRole("button", {
+        name: "prompts.saveAndOverwrite:CLAUDE.md",
+      }),
     ).toBeInTheDocument();
     // 删除只在列表里，编辑页底栏只有取消和保存
     expect(
       screen.queryByRole("button", { name: "common.delete" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("keeps Pi content as typed and writes AGENTS.md for the enabled prompt", async () => {
-    const onSave = vi.fn().mockResolvedValue(true);
-    render(
-      <PromptFormPanel
-        appId="pi"
-        editingId="team"
-        initialData={active}
-        onSave={onSave}
-        onClose={vi.fn()}
-      />,
-    );
-
-    fireEvent.change(screen.getByLabelText("prompts.content"), {
-      target: { value: "  spaced\n" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "prompts.saveAndWritePi" }),
-    );
-
-    await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith(
-        "team",
-        expect.objectContaining({ content: "  spaced\n", enabled: true }),
-      ),
-    );
-  });
-
-  it("refuses MiniMax Code prompts over 32 KB", () => {
-    const onSave = vi.fn();
-    render(<PromptFormPanel appId="mcode" onSave={onSave} onClose={vi.fn()} />);
-
-    fireEvent.change(screen.getByLabelText(/prompts.name/), {
-      target: { value: "Big" },
-    });
-    fireEvent.change(screen.getByLabelText("prompts.content"), {
-      target: { value: "a".repeat(32 * 1024 + 1) },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "prompts.addSubmit" }));
-
-    expect(screen.getByText("prompts.mcodeTooLarge")).toBeInTheDocument();
-    expect(onSave).not.toHaveBeenCalled();
   });
 });

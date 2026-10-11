@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,6 @@ import {
 } from "@/components/providers/forms/ProviderForm";
 import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
 import {
-  openclawApi,
   providersApi,
   vscodeApi,
   type AppId,
@@ -84,29 +83,6 @@ export function EditProviderDialog({
   useEffect(() => {
     setAuthSettingsTarget(null);
   }, [appId, open, provider?.id]);
-
-  const formReadyToken = useMemo(
-    () => Symbol("provider-form-ready"),
-    [appId, open, provider?.id],
-  );
-  const currentFormReadyToken = useRef(formReadyToken);
-  currentFormReadyToken.current = formReadyToken;
-  const [formReadyState, setFormReadyState] = useState({
-    token: formReadyToken,
-    ready: appId !== "pi",
-  });
-  const isFormReady =
-    formReadyState.token === formReadyToken
-      ? formReadyState.ready
-      : appId !== "pi";
-  const handleSubmitReadyChange = useCallback(
-    (ready: boolean) => {
-      if (currentFormReadyToken.current === formReadyToken) {
-        setFormReadyState({ token: formReadyToken, ready });
-      }
-    },
-    [formReadyToken],
-  );
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
@@ -189,37 +165,6 @@ export function EditProviderDialog({
         return;
       }
 
-      // OpenCode uses additive mode, while Pi's shared models.json is owned by
-      // the catalog coordinator. Neither has a per-provider generic live
-      // snapshot that may replace the DB aggregate in this form.
-      if (appId === "opencode" || appId === "pi" || appId === "mcode") {
-        if (!cancelled) {
-          setLiveSettings(null);
-          setHasLoadedLive(true);
-        }
-        return;
-      }
-
-      if (appId === "openclaw") {
-        try {
-          const live = await openclawApi.getLiveProvider(provider.id);
-          if (!cancelled && live && typeof live === "object") {
-            setLiveSettings(live);
-          } else if (!cancelled) {
-            setLiveSettings(null);
-          }
-        } catch {
-          if (!cancelled) {
-            setLiveSettings(null);
-          }
-        } finally {
-          if (!cancelled) {
-            setHasLoadedLive(true);
-          }
-        }
-        return;
-      }
-
       try {
         const currentId = await providersApi.getCurrent(appId);
         if (currentId && provider.id === currentId) {
@@ -289,11 +234,7 @@ export function EditProviderDialog({
         string,
         unknown
       >;
-      const nextProviderId =
-        (appId === "opencode" || appId === "openclaw" || appId === "pi") &&
-        values.providerKey?.trim()
-          ? values.providerKey.trim()
-          : provider.id;
+      const nextProviderId = provider.id;
 
       const updatedProvider: Provider = {
         ...provider,
@@ -373,7 +314,7 @@ export function EditProviderDialog({
       }
       backLabel={t("provider.backToList")}
       onClose={handlePanelClose}
-      contentClassName={appId === "pi" ? "pb-0 pt-4" : "pt-4"}
+      contentClassName="pt-4"
       footer={
         <>
           <Button
@@ -389,7 +330,7 @@ export function EditProviderDialog({
             form="provider-form"
             variant="solid"
             size="regular"
-            disabled={isFormSubmitting || !isFormReady}
+            disabled={isFormSubmitting}
           >
             {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {t("common.save")}
@@ -411,7 +352,6 @@ export function EditProviderDialog({
           onCancel={closeDialog}
           onManageAuthAccounts={setAuthSettingsTarget}
           onSubmittingChange={setIsFormSubmitting}
-          onSubmitReadyChange={handleSubmitReadyChange}
           initialData={initialData}
           showButtons={false}
           isProxyTakeover={isProxyTakeover}

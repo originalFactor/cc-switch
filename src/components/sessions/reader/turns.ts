@@ -27,17 +27,9 @@ import {
 
 // ─── turn 结构 ────────────────────────────────────────────────────────────
 
-/** OpenCode step-finish 的 tokens / 费用，并入该段最后一步（或最终回复）的元信息 */
-export interface StepCost {
-  tokens?: number;
-  costUsd?: number;
-  reason?: string;
-}
-
 interface StepBase {
   /** 稳定 key：展开状态、搜索命中、虚拟列表行 key 都用它 */
   id: string;
-  cost?: StepCost;
 }
 
 export interface ToolStep extends StepBase {
@@ -118,7 +110,6 @@ export interface TurnFinal {
   images: ImageRef[];
   ts?: number;
   model?: string;
-  cost?: StepCost;
 }
 
 export interface SessionTurn {
@@ -138,8 +129,6 @@ export interface SessionTurn {
   trailingEvents: TurnEvent[];
   /** 注入型消息的下标（默认隐藏，决策 D10） */
   injected: number[];
-  /** 本轮所有 step-finish 的费用（含没有落到任何步骤上的段） */
-  stepCosts: StepCost[];
   aborted: boolean;
   ts?: number;
   endTs?: number;
@@ -330,7 +319,6 @@ const buildTurn = (
     steps: [],
     trailingEvents: [],
     injected: [],
-    stepCosts: [],
     aborted: false,
   };
 
@@ -349,8 +337,6 @@ const buildTurn = (
     string,
     { block: ToolResultBlock; messageIndex: number }
   >();
-  let finalCost: StepCost | undefined;
-  let segmentStart = 0;
   const finalImages: ImageRef[] = [];
   const finalTexts: SessionBlock[] = [];
 
@@ -466,25 +452,6 @@ const buildTurn = (
           steps.push(lastEventInMessage);
           return;
         }
-        case "step": {
-          if (block.phase === "start") {
-            segmentStart = steps.length;
-            return;
-          }
-          const cost: StepCost = {
-            tokens: block.tokens,
-            costUsd: block.costUsd,
-            reason: block.reason,
-          };
-          turn.stepCosts.push(cost);
-          if (steps.length > segmentStart) {
-            steps[steps.length - 1].cost = cost;
-          } else {
-            finalCost = cost;
-          }
-          segmentStart = steps.length;
-          return;
-        }
       }
     });
   }
@@ -522,7 +489,6 @@ const buildTurn = (
       images: finalImages,
       ts: message.ts,
       model: message.meta?.model,
-      cost: finalCost,
     };
   }
   turn.steps = mergeSteps(steps, style);

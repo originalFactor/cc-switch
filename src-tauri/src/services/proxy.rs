@@ -193,9 +193,6 @@ impl ProxyService {
             codex,
             gemini,
             grokbuild,
-            // OpenCode and OpenClaw don't support proxy features
-            opencode: false,
-            openclaw: false,
         })
     }
 

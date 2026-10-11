@@ -40,7 +40,6 @@ import type {
   ProviderCategory,
   ProviderMeta,
 } from "@/types";
-import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import {
   CLAUDE_DESKTOP_ROLE_ROUTE_IDS,
   claudeDesktopProviderPresets,
@@ -68,7 +67,6 @@ export type ClaudeDesktopProviderFormValues = ProviderFormData & {
   partnerPromotionKey?: string;
   meta?: ProviderMeta;
   providerKey?: string;
-  suggestedDefaults?: OpenClawSuggestedDefaults;
 };
 
 type ApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";

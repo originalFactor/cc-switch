@@ -2,12 +2,10 @@ import { formatMessageTime } from "../utils";
 import type { AgentReaderStyle } from "./agentStyles";
 import { describeEvent } from "./SessionEventRow";
 import {
-  formatCost,
   formatDuration,
   formatMergedTitle,
   formatStepMeta,
   formatStepTitle,
-  formatTokens,
   isFailureStatus,
   type StepMeta,
   type Translate,
@@ -36,10 +34,6 @@ const metaText = (meta: StepMeta, t: Translate) => {
   }
   if (meta.diff) parts.push(`+${meta.diff.added} −${meta.diff.removed}`);
   if (meta.durationMs) parts.push(formatDuration(meta.durationMs));
-  if (meta.tokens !== undefined) {
-    parts.push(t("summaryTokens", { tokens: formatTokens(meta.tokens) }));
-  }
-  if (meta.costUsd !== undefined) parts.push(formatCost(meta.costUsd));
   return parts.length ? ` — ${parts.join(" · ")}` : "";
 };
 

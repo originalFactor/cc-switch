@@ -2,7 +2,7 @@ import { memo, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import type { StatusTone, StepMeta } from "./toolSummary";
-import { formatCost, formatDuration, formatTokens } from "./toolSummary";
+import { formatDuration } from "./toolSummary";
 import { useReaderT } from "./i18n";
 
 /**
@@ -85,16 +85,6 @@ export const StepMetaText = memo(function StepMetaText({
     parts.push(
       <span key="lines">{rt("lines", { count: meta.lineCount })}</span>,
     );
-  }
-  if (meta.tokens !== undefined) {
-    parts.push(
-      <span key="tok">
-        {rt("summaryTokens", { tokens: formatTokens(meta.tokens) })}
-      </span>,
-    );
-  }
-  if (meta.costUsd !== undefined) {
-    parts.push(<span key="cost">{formatCost(meta.costUsd)}</span>);
   }
   if (parts.length === 0) return null;
   return (

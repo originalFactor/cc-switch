@@ -140,41 +140,8 @@ export function secretCountOf(conn: McpDraftConnection): number {
   return rows.filter((row) => row.key.trim()).length;
 }
 
-// ─── 写法归一（OpenCode local/remote、streamable-http、http_headers） ─────────
-function fromOpenCode(value: Record<string, unknown>): McpServerSpec {
-  if (
-    value.type === "remote" ||
-    (typeof value.url === "string" && !value.command)
-  ) {
-    const spec: McpServerSpec = {
-      type: "http",
-      url: typeof value.url === "string" ? value.url : "",
-    };
-    if (isObject(value.headers)) {
-      spec.headers = value.headers as Record<string, string>;
-    }
-    return spec;
-  }
-  const command = Array.isArray(value.command)
-    ? value.command.map(String)
-    : [String(value.command ?? "")];
-  const spec: McpServerSpec = { type: "stdio", command: command[0] ?? "" };
-  if (command.length > 1) spec.args = command.slice(1);
-  if (isObject(value.environment)) {
-    spec.env = value.environment as Record<string, string>;
-  }
-  if (isObject(value.env)) spec.env = value.env as Record<string, string>;
-  return spec;
-}
-
+// ─── 写法归一（streamable-http、http_headers） ──────────────────────────────
 export function normalizeSpec(value: Record<string, unknown>): McpServerSpec {
-  if (
-    Array.isArray(value.command) ||
-    value.type === "local" ||
-    value.type === "remote"
-  ) {
-    return fromOpenCode(value);
-  }
   const spec = JSON.parse(JSON.stringify(value)) as McpServerSpec;
   const rawType = String(spec.type ?? "");
   if (rawType === "streamable-http" || rawType === "streamableHttp") {
@@ -212,7 +179,6 @@ function entriesOf(map: Record<string, unknown>) {
 // ─── 粘贴识别 ────────────────────────────────────────────────────────────
 export type PasteFormat =
   | "mcpServers"
-  | "opencode"
   | "codex"
   | "codexToml"
   | "single"
@@ -234,14 +200,6 @@ function recognizeObject(obj: Record<string, unknown>): PasteResult {
   if (isObject(obj.mcpServers)) {
     items = entriesOf(obj.mcpServers);
     format = "mcpServers";
-  } else if (isObject(obj.mcp)) {
-    items = Object.entries(obj.mcp)
-      .filter(([, value]) => isObject(value))
-      .map(([name, value]) => ({
-        name,
-        spec: fromOpenCode(value as Record<string, unknown>),
-      }));
-    format = "opencode";
   } else if (isObject(obj.mcp_servers)) {
     items = entriesOf(obj.mcp_servers);
     format = "codex";
@@ -261,7 +219,7 @@ function recognizeObject(obj: Record<string, unknown>): PasteResult {
 
 /**
  * 识别粘贴进来的 MCP 配置：单个服务器对象、"名称": {…}、{"mcpServers": {…}}、
- * Codex 的 [mcp_servers.名称]（TOML）或 mcp_servers（JSON）、OpenCode 的 mcp.local / remote。
+ * Codex 的 [mcp_servers.名称]（TOML）或 mcp_servers（JSON）。
  * 空文本返回 null。
  */
 export function recognizePaste(text: string): PasteResult | null {

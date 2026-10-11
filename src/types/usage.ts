@@ -209,18 +209,8 @@ export interface UsageRangeSelection {
  * only ever show a partial number and mislead users into reading it as the
  * Desktop's full usage. The backend collapses `claude-desktop → claude` in
  * every dashboard query (see `folded_app_type_sql`).
- * `opencode` and `pi` have no proxy handler; their usage reaches this
- * dashboard through session importers. `openclaw` / `hermes` appear only as
- * managed apps elsewhere.
  */
-export type AppType =
-  | "claude"
-  | "codex"
-  | "gemini"
-  | "grokbuild"
-  | "opencode"
-  | "pi"
-  | "mcode";
+export type AppType = "claude" | "codex" | "gemini" | "grokbuild";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -229,9 +219,6 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "codex",
   "gemini",
   "grokbuild",
-  "opencode",
-  "pi",
-  "mcode",
 ];
 
 /**
@@ -252,14 +239,6 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "grokbuild",
 ]);
 
-// Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates
-// only by app type. Treat cache-write coverage as partial without changing
-// Pi's fresh-input token semantics.
-const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
-  "pi",
-  "mcode",
-]);
-
 export type CacheWriteAvailability = "ok" | "partial" | "na";
 
 export function getCacheWriteAvailability(
@@ -270,10 +249,7 @@ export function getCacheWriteAvailability(
     CACHE_INCLUSIVE_APP_TYPES.has(appType),
   ).length;
   if (unavailable === appTypes.length) return "na";
-  const partial = appTypes.some((appType) =>
-    PARTIAL_CACHE_WRITE_APP_TYPES.has(appType),
-  );
-  return unavailable === 0 && !partial ? "ok" : "partial";
+  return unavailable === 0 ? "ok" : "partial";
 }
 
 /** Subset of request-log fields needed to derive cache-normalized input. */

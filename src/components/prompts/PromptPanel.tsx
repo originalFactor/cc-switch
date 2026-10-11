@@ -6,7 +6,6 @@ import { promptsApi, type AppId, type Prompt } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
-import PiPromptPanel from "./PiPromptPanel";
 import PromptFormPanel from "./PromptFormPanel";
 import {
   PromptEmptyState,
@@ -15,7 +14,7 @@ import {
 } from "./PromptLibrary";
 import { PromptCopyDialog } from "./PromptCopyDialog";
 import { PromptPageFrame } from "./PromptPageFrame";
-import { toggleEffectText, usePromptPageCommon } from "./usePromptPageCommon";
+import { usePromptPageCommon } from "./usePromptPageCommon";
 import {
   copyText,
   formatSize,
@@ -255,14 +254,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       if (refreshed === false) {
         externalReloadQueuedRef.current = true;
       }
-      const effect = toggleEffectText(t, app, enabled);
       if (!enabled) {
         showPromptToast(t, {
           title: t("prompts.toast.disabled", {
             name: target.name,
             path: displayPath,
           }),
-          description: effect || undefined,
           onUndo: async () => {
             await promptsApi.enablePrompt(app, id);
             afterUndo(app);
@@ -275,12 +272,9 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       const backup = Object.entries(after).find(
         ([key]) => !(key in before) && key.startsWith("backup-"),
       );
-      const description = [
-        backup ? t("prompts.toast.backup", { name: backup[1].name }) : "",
-        effect,
-      ]
-        .filter(Boolean)
-        .join(t("prompts.toast.joiner"));
+      const description = backup
+        ? t("prompts.toast.backup", { name: backup[1].name })
+        : "";
       // 撤销只给能原样还原的：之前有启用中的就换回去；之前文件是空的就停用
       const onUndo = previousActive
         ? async () => {
@@ -330,7 +324,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
             name: prompt.name,
             path: displayPath,
           }),
-          description: toggleEffectText(t, appId, true) || undefined,
         });
       } else {
         showPromptToast(t, {
@@ -475,7 +468,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
         ? t("prompts.fileEmpty")
         : formatSize(utf8Bytes(fileText));
   const resultCount = filterPromptEntries(promptEntries, searchQuery).length;
-  const isHermes = appId === "hermes";
 
   return (
     <PromptPageFrame
@@ -484,14 +476,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       onAppChange={onAppChange}
       appSwitchDisabled={navigationBlocked}
       count={promptEntries.length}
-      help={
-        isHermes
-          ? {
-              title: t("prompts.helpHermesTitle"),
-              text: t("prompts.helpHermesText"),
-            }
-          : { title: t("prompts.helpTitle"), text: t("prompts.helpText") }
-      }
+      help={{ title: t("prompts.helpTitle"), text: t("prompts.helpText") }}
       primary={{
         label: t("prompts.add"),
         onClick: handleAdd,
@@ -580,20 +565,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   );
 };
 
-const PromptPanel: React.FC<PromptPanelProps> = (props) => {
-  if (props.appId === "pi") {
-    return (
-      <PiPromptPanel
-        open={props.open ?? true}
-        apps={props.apps}
-        onAppChange={props.onAppChange}
-        onInteractionBlockedChange={props.onInteractionBlockedChange}
-        onNavigationBlockedChange={props.onNavigationBlockedChange}
-      />
-    );
-  }
-
-  return <StandardPromptPanel {...props} />;
-};
+const PromptPanel: React.FC<PromptPanelProps> = (props) => (
+  <StandardPromptPanel {...props} />
+);
 
 export default PromptPanel;

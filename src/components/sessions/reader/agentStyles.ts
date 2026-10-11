@@ -4,13 +4,13 @@ import type { SessionAppId } from "../utils";
 /**
  * 会话阅读页的 Agent 风格配置。
  *
- * 五家 Agent 共用同一套版式骨架，只用这份配置区分符号、动作叫法、主题色和合并规则；
- * 没有专属配置的来源（Hermes / OpenClaw / Grok Build / MiniMax Code）一律用 generic。
+ * 四家 Agent 共用同一套版式骨架，只用这份配置区分符号、动作叫法、主题色和合并规则；
+ * 没有专属配置的来源一律用 generic。
  * 主题色只用于提问竖条和助手 glyph，正文保持中性（决策 D4）。
  */
 
 export type ReaderStyleId =
-  | Extract<SessionAppId, "claude" | "codex" | "gemini" | "opencode" | "pi">
+  | Extract<SessionAppId, "claude" | "codex" | "gemini">
   | "generic";
 
 export interface AgentReaderStyle {
@@ -33,8 +33,8 @@ export interface AgentReaderStyle {
   thinkingGlyph: string;
   /** 思考行标签的 i18n key（sessionManager.reader.thinking.*） */
   thinkingLabelKey: string;
-  /** 标题格式：call = Name(arg)；verb = 动词 + arg；icon = 符号 + Name arg */
-  titleFormat: "call" | "verb" | "icon";
+  /** 标题格式：call = Name(arg)；verb = 动词 + arg */
+  titleFormat: "call" | "verb";
   /**
    * 每类工具的动词/名称：固定字面（Agent 原生叫法，不翻译），
    * 或以 `sessionManager.reader.verb.` 开头的 i18n key（generic 用）。
@@ -45,7 +45,6 @@ export interface AgentReaderStyle {
   merge: { readSearchRuns: boolean; mcpSameServerRuns: boolean };
   /** 元信息 */
   showDiffCounts: boolean;
-  showStepCost: boolean;
   showExitCode: "always" | "nonzero";
   /** 字体：步骤标题是否 mono */
   monoTitles: boolean;
@@ -71,7 +70,6 @@ const claude: AgentReaderStyle = {
   verbs: {},
   merge: { readSearchRuns: false, mcpSameServerRuns: true },
   showDiffCounts: true,
-  showStepCost: false,
   showExitCode: "nonzero",
   monoTitles: true,
 };
@@ -101,7 +99,6 @@ const codex: AgentReaderStyle = {
   },
   merge: { readSearchRuns: true, mcpSameServerRuns: false },
   showDiffCounts: true,
-  showStepCost: false,
   showExitCode: "nonzero",
   monoTitles: false,
 };
@@ -131,63 +128,6 @@ const gemini: AgentReaderStyle = {
   },
   merge: { readSearchRuns: false, mcpSameServerRuns: false },
   showDiffCounts: true,
-  showStepCost: false,
-  showExitCode: "nonzero",
-  monoTitles: true,
-};
-
-const opencode: AgentReaderStyle = {
-  id: "opencode",
-  accentVar: "--agent-opencode",
-  assistantGlyph: "",
-  userGlyph: "",
-  step: { success: "✓", error: "✗", pending: "~", interrupted: "✗" },
-  resultFrame: "tree",
-  resultConnector: "│",
-  thinkingGlyph: "",
-  thinkingLabelKey: "sessionManager.reader.thinking.opencode",
-  titleFormat: "icon",
-  verbs: {
-    shell: "",
-    read: "Read",
-    search: "Grep",
-    edit: "Edit",
-    write: "Wrote",
-    web: "WebFetch",
-    agent: "Task",
-    ask: "Asked",
-    todo: "Todos",
-  },
-  merge: { readSearchRuns: false, mcpSameServerRuns: false },
-  showDiffCounts: true,
-  showStepCost: true,
-  showExitCode: "nonzero",
-  monoTitles: true,
-};
-
-const pi: AgentReaderStyle = {
-  id: "pi",
-  accentVar: "--agent-pi",
-  assistantGlyph: "",
-  userGlyph: "",
-  // Pi 原生用整块背景表状态；这里统一为圆点 + 左侧竖条着色
-  step: { success: "●", error: "●", pending: "●", interrupted: "●" },
-  resultFrame: "none",
-  resultConnector: "",
-  thinkingGlyph: "",
-  thinkingLabelKey: "sessionManager.reader.thinking.pi",
-  titleFormat: "verb",
-  verbs: {
-    shell: "bash",
-    read: "read",
-    search: "grep",
-    edit: "edit",
-    write: "write",
-    web: "fetch",
-  },
-  merge: { readSearchRuns: false, mcpSameServerRuns: false },
-  showDiffCounts: true,
-  showStepCost: false,
   showExitCode: "nonzero",
   monoTitles: true,
 };
@@ -218,14 +158,13 @@ const generic: AgentReaderStyle = {
   },
   merge: { readSearchRuns: false, mcpSameServerRuns: false },
   showDiffCounts: true,
-  showStepCost: false,
   showExitCode: "nonzero",
   monoTitles: true,
 };
 
 export const AGENT_READER_STYLES: Readonly<
   Record<ReaderStyleId, AgentReaderStyle>
-> = { claude, codex, gemini, opencode, pi, generic };
+> = { claude, codex, gemini, generic };
 
 /** 按会话来源取风格；没有专属配置的来源映射到 generic */
 export const getAgentReaderStyle = (

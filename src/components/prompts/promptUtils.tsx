@@ -4,9 +4,6 @@ import { toast } from "@/lib/toast";
 import type { AppId } from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
-/** MiniMax Code 的全局说明上限（后端 validate_prompt_content，按 UTF-8 字节算）。 */
-export const MCODE_PROMPT_LIMIT = 32 * 1024;
-
 /** 带「撤销」的 toast 停 10 秒（悬停时 sonner 自动暂停计时），不带的用默认时长。 */
 const UNDO_TOAST_DURATION = 10_000;
 
@@ -16,11 +13,6 @@ const PROMPT_FILE_NAME: Partial<Record<AppId, string>> = {
   codex: "AGENTS.md",
   gemini: "GEMINI.md",
   grokbuild: "AGENTS.md",
-  opencode: "AGENTS.md",
-  openclaw: "AGENTS.md",
-  hermes: "SOUL.md",
-  pi: "AGENTS.md",
-  mcode: "AGENTS.md",
 };
 
 export function promptFileName(app: AppId): string {

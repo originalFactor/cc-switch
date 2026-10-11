@@ -65,11 +65,7 @@ impl Database {
             id TEXT PRIMARY KEY, name TEXT NOT NULL, server_config TEXT NOT NULL,
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
-            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -97,9 +93,6 @@ impl Database {
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
-            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -576,6 +569,13 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!(
+                            "迁移数据库从 v20 到 v21（移除 OpenCode / OpenClaw / Hermes / Pi / MiniMax Code 支持）"
+                        );
+                        Self::migrate_v20_to_v21_remove_legacy_apps(conn)?;
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1624,6 +1624,82 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// v20 -> v21: 彻底移除 OpenCode / OpenClaw / Hermes / Pi / MiniMax Code 支持。
+    ///
+    /// 两步，顺序不能反：
+    /// 1. **清理数据**：这些应用已从 `AppType` 中删除，残留行再也无法被任何代码路径
+    ///    读到或删掉。先按 `app_type` 清掉 providers / prompts / 各类用量与代理日志，
+    ///    再清掉它们专用的 settings 键（目录覆盖、当前供应商、通用配置片段）。
+    ///    MCP / Skills 是"一行多应用标志"的形状，只删列不删行——同一行往往还挂着
+    ///    保留应用。
+    /// 2. **删除列**：`mcp_servers` / `skills` 上五个应用各自的 enabled_* 列。
+    ///
+    /// 两步都在同一个 savepoint 里，失败整体回滚。
+    fn migrate_v20_to_v21_remove_legacy_apps(conn: &Connection) -> Result<(), AppError> {
+        // 已移除应用的 AppType::as_str() 值。
+        const REMOVED_APPS: [&str; 5] = ["opencode", "openclaw", "hermes", "pi", "mcode"];
+
+        // ---- 1. 清理按 app_type 分行的数据 ----
+        for table in [
+            "providers",
+            "provider_endpoints",
+            "provider_health",
+            "proxy_request_logs",
+            "stream_check_logs",
+            "proxy_live_backup",
+            "usage_daily_rollups",
+            "prompts",
+            "profiles",
+        ] {
+            if !Self::table_exists(conn, table)? || !Self::has_column(conn, table, "app_type")? {
+                continue;
+            }
+            for app in REMOVED_APPS {
+                let sql = format!("DELETE FROM {table} WHERE app_type = ?1");
+                conn.execute(&sql, params![app]).map_err(|e| {
+                    AppError::Database(format!("清理 {table} 中已移除应用 {app} 的数据失败: {e}"))
+                })?;
+            }
+        }
+
+        // ---- 2. 清理这些应用专用的 settings 键 ----
+        // 目录覆盖：<app>_config_dir；当前供应商：current_provider_<app>；
+        // 通用配置片段：common_config_<app>_cleared（片段值本身存同名键）。
+        if Self::table_exists(conn, "settings")? {
+            for app in REMOVED_APPS {
+                for key in [
+                    format!("{app}_config_dir"),
+                    format!("current_provider_{app}"),
+                    format!("common_config_{app}_cleared"),
+                    format!("common_config_{app}"),
+                ] {
+                    conn.execute("DELETE FROM settings WHERE key = ?1", params![key])
+                        .map_err(|e| {
+                            AppError::Database(format!("清理 settings 键 {key} 失败: {e}"))
+                        })?;
+                }
+            }
+        }
+
+        // ---- 3. 删除 MCP / Skills 上五个应用的启用标志列 ----
+        for table in ["mcp_servers", "skills"] {
+            if !Self::table_exists(conn, table)? {
+                continue;
+            }
+            for column in [
+                "enabled_opencode",
+                "enabled_openclaw",
+                "enabled_hermes",
+                "enabled_pi",
+                "enabled_mcode",
+            ] {
+                Self::drop_column_if_present(conn, table, column)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -3740,6 +3816,31 @@ impl Database {
         log::info!("已为表 {table} 添加缺失列 {column}");
         Ok(true)
     }
+
+    /// 删除已存在的列；列不存在时静默跳过。
+    ///
+    /// SQLite 3.35+ 支持 `ALTER TABLE ... DROP COLUMN`，bundled 版本远高于此。
+    /// 但带索引/约束引用的列删不掉，所以这里对"删不掉"退化为**保留列**而不是让整个
+    /// 迁移失败——留一列无人读写的死列，比让用户卡在启动迁移上要好得多。
+    fn drop_column_if_present(
+        conn: &Connection,
+        table: &str,
+        column: &str,
+    ) -> Result<(), AppError> {
+        Self::validate_identifier(table, "表名")?;
+        Self::validate_identifier(column, "列名")?;
+
+        if !Self::table_exists(conn, table)? || !Self::has_column(conn, table, column)? {
+            return Ok(());
+        }
+
+        let sql = format!("ALTER TABLE \"{table}\" DROP COLUMN \"{column}\";");
+        match conn.execute(&sql, []) {
+            Ok(_) => log::info!("已删除表 {table} 的废弃列 {column}"),
+            Err(e) => log::warn!("删除表 {table} 的废弃列 {column} 失败，保留该列: {e}"),
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -3829,12 +3930,20 @@ mod tests {
         Database::apply_schema_migrations_on_conn(&conn)?;
 
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        let values: (i64, i64, i64) = conn.query_row(
-            "SELECT enabled_codex, enabled_mcode, enabled_pi FROM mcp_servers WHERE id = 'mcp-1'",
+        // v20 adds enabled_pi; v21 then removes the columns for every app that is
+        // no longer supported. Only the surviving flag may remain.
+        let codex: i64 = conn.query_row(
+            "SELECT enabled_codex FROM mcp_servers WHERE id = 'mcp-1'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| row.get(0),
         )?;
-        assert_eq!(values, (1, 1, 0));
+        assert_eq!(codex, 1);
+        for column in ["enabled_pi", "enabled_mcode", "enabled_opencode"] {
+            assert!(
+                !Database::has_column(&conn, "mcp_servers", column)?,
+                "{column} should be dropped for the removed apps"
+            );
+        }
         Ok(())
     }
 
@@ -3982,6 +4091,103 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_purges_removed_apps_and_drops_their_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+
+        // create_tables 用的是 v21 之后的裁剪版 DDL，这里补回 v20 才有的
+        // 已移除应用列，才能验证迁移确实会删掉它们。
+        for table in ["mcp_servers", "skills"] {
+            for column in [
+                "enabled_opencode",
+                "enabled_openclaw",
+                "enabled_hermes",
+                "enabled_pi",
+                "enabled_mcode",
+            ] {
+                conn.execute(
+                    &format!(
+                        "ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" BOOLEAN NOT NULL DEFAULT 0"
+                    ),
+                    [],
+                )?;
+            }
+        }
+
+        // 保留应用的数据必须原样活着。
+        conn.execute_batch(
+            "INSERT INTO providers (id, app_type, name, settings_config, is_current)
+             VALUES ('keep', 'codex', 'keep', '{}', 1),
+                    ('gone', 'opencode', 'gone', '{}', 0);
+             INSERT INTO prompts (id, app_type, name, content)
+             VALUES ('keep', 'claude', 'keep', 'body'),
+                    ('gone', 'hermes', 'gone', 'body');
+             INSERT INTO mcp_servers (id, name, server_config, enabled_codex, enabled_opencode)
+             VALUES ('mcp', 'mcp', '{}', 1, 1);
+             INSERT INTO skills (id, name, directory, enabled_codex, enabled_pi)
+             VALUES ('skill', 'skill', 'dir', 1, 1);
+             INSERT INTO settings (key, value)
+             VALUES ('current_provider_opencode', 'gone'),
+                    ('opencode_config_dir', '/tmp/oc'),
+                    ('pi_config_dir', '/tmp/pi'),
+                    ('language', 'en');",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+
+        let provider_apps: Vec<String> = conn
+            .prepare("SELECT app_type FROM providers")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        assert_eq!(provider_apps, vec!["codex".to_string()]);
+
+        let prompt_apps: Vec<String> = conn
+            .prepare("SELECT app_type FROM prompts")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        assert_eq!(prompt_apps, vec!["claude".to_string()]);
+
+        // 共享行保留，只丢掉已移除应用的列。
+        let mcp_codex: i64 =
+            conn.query_row("SELECT enabled_codex FROM mcp_servers", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(mcp_codex, 1);
+        let skill_codex: i64 =
+            conn.query_row("SELECT enabled_codex FROM skills", [], |row| row.get(0))?;
+        assert_eq!(skill_codex, 1);
+        for (table, column) in [
+            ("mcp_servers", "enabled_opencode"),
+            ("mcp_servers", "enabled_openclaw"),
+            ("mcp_servers", "enabled_hermes"),
+            ("mcp_servers", "enabled_pi"),
+            ("mcp_servers", "enabled_mcode"),
+            ("skills", "enabled_opencode"),
+            ("skills", "enabled_openclaw"),
+            ("skills", "enabled_hermes"),
+            ("skills", "enabled_pi"),
+            ("skills", "enabled_mcode"),
+        ] {
+            assert!(
+                !Database::has_column(&conn, table, column)?,
+                "{table}.{column} should be dropped"
+            );
+        }
+
+        // 已移除应用的 settings 键被清掉，无关键保留。
+        let keys: Vec<String> = conn
+            .prepare("SELECT key FROM settings ORDER BY key")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        assert_eq!(keys, vec!["language".to_string()]);
+
         Ok(())
     }
 }

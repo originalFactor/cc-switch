@@ -19,7 +19,6 @@ import {
   hasHighlightableMarkdownMatch,
   SessionMarkdown,
 } from "./SessionMarkdown";
-import { formatCost, formatTokens } from "./toolSummary";
 import type { TurnFinal } from "./turns";
 
 const SNIPPET_RADIUS = 60;
@@ -57,7 +56,7 @@ export const SessionFinalReply = memo(function SessionFinalReply({
 }: SessionFinalReplyProps) {
   const { t } = useTranslation();
   const rt = useReaderT();
-  const { style, projectDir, searchQuery, onCopy } = useReaderContext();
+  const { projectDir, searchQuery, onCopy } = useReaderContext();
   const [expanded, setExpanded] = useState(false);
   const text = final.text;
   const long = text.length > COLLAPSE_THRESHOLD;
@@ -90,8 +89,6 @@ export const SessionFinalReply = memo(function SessionFinalReply({
     ),
     [],
   );
-
-  const cost = style.showStepCost ? final.cost : undefined;
 
   return (
     <div className="group/final relative min-w-0 px-1.5 py-1">
@@ -140,14 +137,6 @@ export const SessionFinalReply = memo(function SessionFinalReply({
           variant="result"
           className="mt-2"
         />
-        {cost && (cost.tokens !== undefined || cost.costUsd !== undefined) && (
-          <div className="mt-1.5 text-caption tabular-nums text-fg-3">
-            {cost.tokens !== undefined &&
-              rt("summaryTokens", { tokens: formatTokens(cost.tokens) })}
-            {cost.tokens !== undefined && cost.costUsd !== undefined && " · "}
-            {cost.costUsd !== undefined && formatCost(cost.costUsd)}
-          </div>
-        )}
         {hiddenMatches.length > 0 && searchQuery && (
           <div className="mt-2 rounded-[8px] border border-border px-3 py-2 text-caption text-fg-2">
             <div className="mb-1 font-medium text-fg-3">{rt("rawMatch")}</div>

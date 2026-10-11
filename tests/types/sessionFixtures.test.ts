@@ -11,7 +11,6 @@ import type {
   MessageMeta,
   SessionBlock,
   SessionMessage,
-  StepBlock,
   TextBlock,
   ThinkingBlock,
   ToolCallBlock,
@@ -23,8 +22,6 @@ import claude from "../fixtures/sessions/claude.messages.json";
 import codex from "../fixtures/sessions/codex.messages.json";
 import gemini from "../fixtures/sessions/gemini.messages.json";
 import generic from "../fixtures/sessions/generic.messages.json";
-import opencode from "../fixtures/sessions/opencode.messages.json";
-import pi from "../fixtures/sessions/pi.messages.json";
 
 /**
  * tests/fixtures/sessions/*.messages.json 是后端解析结果的契约样例（Rust 侧在
@@ -172,7 +169,6 @@ const BLOCK_TYPES = allOf<SessionBlock["type"]>()([
   "tool_result",
   "image",
   "event",
-  "step",
 ] as const);
 
 const lit = (value: string) => oneOf([value]);
@@ -182,13 +178,6 @@ const contentRef = tagged<ContentRef, "kind">("kind", {
     kind: req(lit("jsonl")),
     offset: req(int),
     len: req(int),
-    pointer: req(str),
-  }),
-  sqlite: object<Extract<ContentRef, { kind: "sqlite" }>>({
-    kind: req(lit("sqlite")),
-    table: req(str),
-    id: req(str),
-    column: req(str),
     pointer: req(str),
   }),
   file: object<Extract<ContentRef, { kind: "file" }>>({
@@ -286,13 +275,6 @@ const sessionBlock = tagged<SessionBlock, "type">("type", {
     url: opt(str),
     full: opt(contentRef),
   }),
-  step: object<StepBlock>({
-    type: req(lit("step")),
-    phase: req(oneOf(["start", "finish"])),
-    tokens: opt(int),
-    costUsd: opt(num),
-    reason: opt(str),
-  }),
 });
 
 const messageMeta = object<MessageMeta>({
@@ -335,8 +317,6 @@ const fixtures: Record<string, unknown> = {
   claude,
   codex,
   gemini,
-  opencode,
-  pi,
   generic,
 };
 

@@ -306,10 +306,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
-         WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
-         WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
-         WHEN '_pi_session' THEN 'Pi (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -403,7 +400,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ('session_log', 'codex_session', 'gemini_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -418,7 +415,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          AND {data_source} IN ('codex_session', 'gemini_session')
                       )
                       OR (
                           proxy_dedup.cache_creation_tokens = 0
@@ -440,8 +437,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
 }
 
 /// 参与跨源去重的会话日志来源（和 [`effective_usage_log_filter`] 同口径）。
-const DEDUP_SESSION_SOURCES_SQL: &str =
-    "'session_log', 'codex_session', 'gemini_session', 'opencode_session'";
+const DEDUP_SESSION_SOURCES_SQL: &str = "'session_log', 'codex_session', 'gemini_session'";
 
 /// Dashboard 读路径用的去重条件：语义和 [`effective_usage_log_filter`] 完全一致，
 /// 只是先看时间窗口里两类日志各有多少，再挑便宜的写法。
@@ -509,7 +505,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
                  dedup_p.cache_creation_tokens = dedup_s.cache_creation_tokens
                  OR (
                      dedup_s.cache_creation_tokens = 0
-                     AND {ds_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                     AND {ds_source} IN ('codex_session', 'gemini_session')
                  )
                  OR (
                      dedup_p.cache_creation_tokens = 0
@@ -593,7 +589,7 @@ fn cached_log_count(
 
 /// 跨源去重指纹键。
 ///
-/// `cache_creation_tokens`：Gemini/OpenCode 会话日志和旧版 Codex rollout 不暴露
+/// `cache_creation_tokens`：Gemini/Grok 会话日志和旧版 Codex rollout 不暴露
 /// 该字段，调用方传 0 表示"未知"，匹配器会放行 proxy 侧任意 cache_creation_tokens
 /// 值。反过来，v3.17.0 之前的代理不记录 Codex 缓存写入，legacy 语义且写入量为 0
 /// 的 Codex 代理行也放行任意 session 写入量。
@@ -669,7 +665,7 @@ pub(crate) fn has_matching_proxy_usage_log(
     key: &DedupKey,
 ) -> Result<bool, AppError> {
     let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+        matches!(key.app_type, "codex" | "gemini") && key.cache_creation_tokens == 0;
     let allow_legacy_proxy_cache_creation = key.app_type == "codex";
 
     conn.prepare_cached(&MATCHING_PROXY_USAGE_LOG_SQL)
@@ -5138,37 +5134,6 @@ mod tests {
         // 估算的不混进精确口径
         assert_eq!(stats[0].speed_output_tokens, 0);
         assert_eq!(stats[0].speed_generation_ms, 0);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_get_provider_stats_labels_opencode_session_provider() -> Result<(), AppError> {
-        let db = Database::memory()?;
-
-        {
-            let conn = lock_conn!(db.conn);
-            insert_usage_log(
-                &conn,
-                "opencode-session",
-                "opencode",
-                "_opencode_session",
-                "opencode-model",
-                "opencode_session",
-                1000,
-                100,
-                50,
-                0,
-                0,
-                200,
-                "0.01",
-            )?;
-        }
-
-        let stats = db.get_provider_stats(None, None, Some("opencode"), None, None)?;
-        assert_eq!(stats.len(), 1);
-        assert_eq!(stats[0].provider_id, "_opencode_session");
-        assert_eq!(stats[0].provider_name, "OpenCode (Session)");
 
         Ok(())
     }

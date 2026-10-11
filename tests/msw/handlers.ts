@@ -7,7 +7,6 @@ import {
   deleteProvider,
   deleteSession,
   getCurrentProviderId,
-  getLiveProviderIds,
   getSessionMessages,
   getProviders,
   listProviders,
@@ -71,20 +70,6 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/update_tray_menu`, () => success(true)),
 
-  http.post(`${TAURI_ENDPOINT}/get_opencode_live_provider_ids`, () =>
-    success(getLiveProviderIds("opencode")),
-  ),
-
-  http.post(`${TAURI_ENDPOINT}/get_openclaw_live_provider_ids`, () =>
-    success(getLiveProviderIds("openclaw")),
-  ),
-
-  http.post(`${TAURI_ENDPOINT}/get_openclaw_default_model`, () =>
-    success({ primary: null, fallback: [] }),
-  ),
-
-  http.post(`${TAURI_ENDPOINT}/scan_openclaw_config_health`, () => success([])),
-
   http.post(`${TAURI_ENDPOINT}/switch_provider`, async ({ request }) => {
     const { id, app } = await withJson<{ id: string; app: AppId }>(request);
     const providers = listProviders(app);
@@ -132,10 +117,6 @@ export const handlers = [
     deleteProvider(app, id);
     return success(true);
   }),
-
-  http.post(`${TAURI_ENDPOINT}/remove_provider_from_live_config`, () =>
-    success(true),
-  ),
 
   http.post(`${TAURI_ENDPOINT}/import_default_config`, async () => {
     resetProviderState();
@@ -198,15 +179,7 @@ export const handlers = [
     const { apps } = await withJson<{ apps?: AppId[] | null }>(request);
     const targets = apps?.length
       ? apps
-      : [
-          "claude",
-          "codex",
-          "gemini",
-          "grokbuild",
-          "opencode",
-          "hermes",
-          "mcode",
-        ];
+      : ["claude", "codex", "gemini", "grokbuild"];
     return success(targets.map((app) => ({ app, ok: true })));
   }),
 
@@ -353,13 +326,6 @@ export const handlers = [
   // Sync current providers live (no-op success)
   http.post(`${TAURI_ENDPOINT}/sync_current_providers_live`, () =>
     success({ success: true }),
-  ),
-
-  http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-    success({
-      enabledProviderIds: [],
-      defaultProviderId: null,
-    }),
   ),
 
   // Proxy status (for SettingsPage / ProxyPanel hooks)
@@ -517,9 +483,7 @@ export const handlers = [
           ? "CLAUDE.md"
           : app === "gemini"
             ? "GEMINI.md"
-            : app === "hermes"
-              ? "SOUL.md"
-              : "AGENTS.md";
+            : "AGENTS.md";
       return success({
         path: `/home/test/.${app}/${file}`,
         displayPath: `~/.${app}/${file}`,
@@ -534,18 +498,6 @@ export const handlers = [
       staleRawModels: false,
       missingRouteMappings: false,
       gatewayTokenConfigured: false,
-    }),
-  ),
-  http.post(`${TAURI_ENDPOINT}/get_hermes_memory`, async ({ request }) => {
-    const { kind } = await withJson<{ kind: string }>(request);
-    return success(kind === "user" ? "user profile" : "agent notes");
-  }),
-  http.post(`${TAURI_ENDPOINT}/get_hermes_memory_limits`, () =>
-    success({
-      memory: 2200,
-      user: 1375,
-      memoryEnabled: true,
-      userEnabled: true,
     }),
   ),
 ];

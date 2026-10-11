@@ -217,7 +217,7 @@ describe("格式化小工具", () => {
   });
 });
 
-describe("formatStepTitle · 五家 fixture", () => {
+describe("formatStepTitle · 四家 fixture", () => {
   it("Claude：Name(arg)，Edit 显示为 Update，MCP 为 server.tool(arg)", () => {
     expect(fixtureTitles("claude")).toEqual([
       "Bash(cargo build 2>&1 | tail -50)",
@@ -261,36 +261,11 @@ describe("formatStepTitle · 五家 fixture", () => {
     ]);
   });
 
-  it("OpenCode：符号前缀", () => {
-    expect(fixtureTitles("opencode")).toEqual([
-      "$ bunx biome --version",
-      "→ Read package.json",
-      '✱ Grep "lint" in .',
-      "← Edit package.json",
-      "│ Task Find conflicting lint configs",
-      "% WebFetch https://biomejs.dev/recipes/continuous-integration/",
-      "⚙ Todos 2 项",
-      "→ Asked 要删除 .eslintrc 吗？",
-      "⚙ invalid",
-    ]);
-  });
-
-  it("Pi：小写动词，read 带行范围", () => {
-    expect(fixtureTitles("pi")).toEqual([
-      "read src/components/LoginButton.tsx:10-40",
-      "bash pnpm test -- LoginButton",
-      "edit src/components/LoginButton.tsx",
-      "read docs/screens/login-dark.png",
-      "bash pnpm test -- LoginButton",
-      "grep text-gray-800 in src",
-    ]);
-  });
-
   it("generic：通用动词走 t()，没传 t 时返回 key；无配对输出用通用动词", () => {
     const t = (key: string) => `T(${key.split(".").pop()})`;
-    expect(
-      titleOf("hermes", call("a", "shell", { title: "df -h" }), t).text,
-    ).toBe("T(run) df -h");
+    expect(titleOf("generic", call("a", "shell", { title: "df -h" }), t).text).toBe(
+      "T(run) df -h",
+    );
     expect(titleOf("generic", call("a", "shell", { title: "df" })).text).toBe(
       "sessionManager.reader.verb.run df",
     );
@@ -355,27 +330,6 @@ describe("formatStepTitle · 分支", () => {
     expect(
       titleOf("codex", call("w", "write", { title: `${PROJECT}/x.md` })).text,
     ).toBe("Added x.md");
-  });
-
-  it("OpenCode：websearch 用 ◈，glob 用 Glob，MCP 用 ⚙ + 原名", () => {
-    expect(
-      titleOf(
-        "opencode",
-        call("w", "web", { rawName: "websearch", title: "q" }),
-      ).text,
-    ).toBe("◈ WebSearch q");
-    expect(
-      titleOf(
-        "opencode",
-        call("g", "search", { rawName: "glob", title: "*.ts" }),
-      ).text,
-    ).toBe("✱ Glob *.ts");
-    expect(
-      titleOf(
-        "opencode",
-        call("m", "mcp", { rawName: "github_search", title: "github.search" }),
-      ).text,
-    ).toBe("⚙ github_search github.search");
   });
 });
 
@@ -466,22 +420,6 @@ describe("formatStepMeta", () => {
     });
   });
 
-  it("OpenCode 显示每步 tokens / 费用，其它风格不显示", () => {
-    const step = toolStep(call("a"), {
-      cost: { tokens: 28500, costUsd: 0.012 },
-    });
-    expect(formatStepMeta(step, AGENT_READER_STYLES.opencode)).toMatchObject({
-      tokens: 28500,
-      costUsd: 0.012,
-    });
-    expect(formatStepMeta(step, AGENT_READER_STYLES.claude).tokens).toBe(
-      undefined,
-    );
-    expect(
-      formatStepMeta(toolStep(call("b")), AGENT_READER_STYLES.opencode).tokens,
-    ).toBe(undefined);
-  });
-
   it("合并步骤：子步骤耗时之和；都没有耗时则不给", () => {
     const merged: MergedStep = {
       kind: "merged",
@@ -536,7 +474,7 @@ describe("summarizeThinking", () => {
 });
 
 describe("summarizeTurn", () => {
-  it("fixture：Claude 第一轮与 OpenCode 费用合计", () => {
+  it("fixture：Claude 第一轮合计", () => {
     const claude = buildTurns(fixtures.claude, {
       style: AGENT_READER_STYLES.claude,
     });
@@ -551,12 +489,6 @@ describe("summarizeTurn", () => {
       tokens: undefined,
       costUsd: undefined,
     });
-    const opencode = buildTurns(fixtures.opencode, {
-      style: AGENT_READER_STYLES.opencode,
-    });
-    const summary = summarizeTurn(opencode[0]);
-    expect(summary.tokens).toBe(63104);
-    expect(summary.costUsd).toBeCloseTo(0.0246);
   });
 
   it("没有时间戳用各步耗时之和；都没有则不给；失败改动不计文件；无 diff 的改动按标题计；合并步骤展开计数", () => {
@@ -576,11 +508,7 @@ describe("summarizeTurn", () => {
           result("r2"),
           result("orphan"),
         ]),
-        msg("assistant", [
-          { type: "step", phase: "start" },
-          text("done"),
-          { type: "step", phase: "finish", costUsd: 0.5 },
-        ]),
+        msg("assistant", [text("done")]),
       ],
       { style: AGENT_READER_STYLES.codex },
     );
@@ -593,8 +521,6 @@ describe("summarizeTurn", () => {
       thinkingCount: 0,
       durationMs: 50,
       kindCounts: { edit: 1, write: 1, read: 2, other: 1 },
-      tokens: undefined,
-      costUsd: 0.5,
     });
 
     const [bare] = buildTurns([

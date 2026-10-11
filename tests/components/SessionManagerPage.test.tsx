@@ -10,7 +10,6 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
-import { piApi } from "@/lib/api/pi";
 import { sessionsApi } from "@/lib/api/sessions";
 import type { SessionMessage, SessionMeta } from "@/types";
 import { setSessionFixtures, setSettings } from "../msw/state";
@@ -140,15 +139,6 @@ describe("SessionManagerPage", () => {
         sourcePath: "/mock/codex/archived_sessions/session-3.jsonl",
         resumeCommand: "codex resume codex-session-3",
       },
-      {
-        providerId: "hermes",
-        sessionId: "hermes-1",
-        title: "Hermes Session",
-        projectDir: null,
-        createdAt: now - 4 * HOUR,
-        lastActiveAt: now - 4 * HOUR,
-        sourcePath: "/mock/hermes/state.db",
-      },
     ];
     const messages: Record<string, SessionMessage[]> = {
       "codex:/mock/codex/session-1.jsonl": [
@@ -170,24 +160,11 @@ describe("SessionManagerPage", () => {
       "claude:/mock/claude/session-1.jsonl": [
         { role: "user", content: "claude", ts: now },
       ],
-      "hermes:/mock/hermes/state.db": [],
     };
 
     setSessionFixtures(sessions, messages);
   });
 
-  it("surfaces a relative Pi sessionDir instead of presenting an empty scan as authoritative", async () => {
-    const discovery = vi.spyOn(piApi, "getSessionDiscovery").mockResolvedValue({
-      status: "requires_project_context",
-      configuredPath: ".pi/sessions",
-    });
-
-    renderPage("pi");
-
-    expect(await screen.findByText(".pi/sessions")).toBeInTheDocument();
-    expect(discovery).toHaveBeenCalledTimes(1);
-    discovery.mockRestore();
-  });
 
   it("lists the current app's sessions grouped by project with unknown last", async () => {
     renderPage("codex");
@@ -256,9 +233,9 @@ describe("SessionManagerPage", () => {
     await openAppMenu();
     const menu = await screen.findByRole("menu");
     const items = within(menu).getAllByRole("menuitemradio");
-    // 全部应用 + 9 个来源，按会话数从多到少
-    expect(items).toHaveLength(10);
-    expect(items[0]).toHaveTextContent("全部应用5");
+    // 全部应用 + 4 个来源，按会话数从多到少
+    expect(items).toHaveLength(5);
+    expect(items[0]).toHaveTextContent("全部应用4");
     expect(items[1]).toHaveTextContent("Codex3");
     expect(items[items.length - 1]).toHaveTextContent("无会话");
     await userEvent.click(items[0]);
@@ -283,11 +260,6 @@ describe("SessionManagerPage", () => {
         codex: true,
         gemini: false,
         grokbuild: false,
-        opencode: false,
-        openclaw: false,
-        hermes: false,
-        pi: false,
-        mcode: false,
       },
     });
     renderPage("codex");
@@ -298,7 +270,7 @@ describe("SessionManagerPage", () => {
       expect(within(menu).getAllByRole("menuitemradio")).toHaveLength(3);
     });
     const menu = screen.getByRole("menu");
-    expect(within(menu).queryByText("Hermes")).not.toBeInTheDocument();
+    expect(within(menu).queryByText("Gemini CLI")).not.toBeInTheDocument();
     // 隐藏应用的会话也不计入「全部应用」
     expect(within(menu).getAllByRole("menuitemradio")[0]).toHaveTextContent(
       "全部应用4",
@@ -373,22 +345,6 @@ describe("SessionManagerPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
     expect(await screen.findByText("Alpha Session")).toBeInTheDocument();
-  });
-
-  it("explains why a Hermes session cannot be resumed", async () => {
-    renderPage("hermes");
-    await screen.findByText("Hermes Session");
-    openRow("Hermes Session");
-
-    expect(
-      await screen.findByText("暂不支持从命令行恢复 Hermes 会话"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "复制恢复命令" }),
-    ).toHaveAttribute("aria-disabled", "true");
-    expect(
-      screen.getByText("Hermes 只显示最近 500 个会话"),
-    ).toBeInTheDocument();
   });
 
   it("shows the read error instead of an empty session", async () => {

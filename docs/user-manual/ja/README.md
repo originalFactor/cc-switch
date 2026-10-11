@@ -1,6 +1,6 @@
 # CC Switch ユーザーマニュアル
 
-> Claude Code / Claude Desktop / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code オールインワンアシスタント
+> Claude Code / Claude Desktop / Codex / Gemini CLI / Grok Build オールインワンアシスタント
 
 ## 目次構成
 
@@ -26,8 +26,7 @@
 │   ├── 3.1 MCP サーバー管理
 │   ├── 3.2 Prompts プロンプト管理
 │   ├── 3.3 Skills スキル管理
-│   ├── 3.4 セッションマネージャー
-│   └── 3.5 ワークスペースとメモリー
+│   └── 3.4 セッションマネージャー
 │
 ├── 4. ローカルルーティングと高可用性
 │   ├── 4.1 ローカルルーティングサービス
@@ -75,7 +74,6 @@
 | [3.2-prompts.md](./3-extensions/3.2-prompts.md) | プロンプトの作成、有効化の切り替え、対象ファイル |
 | [3.3-skills.md](./3-extensions/3.3-skills.md) | スキルの発見、インストール・アンインストール、リポジトリ管理 |
 | [3.4-sessions.md](./3-extensions/3.4-sessions.md) | セッションマネージャー：閲覧、検索、再開、削除 |
-| [3.5-workspace.md](./3-extensions/3.5-workspace.md) | ワークスペースファイルとデイリーメモリー（OpenClaw） |
 
 ### 4. ローカルルーティングと高可用性
 

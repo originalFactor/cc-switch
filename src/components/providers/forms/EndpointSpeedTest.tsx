@@ -15,11 +15,6 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   "claude-desktop": 8,
   gemini: 8,
   grokbuild: 12,
-  opencode: 8,
-  openclaw: 8,
-  hermes: 8,
-  pi: 8,
-  mcode: 8,
 };
 
 interface TestResult {

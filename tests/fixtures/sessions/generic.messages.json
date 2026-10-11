@@ -76,10 +76,8 @@
         "lineCount": 40,
         "truncated": true,
         "full": {
-          "kind": "sqlite",
-          "table": "messages",
-          "id": "1205",
-          "column": "content",
+          "kind": "file",
+          "relPath": "search-results/1205.txt",
           "pointer": ""
         }
       }
@@ -202,6 +200,69 @@
       {
         "type": "text",
         "text": "在 `/etc/systemd/journald.conf` 里设 `SystemMaxUse=500M`，再 `systemctl restart systemd-journald`。"
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "ts": 1791014700000,
+    "id": "1215",
+    "turnId": "t4",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "顺手把日志级别调成 high，并截断一下输出。"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "ts": 1791014706000,
+    "id": "1216",
+    "turnId": "t4",
+    "blocks": [
+      {
+        "type": "event",
+        "kind": "thinking_level",
+        "text": "high"
+      },
+      {
+        "type": "event",
+        "kind": "other",
+        "text": "truncated"
+      },
+      {
+        "type": "tool_call",
+        "id": "call_h3rm3s04",
+        "rawName": "unavailable_tool",
+        "kind": "other",
+        "title": "unavailable_tool",
+        "inputPreview": "{\"tool\": \"missing\"}",
+        "inputTotalLen": 19
+      },
+      {
+        "type": "text",
+        "text": "级别已改为 high，输出按 2000 行截断。"
+      }
+    ],
+    "meta": {
+      "model": "hermes-4-405b"
+    }
+  },
+  {
+    "role": "tool",
+    "ts": 1791014710000,
+    "id": "1217",
+    "turnId": "t4",
+    "blocks": [
+      {
+        "type": "tool_result",
+        "callId": "call_h3rm3s04",
+        "status": "pending",
+        "preview": "",
+        "totalLen": 0,
+        "lineCount": 0,
+        "truncated": false
       }
     ]
   }

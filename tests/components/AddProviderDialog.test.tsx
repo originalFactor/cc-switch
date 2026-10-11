@@ -1,5 +1,4 @@
 import {
-  act,
   fireEvent,
   render,
   screen,
@@ -358,75 +357,5 @@ context_window = 500000
     const submitted = handleSubmit.mock.calls[0][0];
     expect(submitted.icon).toBeUndefined();
     expect(submitted.iconColor).toBeUndefined();
-  });
-
-  it("Pi 添加供应商时仅提交供应商目录", async () => {
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-    mockFormValues = {
-      name: "Pi Provider",
-      providerKey: "pi-provider",
-      websiteUrl: "",
-      settingsConfig: JSON.stringify({
-        baseUrl: "https://api.example.com/v1",
-        models: [
-          { id: "selected-model", name: "Selected" },
-          { id: "other-model", name: "Other" },
-        ],
-      }),
-      meta: {
-        isPartner: true,
-        endpointAutoSelect: true,
-        custom_endpoints: {
-          "https://failover.example.com/v1": {
-            url: "https://failover.example.com/v1",
-            addedAt: 1,
-          },
-        },
-      },
-    };
-
-    render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="pi"
-        onSubmit={handleSubmit}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit.mock.calls[0][0]).toMatchObject({
-      providerKey: "pi-provider",
-      meta: { isPartner: true },
-    });
-    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
-      "piActivateModelId",
-    );
-  });
-
-  it("重新打开 Pi 表单后忽略上一轮的就绪回调", async () => {
-    const props = {
-      onOpenChange: vi.fn(),
-      appId: "pi" as const,
-      onSubmit: vi.fn(),
-    };
-    const { rerender } = render(<AddProviderDialog open {...props} />);
-
-    const addButton = await screen.findByRole("button", { name: "common.add" });
-    await waitFor(() => expect(addButton).toBeEnabled());
-    const staleCallback = submitReadyCallbacks.at(-1);
-    expect(staleCallback).toBeDefined();
-
-    rerender(<AddProviderDialog open={false} {...props} />);
-    mockFormReady = false;
-    rerender(<AddProviderDialog open {...props} />);
-    const reopenedButton = await screen.findByRole("button", {
-      name: "common.add",
-    });
-    await waitFor(() => expect(reopenedButton).toBeDisabled());
-
-    act(() => staleCallback?.(true));
-    expect(reopenedButton).toBeDisabled();
   });
 });

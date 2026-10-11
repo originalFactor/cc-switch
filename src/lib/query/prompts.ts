@@ -11,16 +11,12 @@ export const promptKeys = {
   location: (app: AppId) => ["prompts", "location", app] as const,
 };
 
-/** 支持提示词的应用，按侧栏顺序。Claude Desktop 用 Claude Code 的；OpenClaw 在自己的「工作区」里管理。 */
+/** 支持提示词的应用，按侧栏顺序。Claude Desktop 用 Claude Code 的。 */
 export const PROMPT_APP_IDS: AppId[] = [
   "claude",
   "codex",
   "gemini",
   "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
 ];
 
 /** 应用页对应的提示词应用；不支持提示词的返回 null。 */

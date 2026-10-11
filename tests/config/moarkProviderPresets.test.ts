@@ -2,10 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
-import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
-import { openclawProviderPresets } from "@/config/openclawProviderPresets";
-import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
-import { piProviderPresets } from "@/config/piProviderPresets";
 import { getIcon, hasIcon } from "@/icons/extracted";
 
 const WEBSITE_URL = "https://moark.com";
@@ -76,32 +72,11 @@ describe("MoArk (模力方舟) provider presets", () => {
         "text",
       );
     }
-    // Kimi K2.7 Code 与 OpenClaw 预设一致地支持图像输入。
+    // Kimi K2.7 Code 支持图像输入。
     expect(
       catalog.find((model) => model.model === "Kimi-K2.7-Code")
         ?.inputModalities,
     ).toEqual(["text", "image"]);
-  });
-
-  it("keeps Codex capacities in step with the OpenClaw preset", () => {
-    const codex = codexProviderPresets.find((item) => item.name === "模力方舟");
-    const openclaw = openclawProviderPresets.find(
-      (item) => item.name === "模力方舟",
-    );
-    const openclawById = new Map(
-      (openclaw?.settingsConfig.models ?? []).map((model) => [model.id, model]),
-    );
-
-    for (const model of codex?.modelCatalog ?? []) {
-      const counterpart = openclawById.get(model.model);
-      expect(
-        counterpart,
-        `${model.model} exists in the OpenClaw preset`,
-      ).toBeDefined();
-      expect(model.contextWindow, `${model.model} contextWindow`).toBe(
-        counterpart?.contextWindow,
-      );
-    }
   });
 
   it("uses the Codex NativeResponses profile for the direct gateway", () => {
@@ -177,149 +152,6 @@ describe("MoArk (模力方舟) provider presets", () => {
       ).toBeGreaterThan(1);
     }
     expect(preset?.config).toContain('model_reasoning_effort = "high"');
-  });
-
-  it("uses the OpenAI-compatible endpoint for Pi", () => {
-    const preset = piProviderPresets.find((item) => item.name === "模力方舟");
-
-    expect(preset).toBeDefined();
-    expect(preset?.websiteUrl).toBe(WEBSITE_URL);
-    expect(preset?.apiKeyUrl).toBe(API_KEY_URL);
-    expect(preset?.category).toBe("aggregator");
-    expect(preset?.icon).toBe("moark");
-    expect(preset?.providerKey).toBe("cc-switch-moark");
-    expect(preset?.settingsConfig.baseUrl).toBe("https://api.moark.com/v1");
-    expect(preset?.settingsConfig.api).toBe("openai-completions");
-    expect(preset?.settingsConfig.apiKey).toBe("");
-
-    const modelIds = preset?.settingsConfig.models.map((model) => model.id);
-    expect(modelIds).toEqual(
-      expect.arrayContaining([
-        DEFAULT_MODEL,
-        "DeepSeek-V4-Pro",
-        "GLM-5.3",
-        "Kimi-K2.7-Code",
-        "qwen3-coder-plus",
-      ]),
-    );
-  });
-
-  it("uses the OpenAI-compatible endpoint for OpenCode", () => {
-    const preset = opencodeProviderPresets.find(
-      (item) => item.name === "模力方舟",
-    );
-    const models = preset?.settingsConfig.models ?? {};
-
-    expect(preset).toBeDefined();
-    expect(preset?.websiteUrl).toBe(WEBSITE_URL);
-    expect(preset?.apiKeyUrl).toBe(API_KEY_URL);
-    expect(preset?.category).toBe("aggregator");
-    expect(preset?.icon).toBe("moark");
-    expect(preset?.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
-    expect(preset?.settingsConfig.options?.baseURL).toBe(
-      "https://api.moark.com/v1",
-    );
-    expect(models).toHaveProperty(DEFAULT_MODEL);
-    expect(models).toHaveProperty("Kimi-K2.7-Code");
-    expect(models[DEFAULT_MODEL]?.name).toBe("DeepSeek V4 Flash");
-
-    // OpenCode only offers thinking variants for models flagged as reasoning;
-    // Qwen3 Coder Plus has no thinking mode and stays unflagged.
-    for (const id of [
-      DEFAULT_MODEL,
-      "DeepSeek-V4-Pro",
-      "GLM-5.3",
-      "Kimi-K2.7-Code",
-    ]) {
-      expect(models[id]?.reasoning, `${id} reasoning`).toBe(true);
-    }
-    expect(models["qwen3-coder-plus"]?.reasoning).toBeUndefined();
-  });
-
-  it("uses the OpenAI Completions endpoint for OpenClaw", () => {
-    const preset = openclawProviderPresets.find(
-      (item) => item.name === "模力方舟",
-    );
-    const modelIds = (preset?.settingsConfig.models ?? []).map(
-      (model) => model.id,
-    );
-
-    expect(preset).toBeDefined();
-    expect(preset?.websiteUrl).toBe(WEBSITE_URL);
-    expect(preset?.apiKeyUrl).toBe(API_KEY_URL);
-    expect(preset?.category).toBe("aggregator");
-    expect(preset?.icon).toBe("moark");
-    expect(preset?.settingsConfig.baseUrl).toBe("https://api.moark.com/v1");
-    expect(preset?.settingsConfig.api).toBe("openai-completions");
-    expect(modelIds).toEqual(
-      expect.arrayContaining([
-        DEFAULT_MODEL,
-        "DeepSeek-V4-Pro",
-        "GLM-5.3",
-        "Kimi-K2.7-Code",
-      ]),
-    );
-    expect(preset?.suggestedDefaults?.model).toEqual({
-      primary: `moark/${DEFAULT_MODEL}`,
-    });
-    expect(preset?.suggestedDefaults?.modelCatalog).toHaveProperty(
-      `moark/${DEFAULT_MODEL}`,
-    );
-  });
-
-  it("declares positive capacity limits for every OpenCode model", () => {
-    const preset = opencodeProviderPresets.find(
-      (item) => item.name === "模力方舟",
-    );
-    const models = preset?.settingsConfig.models ?? {};
-
-    // OpenCode treats a missing limit as 0 and then skips auto-compaction
-    // (`isOverflow` returns false when `limit.context === 0`), so every model
-    // of a custom provider key must carry explicit capacity numbers.
-    expect(Object.keys(models)).toHaveLength(5);
-    for (const [id, model] of Object.entries(models)) {
-      expect(model.limit?.context, `${id} limit.context`).toBeGreaterThan(0);
-      expect(model.limit?.output, `${id} limit.output`).toBeGreaterThan(0);
-    }
-  });
-
-  it("keeps OpenCode capacities consistent with the OpenClaw preset", () => {
-    const opencode = opencodeProviderPresets.find(
-      (item) => item.name === "模力方舟",
-    );
-    const openclaw = openclawProviderPresets.find(
-      (item) => item.name === "模力方舟",
-    );
-    const openclawById = new Map(
-      (openclaw?.settingsConfig.models ?? []).map((model) => [model.id, model]),
-    );
-
-    for (const [id, model] of Object.entries(
-      opencode?.settingsConfig.models ?? {},
-    )) {
-      const counterpart = openclawById.get(id);
-      expect(counterpart, `${id} exists in the OpenClaw preset`).toBeDefined();
-      expect(model.limit?.context, `${id} context`).toBe(
-        counterpart?.contextWindow,
-      );
-      expect(model.limit?.output, `${id} output`).toBe(counterpart?.maxTokens);
-    }
-  });
-
-  it("inherits the Pi preset for MiniMax Code", () => {
-    const preset = mcodeProviderPresets.find(
-      (item) => item.name === "模力方舟",
-    );
-
-    expect(preset).toBeDefined();
-    expect(preset?.settingsConfig.kind).toBe("custom");
-    expect(preset?.settingsConfig.api).toBe("openai-completions");
-    expect(preset?.settingsConfig.options.baseURL).toBe(
-      "https://api.moark.com/v1",
-    );
-    expect(Object.keys(preset?.settingsConfig.models ?? {})).toContain(
-      DEFAULT_MODEL,
-    );
   });
 
   it("registers the MoArk mark in the icon registry", () => {

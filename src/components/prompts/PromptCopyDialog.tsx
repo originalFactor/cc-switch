@@ -25,7 +25,7 @@ interface PromptCopyDialogProps {
 
 /**
  * 复制到其他应用（Prompts.dc.html 第 446–480 行）：各自存成独立的一条、不启用。
- * 默认勾选没有同名条目的应用；Hermes 的 SOUL.md 是人设，编码规范之类复制过去多半不对，默认不勾。
+ * 默认勾选没有同名条目的应用。
  */
 export function PromptCopyDialog({
   prompt,
@@ -55,12 +55,7 @@ export function PromptCopyDialog({
   useEffect(() => {
     if (!ready || picks) return;
     setPicks(
-      Object.fromEntries(
-        targets.map((app, index) => [
-          app,
-          !sameName(index) && app !== "hermes",
-        ]),
-      ),
+      Object.fromEntries(targets.map((app, index) => [app, !sameName(index)])),
     );
     // sameName 依赖 lists，只在第一次读完时定默认勾选
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -100,9 +95,7 @@ export function PromptCopyDialog({
               const noteId = `${inputId}-note`;
               const note = sameName(index)
                 ? t("prompts.copyDialog.sameName")
-                : app === "hermes"
-                  ? t("prompts.copyDialog.hermesNote")
-                  : "";
+                : "";
               return (
                 <li
                   key={app}

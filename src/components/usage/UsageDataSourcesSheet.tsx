@@ -135,7 +135,6 @@ export function UsageDataSourcesSheet({
             <ul className="m-0 flex list-none flex-col gap-1 rounded-control bg-subtle px-3 py-2.5 text-caption text-fg-2">
               <li>{t("usage.sources.coverage", { apps: coveredApps })}</li>
               <li>{syncedLabel ? `${cadence} · ${syncedLabel}` : cadence}</li>
-              <li>{t("usage.sources.unsupported")}</li>
             </ul>
             <div className="flex justify-end">
               <Button

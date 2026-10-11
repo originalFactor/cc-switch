@@ -4,9 +4,7 @@ export type ProviderCategory =
   | "cloud_provider" // 云服务商（AWS Bedrock 等）
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
-  | "custom" // 自定义
-  | "omo" // Oh My OpenCode
-  | "omo-slim"; // Oh My OpenCode Slim
+  | "custom"; // 自定义
 
 export interface Provider {
   id: string;
@@ -229,10 +227,6 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
-  // Whether this provider is currently projected into an additive app's live config.
-  liveConfigManaged?: boolean;
-  // Source format is needed for package-less OpenCode built-in overrides.
-  opencodeConfigFormat?: "v1" | "v2";
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -309,11 +303,6 @@ export interface VisibleApps {
   codex: boolean;
   gemini: boolean;
   grokbuild: boolean;
-  opencode: boolean;
-  openclaw: boolean;
-  hermes: boolean;
-  pi: boolean;
-  mcode: boolean;
 }
 
 // WebDAV 同步状态
@@ -444,14 +433,6 @@ export interface Settings {
   geminiConfigDir?: string;
   // 覆盖 Grok Build 配置目录（可选）
   grokConfigDir?: string;
-  // 覆盖 OpenCode 配置目录（可选）
-  opencodeConfigDir?: string;
-  // 覆盖 OpenClaw 配置目录（可选）
-  openclawConfigDir?: string;
-  // 覆盖 Hermes 配置目录（可选）
-  hermesConfigDir?: string;
-  // 覆盖 Pi agent 配置目录（可选）
-  piConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -550,13 +531,6 @@ export type EventKind =
 /** 大内容的「按需取」引用：前端不解析，原样回传给后端 */
 export type ContentRef =
   | { kind: "jsonl"; offset: number; len: number; pointer: string }
-  | {
-      kind: "sqlite";
-      table: string;
-      id: string;
-      column: string;
-      pointer: string;
-    }
   | { kind: "file"; relPath: string; pointer: string }
   | { kind: "sidecar"; relPath: string };
 
@@ -649,22 +623,13 @@ export interface EventBlock {
   full?: ContentRef;
 }
 
-export interface StepBlock {
-  type: "step";
-  phase: "start" | "finish";
-  tokens?: number;
-  costUsd?: number;
-  reason?: string;
-}
-
 export type SessionBlock =
   | TextBlock
   | ThinkingBlock
   | ToolCallBlock
   | ToolResultBlock
   | ImageBlock
-  | EventBlock
-  | StepBlock;
+  | EventBlock;
 
 export interface MessageMeta {
   model?: string;
@@ -736,16 +701,11 @@ export interface McpServerSpec {
 
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
-  mcode?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;
   grokbuild?: boolean;
-  opencode: boolean;
-  openclaw: boolean;
-  hermes: boolean;
-  pi?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -837,152 +797,3 @@ export interface UniversalProvider {
 
 // 统一供应商映射（id -> UniversalProvider）
 export type UniversalProvidersMap = Record<string, UniversalProvider>;
-
-// ============================================================================
-// OpenCode 专属配置（v3.9.2+）
-// ============================================================================
-
-// OpenCode 模型配置
-export interface OpenCodeModel {
-  name: string;
-  limit?: {
-    context?: number;
-    output?: number;
-  };
-  options?: Record<string, unknown>; // 模型级别额外选项（provider 路由等）
-  // 支持任意额外字段（cost、modalities、thinking、variants 等）
-  [key: string]: unknown;
-}
-
-// OpenCode 供应商选项
-export interface OpenCodeProviderOptions {
-  baseURL?: string;
-  apiKey?: string;
-  headers?: Record<string, string>;
-  // 支持额外选项（timeout, setCacheKey 等）
-  [key: string]: unknown;
-}
-
-// OpenCode 供应商配置（settings_config 结构）
-export interface OpenCodeProviderConfig {
-  npm: string; // AI SDK 包名，如 "@ai-sdk/openai-compatible"
-  name?: string; // 供应商显示名称
-  options: OpenCodeProviderOptions;
-  models: Record<string, OpenCodeModel>;
-}
-
-// OpenCode MCP 服务器配置（与统一格式不同）
-export interface OpenCodeMcpServerSpec {
-  type: "local" | "remote";
-  // local 类型字段
-  command?: string[]; // 与统一格式不同：命令和参数合并为数组
-  environment?: Record<string, string>; // 与统一格式不同：使用 environment 而非 env
-  // remote 类型字段
-  url?: string;
-  headers?: Record<string, string>;
-  // 通用字段
-  enabled?: boolean;
-}
-
-// ============================================================================
-// OpenClaw 专属配置（v3.11.0+）
-// ============================================================================
-
-// OpenClaw 模型配置
-export interface OpenClawModel {
-  id: string;
-  name: string;
-  alias?: string;
-  reasoning?: boolean; // 是否支持推理模式（如 o1、DeepSeek R1）
-  input?: string[]; // 支持的输入类型（如 ["text"]、["text", "image"]）
-  cost?: {
-    input: number;
-    output: number;
-    cacheRead?: number; // 缓存读取价格
-    cacheWrite?: number; // 缓存写入价格
-  };
-  contextWindow?: number;
-  maxTokens?: number; // 最大输出 token 数
-  compat?: {
-    maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
-  };
-}
-
-// OpenClaw 默认模型配置（agents.defaults.model）
-export interface OpenClawDefaultModel {
-  primary: string;
-  fallbacks?: string[];
-}
-
-// OpenClaw 模型目录条目（agents.defaults.models 中的值）
-export interface OpenClawModelCatalogEntry {
-  alias?: string;
-}
-
-export interface OpenClawHealthWarning {
-  code: string;
-  message: string;
-  path?: string;
-}
-
-export interface OpenClawWriteOutcome {
-  backupPath?: string;
-  warnings: OpenClawHealthWarning[];
-}
-
-export type OpenClawToolsProfile = "minimal" | "coding" | "messaging" | "full";
-
-// OpenClaw 供应商配置（settings_config 结构）
-// 对应 OpenClaw 的 models.providers.<provider-id> 配置
-export interface OpenClawProviderConfig {
-  baseUrl?: string; // API 端点
-  apiKey?: string; // API 密钥
-  api?: string; // API 协议类型（如 "openai-completions"、"anthropic"）
-  models?: OpenClawModel[]; // 可用模型列表
-  headers?: Record<string, string>; // 自定义请求头（如 User-Agent）
-  authHeader?: boolean; // 供应商自定义认证开关（如 Longcat）
-}
-
-// OpenClaw agents.defaults 完整配置
-export interface OpenClawAgentsDefaults {
-  model?: OpenClawDefaultModel;
-  models?: Record<string, OpenClawModelCatalogEntry>;
-  timeoutSeconds?: number;
-  timeout?: number;
-  [key: string]: unknown; // preserve unknown fields
-}
-
-// OpenClaw env 配置（openclaw.json 的 env 节点）
-export interface OpenClawEnvConfig {
-  [key: string]: unknown;
-}
-
-// OpenClaw tools 配置（openclaw.json 的 tools 节点）
-export interface OpenClawToolsConfig {
-  profile?: OpenClawToolsProfile | string;
-  allow?: string[];
-  deny?: string[];
-  [key: string]: unknown; // preserve unknown fields
-}
-
-// ============================================================================
-// Hermes Agent 专属配置
-// ============================================================================
-
-export interface HermesModelConfig {
-  default?: string;
-  provider?: string;
-  base_url?: string;
-  context_length?: number;
-  max_tokens?: number;
-  [key: string]: unknown;
-}
-
-export type HermesMemoryKind = "memory" | "user";
-
-export interface HermesMemoryLimits {
-  memory: number;
-  user: number;
-  memoryEnabled: boolean;
-  userEnabled: boolean;
-}

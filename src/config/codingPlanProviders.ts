@@ -72,7 +72,7 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     // GET /zen/go/v1/usage 是官方第一方但未文档化的路由，只认
     // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）。
     // base 分两档：/zen/go（claude/claude-desktop 直连 /messages）与
-    // /zen/go/v1（codex/opencode/pi 走 Chat），子串同时覆盖；
+    // /zen/go/v1（codex 走 Chat），子串同时覆盖；
     // Zen 按量版（/zen/v1）没有用量 API，刻意不命中。
     id: "opencode_go",
     label: "OpenCode Go",
@@ -121,12 +121,6 @@ export function extractBaseUrlForUsageDetection(
           : null,
       );
       break;
-    case "opencode":
-      raw = settingsConfig.options?.baseURL;
-      break;
-    case "pi":
-      raw = settingsConfig.baseUrl;
-      break;
     default:
       return null;
   }
@@ -141,7 +135,7 @@ export function extractBaseUrlForUsageDetection(
  * - Claude app 保持既有行为：命中任意 Coding Plan 供应商都注入；
  *   其余 app 仅对已验证预设注入：Codex 支持 Command Code，其他非 Claude
  *   Coding Plan 保持既有行为——
- *   五个 app 各有一份 OpenCode Go 预设、凭据形态后端全部支持，而智谱/Kimi
+ *   Claude/Codex 各有一份 OpenCode Go 预设、凭据形态后端全部支持，而智谱/Kimi
  *   等在其他 app 的自动注入未逐一验证过，不随手扩大
  * - code 置空：Rust 端走专用 `coding_plan::get_coding_plan_quota`，不执行 JS 脚本
  */

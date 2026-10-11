@@ -10,11 +10,6 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   codex: "Codex",
   gemini: "Gemini CLI",
   grokbuild: "Grok Build",
-  opencode: "OpenCode",
-  openclaw: "OpenClaw",
-  hermes: "Hermes",
-  pi: "Pi",
-  mcode: "MiniMax Code",
 };
 
 const APP_ICON_NAME: Record<AppId, string> = {
@@ -23,11 +18,6 @@ const APP_ICON_NAME: Record<AppId, string> = {
   codex: "openai",
   gemini: "gemini",
   grokbuild: "grok",
-  opencode: "opencode",
-  openclaw: "openclaw",
-  hermes: "hermes",
-  pi: "pi",
-  mcode: "minimax",
 };
 
 // Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面

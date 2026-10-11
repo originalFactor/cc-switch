@@ -8,15 +8,12 @@
 //! - `claude` - Claude MCP 同步和导入
 //! - `codex` - Codex MCP 同步和导入（含 TOML 转换）
 //! - `gemini` - Gemini MCP 同步和导入
-//! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
-//! - `hermes` - Hermes MCP 同步和导入
+//! - `grokbuild` - Grok Build MCP 同步和导入
 
 mod claude;
 mod codex;
 mod gemini;
 mod grokbuild;
-mod hermes;
-mod opencode;
 mod validation;
 
 // 重新导出公共 API
@@ -34,10 +31,3 @@ pub use gemini::{
 pub use grokbuild::{
     import_from_grokbuild, remove_server_from_grokbuild, sync_single_server_to_grokbuild,
 };
-pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_server_to_hermes};
-pub use opencode::{
-    import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
-};
-
-pub(crate) mod mcode;
-pub(crate) mod pi;

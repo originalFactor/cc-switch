@@ -9,9 +9,6 @@ pub mod env_manager;
 pub mod mcp;
 pub mod model_fetch;
 pub mod model_pricing;
-pub mod omo;
-pub mod pi_prompt_files;
-pub(crate) mod pi_state;
 pub mod profile;
 pub mod prompt;
 pub mod provider;
@@ -23,8 +20,6 @@ pub mod session_usage;
 pub mod session_usage_codex;
 pub mod session_usage_gemini;
 pub mod session_usage_grokbuild;
-pub mod session_usage_opencode;
-pub mod session_usage_pi;
 pub mod skill;
 pub mod speedtest;
 pub mod sql_helpers;
@@ -40,7 +35,6 @@ pub mod webdav_sync;
 
 pub use config::ConfigService;
 pub use mcp::McpService;
-pub use omo::OmoService;
 pub use prompt::PromptService;
 pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
 pub use proxy::ProxyService;
@@ -53,5 +47,3 @@ pub use usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
-
-pub mod session_usage_mcode;

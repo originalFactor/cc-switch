@@ -12,7 +12,6 @@ import type { Prompt, AppId } from "@/lib/api";
 import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
-  MCODE_PROMPT_LIMIT,
   charCount,
   formatSize,
   promptFileName,
@@ -61,8 +60,6 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   const baseId = useId();
   const appName = APP_DISPLAY_NAME[appId];
   const fileName = promptFileName(appId);
-  const isHermes = appId === "hermes";
-  const isPi = appId === "pi";
   const isActive = Boolean(editingId && initialData?.enabled);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -71,7 +68,6 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const nameRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (initialData) {
@@ -82,22 +78,14 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   }, [initialData]);
 
   const bodyBytes = utf8Bytes(content);
-  const limit = appId === "mcode" ? MCODE_PROMPT_LIMIT : undefined;
-  const overLimit = limit !== undefined && bodyBytes > limit;
-  const nameError = !name.trim()
-    ? t(isHermes ? "prompts.nameRequiredHermes" : "prompts.nameRequired")
-    : "";
-  const bodyError = overLimit
-    ? t("prompts.mcodeTooLarge", { size: formatSize(bodyBytes) })
-    : "";
+  const nameError = !name.trim() ? t("prompts.nameRequired") : "";
   const showNameError = attempted && Boolean(nameError);
-  const showBodyError = attempted && Boolean(bodyError);
 
   const handleSave = async () => {
     if (savingRef.current) return;
-    if (nameError || bodyError) {
+    if (nameError) {
       setAttempted(true);
-      (nameError ? nameRef : bodyRef).current?.focus();
+      nameRef.current?.focus();
       return;
     }
 
@@ -110,7 +98,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
         id,
         name: name.trim(),
         description: description.trim() || undefined,
-        content: isPi ? content : content.trim(),
+        content: content.trim(),
         enabled: initialData?.enabled || false,
         createdAt: initialData?.createdAt || timestamp,
         updatedAt: timestamp,
@@ -138,20 +126,15 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   const submitLabel = !editingId
     ? t("prompts.addSubmit")
     : isActive
-      ? isPi
-        ? t("prompts.saveAndWritePi")
-        : t("prompts.saveAndOverwrite", { file: fileName })
+      ? t("prompts.saveAndOverwrite", { file: fileName })
       : t("common.save");
 
-  const countText = limit
-    ? `${formatSize(bodyBytes)} / 32 KB`
-    : t("prompts.charCount", {
-        chars: charCount(content).toLocaleString(),
-        size: formatSize(bodyBytes),
-      });
+  const countText = t("prompts.charCount", {
+    chars: charCount(content).toLocaleString(),
+    size: formatSize(bodyBytes),
+  });
 
   const nameHintId = `${baseId}-name-hint`;
-  const bodyHintId = `${baseId}-body-hint`;
   const countId = `${baseId}-count`;
 
   return (
@@ -192,11 +175,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
               value={name}
               onChange={(event) => setName(event.target.value)}
               disabled={saving}
-              placeholder={t(
-                isHermes
-                  ? "prompts.namePlaceholderHermes"
-                  : "prompts.namePlaceholder",
-              )}
+              placeholder={t("prompts.namePlaceholder")}
               aria-required="true"
               aria-invalid={showNameError}
               aria-describedby={showNameError ? nameHintId : undefined}
@@ -235,39 +214,26 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
               {t("prompts.content")}
             </label>
             <textarea
-              ref={bodyRef}
               id={`${baseId}-body`}
               value={content}
               onChange={(event) => setContent(event.target.value)}
               disabled={saving}
               spellCheck={false}
-              placeholder={
-                isHermes
-                  ? t("prompts.contentPlaceholderHermes")
-                  : t("prompts.contentPlaceholder", {
-                      filename: fileName,
-                      appName,
-                    })
-              }
-              aria-invalid={showBodyError}
-              aria-describedby={
-                showBodyError ? `${bodyHintId} ${countId}` : countId
-              }
+              placeholder={t("prompts.contentPlaceholder", {
+                filename: fileName,
+                appName,
+              })}
+              aria-invalid={false}
+              aria-describedby={countId}
               className={cn(
                 promptFieldClass,
                 "min-h-[180px] flex-1 resize-none px-3 py-2.5 font-mono text-caption leading-[18px]",
               )}
             />
             <div className="flex items-start gap-3">
-              {showBodyError ? (
-                <FieldError id={bodyHintId}>{bodyError}</FieldError>
-              ) : null}
               <span
                 id={countId}
-                className={cn(
-                  "ms-auto shrink-0 whitespace-nowrap text-caption tabular-nums",
-                  overLimit ? "text-danger-text" : "text-fg-2",
-                )}
+                className="ms-auto shrink-0 whitespace-nowrap text-caption tabular-nums text-fg-2"
               >
                 {countText}
               </span>

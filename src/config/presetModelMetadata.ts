@@ -8,13 +8,7 @@ import {
   type PresetModelSource,
 } from "@/lib/modelMetadata";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
-import type { OpenCodeModel } from "@/types";
 import { codexProviderPresets } from "./codexProviderPresets";
-import { hermesProviderPresets } from "./hermesProviderPresets";
-import { mcodeProviderPresets } from "./mcodeProviderPresets";
-import { openclawProviderPresets } from "./openclawProviderPresets";
-import { opencodeProviderPresets } from "./opencodeProviderPresets";
-import { piProviderPresets } from "./piProviderPresets";
 
 function compact(metadata: KnownModelMetadata): KnownModelMetadata | null {
   const entries = Object.entries(metadata).filter(
@@ -58,92 +52,6 @@ export const codexPresetModelSources = lazy(() =>
         contextWindow: positiveInteger(row.contextWindow),
         reasoningEfforts: stringList(row.reasoningLevels),
         inputModalities: stringList(row.inputModalities),
-      }),
-    ),
-  ),
-);
-
-export const openclawPresetModelSources = lazy(() =>
-  openclawProviderPresets.flatMap((preset) =>
-    buildSources(
-      [preset.settingsConfig.baseUrl],
-      (preset.settingsConfig.models ?? []).map(
-        (model) => [model.id, model] as const,
-      ),
-      (model) => ({
-        contextWindow: positiveInteger(model.contextWindow),
-        maxOutputTokens: positiveInteger(model.maxTokens),
-        reasoning: model.reasoning,
-        inputModalities: stringList(model.input),
-        cost: model.cost,
-      }),
-    ),
-  ),
-);
-
-export const hermesPresetModelSources = lazy(() =>
-  hermesProviderPresets.flatMap((preset) =>
-    buildSources(
-      [preset.settingsConfig.base_url],
-      (preset.settingsConfig.models ?? []).map(
-        (model) => [model.id, model] as const,
-      ),
-      (model) => ({ contextWindow: positiveInteger(model.context_length) }),
-    ),
-  ),
-);
-
-function openCodeModelMetadata(model: OpenCodeModel): KnownModelMetadata {
-  const modalities =
-    model.modalities && typeof model.modalities === "object"
-      ? (model.modalities as { input?: unknown; output?: unknown })
-      : undefined;
-  return {
-    contextWindow: positiveInteger(model.limit?.context),
-    maxOutputTokens: positiveInteger(model.limit?.output),
-    reasoning:
-      typeof model.reasoning === "boolean" ? model.reasoning : undefined,
-    inputModalities: stringList(modalities?.input),
-    outputModalities: stringList(modalities?.output),
-  };
-}
-
-export const opencodePresetModelSources = lazy(() =>
-  opencodeProviderPresets.flatMap((preset) =>
-    buildSources(
-      [preset.settingsConfig.options?.baseURL],
-      Object.entries(preset.settingsConfig.models ?? {}),
-      openCodeModelMetadata,
-    ),
-  ),
-);
-
-export const mcodePresetModelSources = lazy(() =>
-  mcodeProviderPresets.flatMap((preset) =>
-    buildSources(
-      [preset.settingsConfig.options.baseURL],
-      Object.entries(preset.settingsConfig.models ?? {}),
-      openCodeModelMetadata,
-    ),
-  ),
-);
-
-export const piPresetModelSources = lazy(() =>
-  piProviderPresets.flatMap((preset) =>
-    buildSources(
-      [preset.settingsConfig.baseUrl],
-      preset.settingsConfig.models.map((model) => [model.id, model] as const),
-      (model) => ({
-        contextWindow: positiveInteger(model.contextWindow),
-        maxOutputTokens: positiveInteger(model.maxTokens),
-        reasoning: model.reasoning,
-        inputModalities: stringList(model.input),
-        piThinking: model.thinkingLevelMap && {
-          thinkingLevelMap: model.thinkingLevelMap,
-          api: preset.settingsConfig.api,
-          baseUrl: preset.settingsConfig.baseUrl,
-          compat: model.compat,
-        },
       }),
     ),
   ),

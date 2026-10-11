@@ -19,7 +19,7 @@ requires_openai_auth = true`;
 
 describe("detectCodingPlanProvider (OpenCode Go)", () => {
   it("matches both base variants across apps", () => {
-    // claude/claude-desktop 预设是 /zen/go，codex/opencode/pi 是 /zen/go/v1
+    // claude/claude-desktop 预设是 /zen/go，codex 是 /zen/go/v1
     expect(detectCodingPlanProvider("https://opencode.ai/zen/go")).toBe(
       "opencode_go",
     );
@@ -73,19 +73,6 @@ describe("extractBaseUrlForUsageDetection", () => {
     ).toBe("https://opencode.ai/zen/go/v1");
   });
 
-  it("reads options.baseURL for opencode and baseUrl for pi", () => {
-    expect(
-      extractBaseUrlForUsageDetection("opencode", {
-        options: { baseURL: "https://opencode.ai/zen/go/v1" },
-      }),
-    ).toBe("https://opencode.ai/zen/go/v1");
-    expect(
-      extractBaseUrlForUsageDetection("pi", {
-        baseUrl: "https://opencode.ai/zen/go/v1",
-      }),
-    ).toBe("https://opencode.ai/zen/go/v1");
-  });
-
   it("returns null for unsupported apps", () => {
     expect(
       extractBaseUrlForUsageDetection("gemini", {
@@ -131,18 +118,6 @@ describe("injectCodingPlanUsageScript", () => {
         settingsConfig: { config: OPENCODE_GO_CODEX_TOML },
       }),
     );
-    expectInjected(
-      inject("opencode", {
-        settingsConfig: {
-          options: { baseURL: "https://opencode.ai/zen/go/v1" },
-        },
-      }),
-    );
-    expectInjected(
-      inject("pi", {
-        settingsConfig: { baseUrl: "https://opencode.ai/zen/go/v1" },
-      }),
-    );
   });
 
   it("keeps the existing claude behavior for other coding plans", () => {
@@ -158,10 +133,12 @@ describe("injectCodingPlanUsageScript", () => {
     // 智谱/Kimi 等在其他 app 的自动注入未逐一验证，仅 OpenCode Go 放行
     const provider: TestProvider = {
       settingsConfig: {
-        options: { baseURL: "https://open.bigmodel.cn/api/anthropic" },
+        env: { ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic" },
       },
     };
-    expect(inject("opencode", provider).meta?.usage_script).toBeUndefined();
+    expect(
+      inject("claude-desktop", provider).meta?.usage_script,
+    ).toBeUndefined();
   });
 
   it("never overwrites an existing usage_script", () => {

@@ -225,26 +225,26 @@ describe("UsageDashboard", () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    await user.click(screen.getByRole("button", { name: "Pi" }));
+    await user.click(screen.getByRole("button", { name: "Gemini CLI" }));
 
     await waitFor(() =>
       expect(useProviderStatsMock).toHaveBeenLastCalledWith(
         expect.anything(),
-        { appType: "pi" },
+        { appType: "gemini" },
         expect.anything(),
       ),
     );
     expect(useModelStatsMock).toHaveBeenLastCalledWith(
       expect.anything(),
-      { appType: "pi", providerName: undefined },
+      { appType: "gemini", providerName: undefined },
       expect.anything(),
     );
     expect(usageHeroMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ appType: "pi" }),
+      expect.objectContaining({ appType: "gemini" }),
     );
     // 芯片只有图标，名字由 aria-label 提供
     expect(
-      screen.getByRole("button", { name: "Pi", pressed: true }),
+      screen.getByRole("button", { name: "Gemini CLI", pressed: true }),
     ).toBeInTheDocument();
   });
 

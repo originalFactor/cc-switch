@@ -480,17 +480,9 @@ export function SessionReader({
   );
 
   const noResumeReason = !session.resumeCommand
-    ? session.providerId === "openclaw"
-      ? t("sessionManager.noResumeOpenclaw", {
-          defaultValue: "OpenClaw 会话由网关管理，不能在终端恢复",
-        })
-      : session.providerId === "hermes"
-        ? t("sessionManager.noResumeHermes", {
-            defaultValue: "暂不支持从命令行恢复 Hermes 会话",
-          })
-        : t("sessionManager.noResumeCommand", {
-            defaultValue: "此会话无法恢复",
-          })
+    ? t("sessionManager.noResumeCommand", {
+        defaultValue: "此会话无法恢复",
+      })
     : null;
 
   const loadingFirst =

@@ -11,9 +11,6 @@ import { cn } from "@/lib/utils";
 import { MatrixSearch } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS, V7Dialog } from "@/components/mcp/formBits";
 
-/** Pi 的启用状态由 ~/.pi/agent/skills 里有没有这个目录决定，导入时不勾选 */
-const IMPORT_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
-
 interface SkillImportDialogProps {
   skills: UnmanagedSkill[];
   visibleAppIds: AppId[];
@@ -38,7 +35,7 @@ export function SkillImportDialog({
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(skills.map((skill) => skill.directory)),
   );
-  const appChoices = IMPORT_APP_IDS.filter((app) =>
+  const appChoices = SKILLS_APP_IDS.filter((app) =>
     visibleAppIds.includes(app),
   );
   // 默认勾「发现于」里出现过的应用
@@ -46,7 +43,7 @@ export function SkillImportDialog({
     const set = new Set<AppId>();
     for (const skill of skills) {
       for (const found of skill.foundIn) {
-        if (isAppId(found) && found !== "pi") set.add(found);
+        if (isAppId(found)) set.add(found);
       }
     }
     return set;
@@ -92,14 +89,10 @@ export function SkillImportDialog({
             directory: skill.directory,
             apps: {
               claude: chosen.has("claude"),
+              "claude-desktop": chosen.has("claude-desktop"),
               codex: chosen.has("codex"),
               gemini: chosen.has("gemini"),
               grokbuild: chosen.has("grokbuild"),
-              opencode: chosen.has("opencode"),
-              openclaw: false,
-              hermes: chosen.has("hermes"),
-              pi: false,
-              mcode: chosen.has("mcode"),
             },
           };
         }),

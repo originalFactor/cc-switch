@@ -316,7 +316,6 @@ function PromptAppPicker({
         <div aria-hidden="true" className="mx-1.5 my-1 h-px bg-border" />
         <p className="m-0 px-2.5 pb-1.5 pt-1 text-caption text-fg-2">
           <span className="block">{t("prompts.appNoteDesktop")}</span>
-          <span className="block">{t("prompts.appNoteOpenclaw")}</span>
         </p>
       </PopoverContent>
     </Popover>

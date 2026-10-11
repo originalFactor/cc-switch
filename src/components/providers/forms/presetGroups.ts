@@ -18,19 +18,13 @@ type Translate = (key: string) => unknown;
  * 添加供应商时左侧的分类（v7）：只在显示时按预设现有字段推算，不改 `category`
  * （很多行为依赖它）。
  */
-export type PresetGroup =
-  | "login"
-  | "vendor"
-  | "thirdparty"
-  | "cloud"
-  | "plugin";
+export type PresetGroup = "login" | "vendor" | "thirdparty" | "cloud";
 
 export const PRESET_GROUP_ORDER: PresetGroup[] = [
   "login",
   "vendor",
   "thirdparty",
   "cloud",
-  "plugin",
 ];
 
 type PresetFields = AnyPreset & {
@@ -50,9 +44,6 @@ export function presetGroup(preset: AnyPreset): PresetGroup {
       return "vendor";
     case "cloud_provider":
       return "cloud";
-    case "omo":
-    case "omo-slim":
-      return "plugin";
     default:
       return "thirdparty";
   }

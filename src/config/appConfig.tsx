@@ -1,12 +1,7 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
 import type { VisibleApps } from "@/types";
-import {
-  ClaudeIcon,
-  CodexIcon,
-  GeminiIcon,
-  OpenClawIcon,
-} from "@/components/BrandIcons";
+import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
 import { ProviderIcon } from "@/components/ProviderIcon";
 
 export interface AppConfig {
@@ -22,11 +17,6 @@ export const APP_IDS: AppId[] = [
   "codex",
   "gemini",
   "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-  "mcode",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -35,11 +25,6 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   codex: true,
   gemini: true,
   grokbuild: true,
-  opencode: true,
-  openclaw: true,
-  hermes: true,
-  pi: true,
-  mcode: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -48,10 +33,6 @@ export const SKILLS_APP_IDS: AppId[] = [
   "codex",
   "gemini",
   "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
 ];
 
 export type ProxyAppId = Extract<
@@ -80,23 +61,6 @@ export function isStackAppId(appId: string): appId is StackAppId {
   return (STACK_APP_IDS as string[]).includes(appId);
 }
 
-export type AdditiveAppId = Extract<
-  AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
->;
-
-export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
-  "mcode",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-];
-
-export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
-  return (ADDITIVE_APP_IDS as string[]).includes(appId);
-}
-
 /**
  * 切换只替换关键字段的应用：供应商编辑器显示「切到这个供应商之后配置文件的样子」，由后端
  * `ProviderService::editor_view` 投影。
@@ -112,17 +76,13 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
+/** Claude Desktop 不由 CC Switch 管理 MCP。 */
+export type McpAppId = Exclude<AppId, "claude-desktop">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
   "gemini",
   "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -176,59 +136,6 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300",
     badgeClass:
       "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
-  },
-  opencode: {
-    label: "OpenCode",
-    icon: (
-      <ProviderIcon
-        icon="opencode"
-        name="OpenCode"
-        size={14}
-        showFallback={false}
-      />
-    ),
-    activeClass:
-      "bg-indigo-500/10 ring-1 ring-indigo-500/20 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400",
-    badgeClass:
-      "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 border-0 gap-1.5",
-  },
-  openclaw: {
-    label: "OpenClaw",
-    icon: <OpenClawIcon size={14} />,
-    activeClass:
-      "bg-rose-500/10 ring-1 ring-rose-500/20 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400",
-    badgeClass:
-      "bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 border-0 gap-1.5",
-  },
-  hermes: {
-    label: "Hermes",
-    icon: (
-      <ProviderIcon
-        icon="hermes"
-        name="Hermes"
-        size={14}
-        showFallback={false}
-      />
-    ),
-    activeClass:
-      "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
-    badgeClass:
-      "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
-  },
-  mcode: {
-    label: "MiniMax Code",
-    icon: <ProviderIcon icon="minimax" name="MiniMax Code" size={14} />,
-    activeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
-    badgeClass:
-      "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-0 gap-1.5",
-  },
-  pi: {
-    label: "Pi",
-    icon: <ProviderIcon icon="pi" name="Pi" size={14} showFallback={false} />,
-    activeClass:
-      "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
-    badgeClass:
-      "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
   },
 };
 

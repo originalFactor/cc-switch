@@ -23,7 +23,7 @@ enum CodingPlanProvider {
     Volcengine,
     /// OpenCode Go（$10/月订阅，美元额度三时间窗口）。base_url 分两档：
     /// `https://opencode.ai/zen/go`（claude/claude-desktop 直连 /messages）
-    /// 与 `https://opencode.ai/zen/go/v1`（codex/opencode/pi 走 Chat）。
+    /// 与 `https://opencode.ai/zen/go/v1`（codex 走 Chat）。
     OpencodeGo,
     /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
     CommandCode,
@@ -2228,7 +2228,7 @@ mod tests {
 
     #[test]
     fn opencode_go_detects_both_base_variants_but_not_zen() {
-        // claude/claude-desktop 预设 base 是 /zen/go，codex/opencode/pi 是
+        // claude/claude-desktop 预设 base 是 /zen/go，codex 是
         // /zen/go/v1，两档都要命中；Zen 按量版（/zen/v1）无用量 API，不得命中。
         assert!(matches!(
             detect_provider("https://opencode.ai/zen/go"),

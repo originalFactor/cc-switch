@@ -19,10 +19,6 @@ export function ProviderEmptyState({
   onImport,
 }: ProviderEmptyStateProps) {
   const { t } = useTranslation();
-  // Pi / MiniMax Code 的"当前供应商"可以是原生应用自管的内置账号（不在可管理的
-  // live 节点里），没有可导入的内容，列表也不提供导入按钮，因此不能沿用
-  // "请点击导入当前配置"的通用文案。
-  const emptyCopyNs = appId === "pi" || appId === "mcode" ? appId : null;
   const showKeyFieldsHint =
     appId === "claude" ||
     appId === "codex" ||
@@ -31,15 +27,9 @@ export function ProviderEmptyState({
 
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-      <h2 className="text-section text-fg-1">
-        {emptyCopyNs
-          ? t(`${emptyCopyNs}.empty.title`)
-          : t("provider.noProviders")}
-      </h2>
+      <h2 className="text-section text-fg-1">{t("provider.noProviders")}</h2>
       <p className="mt-2 max-w-lg text-body text-fg-2">
-        {emptyCopyNs
-          ? t(`${emptyCopyNs}.empty.description`)
-          : t("provider.noProvidersDescription")}
+        {t("provider.noProvidersDescription")}
       </p>
       {(onImport || onCreate) && (
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2">

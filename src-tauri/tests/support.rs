@@ -46,7 +46,6 @@ pub fn reset_test_fs() {
         ".gemini",
         ".grok",
         ".config",
-        ".openclaw",
         "profiles",
     ] {
         let path = home.join(sub);

@@ -112,11 +112,6 @@ impl Provider {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 
-    /// The stored OpenCode source format; only native declarations record one.
-    pub fn opencode_config_format(&self) -> Option<OpenCodeConfigFormat> {
-        self.meta.as_ref().and_then(|m| m.opencode_config_format)
-    }
-
     fn claude_base_url_contains(&self, needle: &str) -> bool {
         self.settings_config
             .pointer("/env/ANTHROPIC_BASE_URL")
@@ -211,29 +206,6 @@ impl Provider {
                     .map(|(_, api_key)| api_key)
                     .unwrap_or_default();
                 (base_url, api_key)
-            }
-            // Hermes (config.yaml) flattens credentials at the top level, snake_case.
-            AppType::Hermes => (
-                str_at(settings.get("base_url")),
-                str_at(settings.get("api_key")),
-            ),
-            // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
-            AppType::OpenClaw => (
-                str_at(settings.get("baseUrl")),
-                str_at(settings.get("apiKey")),
-            ),
-            // Pi custom providers use the native models.json field names.
-            AppType::Pi => (
-                crate::pi_config::provider_base_url(settings).unwrap_or_default(),
-                str_at(settings.get("apiKey")),
-            ),
-            // OpenCode (OMO) nests credentials under `options` (the SDK options object).
-            AppType::OpenCode | AppType::Mcode => {
-                let options = settings.get("options");
-                (
-                    str_at(options.and_then(|o| o.get("baseURL"))),
-                    str_at(options.and_then(|o| o.get("apiKey"))),
-                )
             }
             // Claude and Claude Desktop both use the Anthropic-style env map, keeping
             // the OpenRouter/Google key fallbacks the JS-script path relies on.
@@ -586,17 +558,6 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub local_proxy_request_overrides: Option<LocalProxyRequestOverrides>,
-    /// 累加模式应用中，该 provider 是否已写入 live config。
-    /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
-    #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
-    pub live_config_managed: Option<bool>,
-    /// Source format for OpenCode entries whose fields alone are ambiguous
-    /// (for example, a native V2 built-in provider containing only models).
-    #[serde(
-        rename = "opencodeConfigFormat",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub opencode_config_format: Option<OpenCodeConfigFormat>,
     /// 供应商类型标识（用于特殊供应商检测）
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
@@ -981,119 +942,11 @@ requires_openai_auth = true"#
     }
 }
 
-// ============================================================================
-// OpenCode 供应商配置结构
-// ============================================================================
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OpenCodeConfigFormat {
-    V1,
-    V2,
-}
-
-/// OpenCode 供应商的 settings_config 结构
-///
-/// OpenCode 使用 AI SDK 包名来指定供应商类型，与其他应用的配置格式不同。
-/// 配置示例：
-/// ```json
-/// {
-///   "npm": "@ai-sdk/openai-compatible",
-///   "options": { "baseURL": "https://api.example.com/v1", "apiKey": "sk-xxx" },
-///   "models": { "gpt-4o": { "name": "GPT-4o" } }
-/// }
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenCodeProviderConfig {
-    /// AI SDK 包名，如 "@ai-sdk/openai-compatible", "@ai-sdk/anthropic"
-    /// 内置供应商可以省略，沿用 OpenCode 的包和模型定义。
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub npm: String,
-
-    /// 供应商名称（可选，用于显示）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-
-    /// 供应商选项（API 密钥、基础 URL 等）
-    #[serde(default)]
-    pub options: OpenCodeProviderOptions,
-
-    /// 模型定义映射
-    #[serde(default)]
-    pub models: HashMap<String, OpenCodeModel>,
-}
-
-impl Default for OpenCodeProviderConfig {
-    fn default() -> Self {
-        Self {
-            npm: "@ai-sdk/openai-compatible".to_string(),
-            name: None,
-            options: OpenCodeProviderOptions::default(),
-            models: HashMap::new(),
-        }
-    }
-}
-
-/// OpenCode 供应商选项
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenCodeProviderOptions {
-    /// API 基础 URL
-    #[serde(rename = "baseURL", skip_serializing_if = "Option::is_none")]
-    pub base_url: Option<String>,
-
-    /// API 密钥（支持环境变量引用，如 "{env:API_KEY}"）
-    #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
-
-    /// 自定义请求头
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub headers: Option<HashMap<String, String>>,
-
-    /// 额外选项（timeout, setCacheKey 等）
-    /// 使用 flatten 捕获所有未明确定义的字段
-    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
-    pub extra: HashMap<String, Value>,
-}
-
-/// OpenCode 模型定义
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenCodeModel {
-    /// 模型显示名称
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub name: String,
-
-    /// 模型限制（上下文和输出 token 数）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<OpenCodeModelLimit>,
-
-    /// 模型额外选项（provider 路由等）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub options: Option<HashMap<String, Value>>,
-
-    /// 额外字段（cost、modalities、thinking、variants 等）
-    /// 使用 flatten 捕获所有未明确定义的字段
-    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
-    pub extra: HashMap<String, Value>,
-}
-
-/// OpenCode 模型限制
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenCodeModelLimit {
-    /// 上下文 token 限制
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<u64>,
-
-    /// 输出 token 限制
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output: Option<u64>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
-        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
-        ProviderMeta, UniversalProvider,
+        LocalProxyRequestOverrides, Provider, ProviderManager, ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1525,18 +1378,6 @@ mod tests {
     }
 
     #[test]
-    fn opencode_provider_config_defaults() {
-        let config = OpenCodeProviderConfig::default();
-        assert_eq!(config.npm, "@ai-sdk/openai-compatible");
-        assert!(config.name.is_none());
-        assert!(config.models.is_empty());
-        assert!(config.options.base_url.is_none());
-        assert!(config.options.api_key.is_none());
-        assert!(config.options.headers.is_none());
-        assert!(config.options.extra.is_empty());
-    }
-
-    #[test]
     fn universal_codex_provider_origin_base_url_adds_v1() {
         let mut p = UniversalProvider::new(
             "id".to_string(),
@@ -1677,76 +1518,6 @@ mod tests {
         }));
         let (_, api_key) = p.resolve_usage_credentials(&AppType::Gemini);
         assert_eq!(api_key, "g-real");
-    }
-
-    #[test]
-    fn resolve_credentials_hermes_snake_case() {
-        let p = provider_with(json!({
-            "base_url": "https://api.deepseek.com",
-            "api_key": "sk-hermes",
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::Hermes),
-            (
-                "https://api.deepseek.com".to_string(),
-                "sk-hermes".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_credentials_openclaw_camel_case() {
-        let p = provider_with(json!({
-            "baseUrl": "https://api.deepseek.com",
-            "apiKey": "sk-openclaw",
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::OpenClaw),
-            (
-                "https://api.deepseek.com".to_string(),
-                "sk-openclaw".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_credentials_pi_uses_native_model_level_base_url() {
-        let p = provider_with(json!({
-            "apiKey": "sk-pi",
-            "models": [{
-                "id": "model-a",
-                "api": "openai-completions",
-                "baseUrl": "https://api.example.com/v1/"
-            }]
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::Pi),
-            (
-                "https://api.example.com/v1".to_string(),
-                "sk-pi".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_credentials_opencode_options() {
-        // OpenCode (OMO) nests creds under options.{baseURL,apiKey}; useOpencodeFormState
-        // writes config.options.apiKey, so the stored provider keeps them there.
-        let p = provider_with(json!({
-            "npm": "@ai-sdk/openai-compatible",
-            "options": {
-                "baseURL": "https://api.deepseek.com/v1",
-                "apiKey": "sk-opencode",
-                "setCacheKey": true,
-            }
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::OpenCode),
-            (
-                "https://api.deepseek.com/v1".to_string(),
-                "sk-opencode".to_string()
-            )
-        );
     }
 
     #[test]

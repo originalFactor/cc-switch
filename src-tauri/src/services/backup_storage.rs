@@ -92,8 +92,6 @@ fn categories() -> Vec<Category> {
             "liveFirstWrite",
             DeviceStore::for_device().first_write_backup_dir(),
         ),
-        whole("hermes", app_backups.join("hermes")),
-        whole("openclaw", app_backups.join("openclaw")),
         whole("proxyLiveBackup", device_backups.join("proxy-live-backup")),
         files("envVars", env_backups, |name| {
             name.starts_with("env-backup-") && name.ends_with(".json")

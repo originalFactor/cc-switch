@@ -344,8 +344,7 @@ fn schema_migration_v4_adds_pricing_model_columns() {
             server_config TEXT NOT NULL,
             enabled_claude INTEGER NOT NULL DEFAULT 0,
             enabled_codex INTEGER NOT NULL DEFAULT 0,
-            enabled_gemini INTEGER NOT NULL DEFAULT 0,
-            enabled_opencode INTEGER NOT NULL DEFAULT 0
+            enabled_gemini INTEGER NOT NULL DEFAULT 0
         );
         "#,
     )

@@ -133,18 +133,6 @@ pub fn delete_provider(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn remove_provider_from_live_config(
-    state: tauri::State<'_, AppState>,
-    app: String,
-    id: String,
-) -> Result<bool, String> {
-    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::remove_from_live_config(state.inner(), app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
-}
-
 fn switch_provider_internal(
     state: &AppState,
     app_type: AppType,
@@ -1013,23 +1001,6 @@ pub fn sync_universal_provider(
 
     Ok(result)
 }
-
-#[tauri::command]
-pub fn import_opencode_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
-    crate::services::provider::import_opencode_providers_from_live(state.inner())
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
-    crate::opencode_config::get_providers()
-        .map(|providers| providers.keys().cloned().collect())
-        .map_err(|e| e.to_string())
-}
-
-// ============================================================================
-// OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
-// ============================================================================
 
 #[cfg(test)]
 mod import_claude_desktop_tests {

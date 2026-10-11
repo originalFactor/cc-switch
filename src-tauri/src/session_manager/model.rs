@@ -206,16 +206,6 @@ pub enum SessionBlock {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         full: Option<ContentRef>,
     },
-    /// OpenCode step-start / step-finish；其他 Agent 不产生
-    Step {
-        phase: StepPhase,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        tokens: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cost_usd: Option<f64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    },
 }
 
 impl SessionBlock {
@@ -290,13 +280,6 @@ pub enum EventKind {
     Other,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StepPhase {
-    Start,
-    Finish,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffSummary {
@@ -340,14 +323,7 @@ pub enum ContentRef {
         len: u32,
         pointer: String,
     },
-    /// SQLite：表 + 主键 + 列 + 列内 JSON Pointer（空串表示整列，列本身不是 JSON 时用）
-    Sqlite {
-        table: String,
-        id: String,
-        column: String,
-        pointer: String,
-    },
-    /// 独立 JSON 文件（OpenCode 文件存储 part）：相对于会话 sourcePath 所属 storage 根的路径
+    /// 独立 JSON 文件：相对于会话 sourcePath 所属 storage 根的路径
     File { rel_path: String, pointer: String },
     /// 工具落盘的完整输出文件（只允许会话附属目录内）
     Sidecar { rel_path: String },
@@ -371,7 +347,7 @@ pub struct ImageRef {
     rename_all_fields = "camelCase"
 )]
 pub enum ImageSource {
-    /// base64 内联在源记录里（Claude image / tool_result image、Codex input_image data URL、Pi toolResult image）
+    /// base64 内联在源记录里（Claude image / tool_result image、Codex input_image data URL）
     Inline { content: ContentRef },
     /// 本地文件（Codex ImageView、Claude tool-results/*.jpg、Markdown 里的 file://）
     LocalFile { path: String },
@@ -449,7 +425,7 @@ pub fn project_content(blocks: &[SessionBlock]) -> String {
                 format!("[Image: {} {}]", image.media_type, image.size)
             }
             SessionBlock::Event { text, .. } => text.clone().unwrap_or_default(),
-            SessionBlock::Thinking { .. } | SessionBlock::Step { .. } => continue,
+            SessionBlock::Thinking { .. } => continue,
         };
         if !part.trim().is_empty() {
             parts.push(part);
@@ -520,12 +496,6 @@ mod tests {
                 },
             },
             SessionBlock::event(EventKind::Aborted, None, None),
-            SessionBlock::Step {
-                phase: StepPhase::Finish,
-                tokens: Some(10),
-                cost_usd: None,
-                reason: None,
-            },
         ];
         assert_eq!(
             project_content(&blocks),
@@ -618,14 +588,6 @@ mod tests {
             (
                 "gemini",
                 include_str!("../../../tests/fixtures/sessions/gemini.messages.json"),
-            ),
-            (
-                "opencode",
-                include_str!("../../../tests/fixtures/sessions/opencode.messages.json"),
-            ),
-            (
-                "pi",
-                include_str!("../../../tests/fixtures/sessions/pi.messages.json"),
             ),
             (
                 "generic",

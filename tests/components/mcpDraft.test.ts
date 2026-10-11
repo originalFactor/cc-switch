@@ -72,33 +72,6 @@ describe("mcpDraft paste recognition", () => {
     ]);
   });
 
-  it("normalizes OpenCode local and remote entries", () => {
-    const result = recognizePaste(
-      JSON.stringify({
-        mcp: {
-          local: {
-            type: "local",
-            command: ["npx", "-y", "pkg"],
-            environment: { A: "1" },
-          },
-          remote: { type: "remote", url: "https://x.dev/mcp" },
-        },
-      }),
-    );
-    expect(result && result.ok && result.items).toEqual([
-      {
-        name: "local",
-        spec: {
-          type: "stdio",
-          command: "npx",
-          args: ["-y", "pkg"],
-          env: { A: "1" },
-        },
-      },
-      { name: "remote", spec: { type: "http", url: "https://x.dev/mcp" } },
-    ]);
-  });
-
   it("accepts a bare server object and a name fragment", () => {
     const single = recognizePaste('{"command": "uvx", "args": ["fetch"]}');
     expect(single && single.ok && single.format).toBe("single");

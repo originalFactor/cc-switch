@@ -390,7 +390,7 @@ describe("UnifiedMcpPanel", () => {
 
   it("opens the edit drawer from the pencil button", async () => {
     mocks.serversMap = {
-      serena: makeServer("serena", { apps: { claude: true, hermes: true } }),
+      serena: makeServer("serena", { apps: { claude: true, gemini: true } }),
     };
     renderPanel();
     await userEvent.click(

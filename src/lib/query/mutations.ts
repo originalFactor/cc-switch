@@ -6,17 +6,11 @@ import type { DeleteSessionOptions } from "@/lib/api/sessions";
 import type { ProviderEditorSave, SwitchResult } from "@/lib/api/providers";
 import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
 import type { Provider, SessionMeta, Settings } from "@/types";
-import {
-  extractErrorMessage,
-  translatePiProviderMutationError,
-} from "@/utils/errorUtils";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
-import { openclawKeys } from "@/hooks/useOpenClaw";
-import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
-import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
@@ -62,30 +56,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         return officialProvider;
       }
 
-      let id: string;
-
-      if (
-        appId === "opencode" ||
-        appId === "openclaw" ||
-        appId === "hermes" ||
-        appId === "pi" ||
-        appId === "mcode"
-      ) {
-        if (
-          providerInput.category === "omo" ||
-          providerInput.category === "omo-slim"
-        ) {
-          const prefix = providerInput.category === "omo" ? "omo" : "omo-slim";
-          id = `${prefix}-${generateUUID()}`;
-        } else {
-          if (!providerInput.providerKey) {
-            throw new Error(`Provider key is required for ${appId}`);
-          }
-          id = providerInput.providerKey;
-        }
-      } else {
-        id = generateUUID();
-      }
+      const id = generateUUID();
 
       const newProvider: Provider = {
         ...rest,
@@ -100,30 +71,6 @@ export const useAddProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
-      if (appId === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "provider-count"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "provider-count"],
-        });
-      }
-
-      if (appId === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      }
-
-      if (appId === "hermes") {
-        await invalidateHermesProviderCaches(queryClient);
-      }
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -145,24 +92,13 @@ export const useAddProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       // 编辑冲突由对话框让用户选保留哪一边，不弹失败提示。
       if (parseLiveEditConflict(error)) return;
-      const rawDetail = extractErrorMessage(error);
-      const detail =
-        (appId === "pi"
-          ? translatePiProviderMutationError(rawDetail, t)
-          : "") ||
-        rawDetail ||
-        t("common.unknown");
+      const detail = extractErrorMessage(error) || t("common.unknown");
       toast.error(
         t("notifications.addFailed", {
           defaultValue: "添加供应商失败: {{error}}",
           error: detail,
         }),
       );
-    },
-    onSettled: async () => {
-      if (appId === "pi") {
-        await invalidatePiProviderCaches(queryClient);
-      }
     },
   });
 };
@@ -194,14 +130,6 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           queryKey: usageKeys.script(variables.originalId, appId),
         });
       }
-      if (appId === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      }
-      if (appId === "hermes") {
-        await invalidateHermesProviderCaches(queryClient);
-      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -213,24 +141,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onError: (error: Error) => {
       if (parseLiveEditConflict(error)) return;
-      const rawDetail = extractErrorMessage(error);
-      const detail =
-        (appId === "pi"
-          ? translatePiProviderMutationError(rawDetail, t)
-          : "") ||
-        rawDetail ||
-        t("common.unknown");
+      const detail = extractErrorMessage(error) || t("common.unknown");
       toast.error(
         t("notifications.updateFailed", {
           defaultValue: "更新供应商失败: {{error}}",
           error: detail,
         }),
       );
-    },
-    onSettled: async () => {
-      if (appId === "pi") {
-        await invalidatePiProviderCaches(queryClient);
-      }
     },
   });
 };
@@ -246,30 +163,6 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
-      if (appId === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "provider-count"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "provider-count"],
-        });
-      }
-
-      if (appId === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      }
-
-      if (appId === "hermes") {
-        await invalidateHermesProviderCaches(queryClient);
-      }
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -289,24 +182,13 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
-      const rawDetail = extractErrorMessage(error);
-      const detail =
-        (appId === "pi"
-          ? translatePiProviderMutationError(rawDetail, t)
-          : "") ||
-        rawDetail ||
-        t("common.unknown");
+      const detail = extractErrorMessage(error) || t("common.unknown");
       toast.error(
         t("notifications.deleteFailed", {
           defaultValue: "删除供应商失败: {{error}}",
           error: detail,
         }),
       );
-    },
-    onSettled: async () => {
-      if (appId === "pi") {
-        await invalidatePiProviderCaches(queryClient);
-      }
     },
   });
 };
@@ -328,35 +210,6 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         });
       }
 
-      // OpenCode/OpenClaw: also invalidate live provider IDs cache to update button state
-      if (appId === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["opencodeLiveProviderIds"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["opencode", "runtime-models"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "current-provider-id"],
-        });
-      }
-      if (appId === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.liveProviderIds,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.defaultModel,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      }
-      if (appId === "hermes") {
-        await invalidateHermesProviderCaches(queryClient);
-      }
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -385,11 +238,6 @@ export const useSwitchProviderMutation = (appId: AppId) => {
           },
         },
       );
-    },
-    onSettled: async () => {
-      if (appId === "pi") {
-        await invalidatePiProviderCaches(queryClient);
-      }
     },
   });
 };
@@ -461,9 +309,6 @@ export const useSaveSettingsMutation = () => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      await queryClient.invalidateQueries({
-        queryKey: ["opencode", "runtime-models"],
-      });
     },
   });
 };

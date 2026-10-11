@@ -157,10 +157,6 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         codex: false,
         gemini: false,
         grokbuild: false,
-        opencode: false,
-        hermes: false,
-        mcode: false,
-        pi: false,
     };
 
     for app in apps_str.split(',') {
@@ -169,14 +165,6 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "codex" => apps.codex = true,
             "gemini" => apps.gemini = true,
             "grokbuild" | "grok" => apps.grokbuild = true,
-            "opencode" => apps.opencode = true,
-            "openclaw" => {
-                // OpenClaw doesn't support MCP, ignore silently
-                log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");
-            }
-            "hermes" => apps.hermes = true,
-            "mcode" => apps.mcode = true,
-            "pi" => apps.pi = true,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "Invalid app in 'apps': {other}"
@@ -216,8 +204,6 @@ mod tests {
             codex: true,
             gemini: true,
             grokbuild: true,
-            opencode: true,
-            hermes: true,
             ..McpApps::default()
         };
         let merged = merge_mcp_apps(&existing, &target);
@@ -226,7 +212,5 @@ mod tests {
         assert!(merged.codex);
         assert!(merged.gemini);
         assert!(merged.grokbuild);
-        assert!(merged.opencode);
-        assert!(merged.hermes);
     }
 }

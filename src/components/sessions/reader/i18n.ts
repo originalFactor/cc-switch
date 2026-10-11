@@ -41,8 +41,6 @@ export const READER_DEFAULTS: Record<string, string> = {
   "thinking.claude": "思考中…",
   "thinking.codex": "推理",
   "thinking.gemini": "想法",
-  "thinking.opencode": "Thought",
-  "thinking.pi": "Thinking…",
   "thinking.generic": "思考",
   thinkingMeta: "{{chars}} 字 · {{duration}}",
   thinkingChars: "{{chars}} 字",

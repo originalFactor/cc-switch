@@ -32,7 +32,7 @@ const m = vi.hoisted(() => ({
   updates: [] as SkillUpdateInfo[],
   repoFailures: [] as SkillRepoFailure[],
   checking: false,
-  visibleApps: ["claude", "codex", "pi"] as string[],
+  visibleApps: ["claude", "codex", "gemini"] as string[],
 }));
 
 vi.mock("sonner", () => ({
@@ -137,10 +137,6 @@ const makeSkill = (overrides: Overrides = {}): InstalledSkill => {
       codex: false,
       gemini: false,
       grokbuild: false,
-      opencode: false,
-      openclaw: false,
-      hermes: false,
-      pi: false,
       ...apps,
     },
     installedAt: 1,
@@ -168,7 +164,7 @@ describe("UnifiedSkillsPanel", () => {
     m.updates = [];
     m.repoFailures = [];
     m.checking = false;
-    m.visibleApps = ["claude", "codex", "pi"];
+    m.visibleApps = ["claude", "codex", "gemini"];
     m.scanUnmanaged.mockReset().mockResolvedValue({
       data: [
         {
@@ -205,16 +201,14 @@ describe("UnifiedSkillsPanel", () => {
     }
   });
 
-  it("always shows the Pi column and toggles it like the other apps", async () => {
-    m.installed = [makeSkill({ apps: { claude: true, pi: true } })];
+  it("always shows the Gemini column and toggles it like the other apps", async () => {
+    m.installed = [makeSkill({ apps: { claude: true, gemini: true } })];
     renderPanel();
     expect(columns()).toHaveLength(3);
-    // Pi 列头的说明走 HoverTip（悬停即显），不再用原生 title
+    // 列头的说明走 HoverTip（悬停即显），不再用原生 title
     expect(columns()[2]).not.toHaveAttribute("title");
     await userEvent.hover(columns()[2]);
-    expect(
-      (await screen.findAllByText("skillsPage.piColumnTitle")).length,
-    ).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Gemini CLI")).length).toBeGreaterThan(0);
     await userEvent.unhover(columns()[2]);
 
     const cells = screen.getAllByRole("button", { name: /appMatrix.cell/ });
@@ -223,13 +217,13 @@ describe("UnifiedSkillsPanel", () => {
     await waitFor(() =>
       expect(m.toggle).toHaveBeenCalledWith({
         id: "owner/repo:alpha-skill",
-        app: "pi",
+        app: "gemini",
         enabled: false,
       }),
     );
   });
 
-  it("hides the Pi column only when Pi is hidden on the Apps page", () => {
+  it("hides the Gemini column only when Gemini is hidden on the Apps page", () => {
     m.visibleApps = ["claude", "codex"];
     m.installed = [makeSkill()];
     renderPanel();
@@ -365,9 +359,7 @@ describe("UnifiedSkillsPanel", () => {
 
   it("uninstalls through the row menu after confirming", async () => {
     m.installed = [makeSkill()];
-    m.uninstall.mockResolvedValueOnce({
-      preservedPiPath: "/tmp/.pi/agent/skills/alpha-skill",
-    });
+    m.uninstall.mockResolvedValueOnce({});
     renderPanel();
     await openMenu("skillsPage.rowMoreAria", "skillsPage.uninstallEllipsis");
     expect(
@@ -380,9 +372,9 @@ describe("UnifiedSkillsPanel", () => {
       expect(m.uninstall).toHaveBeenCalledWith("owner/repo:alpha-skill"),
     );
     await waitFor(() =>
-      expect(m.toastWarning).toHaveBeenCalledWith(
+      expect(m.toastSuccess).toHaveBeenCalledWith(
         "skills.uninstallSuccess",
-        expect.objectContaining({ description: "skills.uninstallPiPreserved" }),
+        expect.objectContaining({ closeButton: true }),
       ),
     );
   });
@@ -503,7 +495,7 @@ describe("UnifiedSkillsPanel", () => {
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
 
     await userEvent.hover(columns()[2]);
-    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Pi");
+    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Gemini");
   });
 
   it("ignores a second check-update click while one is running", async () => {
@@ -705,7 +697,7 @@ describe("UnifiedSkillsPanel", () => {
 
   it("imports with apps chosen from where each Skill was found", async () => {
     m.installed = [makeSkill()];
-    m.visibleApps = ["claude", "codex", "grokbuild", "pi"];
+    m.visibleApps = ["claude", "codex", "gemini", "grokbuild"];
     m.importSkills.mockResolvedValueOnce([makeSkill({ id: "shared" })]);
     renderPanel();
     await userEvent.click(
@@ -714,9 +706,14 @@ describe("UnifiedSkillsPanel", () => {
     await waitFor(() =>
       expect(screen.getByText("skillsPage.import.title")).toBeInTheDocument(),
     );
-    // Pi 按目录判断，导入时不提供勾选
+    // 只勾「发现于」里出现过的应用
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).queryByText("Pi")).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("checkbox", { name: /Gemini CLI/ }),
+    ).not.toBeChecked();
+    expect(
+      within(dialog).getByRole("checkbox", { name: /Grok Build/ }),
+    ).toBeChecked();
     await userEvent.click(
       within(dialog).getByRole("button", { name: "skillsPage.import.submit" }),
     );
@@ -726,14 +723,10 @@ describe("UnifiedSkillsPanel", () => {
         directory: "shared-skill",
         apps: {
           claude: true,
+          "claude-desktop": false,
           codex: false,
           gemini: false,
           grokbuild: true,
-          opencode: false,
-          openclaw: false,
-          hermes: false,
-          pi: false,
-          mcode: false,
         },
       },
     ]);

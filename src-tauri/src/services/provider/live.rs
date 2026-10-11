@@ -1,7 +1,7 @@
 //! Live 配置的读取、首次导入和按模式分发的写入。
 //!
 //! 切换式应用（Claude Code、Codex、Gemini CLI、Grok Build）的客户端文件只经写入引擎写
-//! （`*_direct.rs`），这里只负责分发；Claude Desktop 和累加式应用仍在这里写。
+//! （`*_direct.rs`），这里只负责分发；Claude Desktop 仍在这里写。
 
 use std::sync::Arc;
 
@@ -17,24 +17,6 @@ use crate::services::mcp::McpService;
 use crate::store::AppState;
 
 use super::normalize_claude_models_in_value;
-
-pub(crate) fn provider_exists_in_live_config(
-    app_type: &AppType,
-    provider_id: &str,
-) -> Result<bool, AppError> {
-    match app_type {
-        AppType::OpenCode => crate::opencode_config::get_providers()
-            .map(|providers| providers.contains_key(provider_id)),
-        AppType::OpenClaw => crate::openclaw_config::get_providers()
-            .map(|providers| providers.contains_key(provider_id)),
-        AppType::Hermes => crate::hermes_config::get_providers()
-            .map(|providers| providers.contains_key(provider_id)),
-        AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
-        AppType::Mcode => crate::mcode_config::get_providers()
-            .map(|providers| providers.contains_key(provider_id)),
-        _ => Ok(false),
-    }
-}
 
 fn json_is_subset(target: &Value, source: &Value) -> bool {
     match source {
@@ -295,13 +277,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::GrokBuild
-        | AppType::OpenCode
-        | AppType::OpenClaw
-        | AppType::Hermes
-        | AppType::Pi
-        | AppType::Mcode
-        | AppType::ClaudeDesktop => false,
+        AppType::GrokBuild | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -371,13 +347,7 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::GrokBuild
-        | AppType::OpenCode
-        | AppType::OpenClaw
-        | AppType::Hermes
-        | AppType::Pi
-        | AppType::Mcode
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        AppType::GrokBuild | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -522,230 +492,40 @@ pub(crate) fn codex_managed_oauth_live_auth(
 }
 
 /// Write live configuration snapshot for a provider
-pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
-    match app_type {
-        AppType::Claude => {
-            return Err(AppError::localized(
-                "claude.live.requires_engine",
-                "Claude Code 配置只能经关键字段写入流程写入",
-                "Claude Code configuration must be written through the key-field write flow",
-            ));
-        }
-        AppType::ClaudeDesktop => {
-            return Err(AppError::localized(
-                "claude_desktop.live.requires_db_context",
-                "Claude Desktop 配置写入需要通过供应商切换流程执行",
-                "Claude Desktop configuration must be written through the provider switch flow",
-            ));
-        }
-        AppType::Codex => {
-            return Err(AppError::localized(
-                "codex.live.requires_engine",
-                "Codex 配置只能经关键字段写入流程写入",
-                "Codex configuration must be written through the key-field write flow",
-            ));
-        }
-        AppType::Gemini => {
-            return Err(AppError::localized(
-                "gemini.live.requires_engine",
-                "Gemini CLI 配置只能经关键字段写入流程写入",
-                "Gemini CLI configuration must be written through the key-field write flow",
-            ));
-        }
-        AppType::GrokBuild => {
-            return Err(AppError::localized(
-                "grokbuild.live.requires_engine",
-                "Grok Build 配置只能经关键字段写入流程写入",
-                "Grok Build configuration must be written through the key-field write flow",
-            ));
-        }
-        AppType::OpenCode => {
-            // OpenCode uses additive mode - write provider to config
-            use crate::opencode_config;
-            use crate::provider::{OpenCodeConfigFormat, OpenCodeProviderConfig};
-            use serde::Deserialize;
-
-            // Native declarations may rely on a built-in definition without a package:
-            // a stored override must stay re-addable after removal from live. The UI
-            // still requires a definition for a new or renamed ID, as it does for V1.
-            let (config_to_write, format) = opencode_config::provider_fragment(
-                &provider.id,
-                &provider.settings_config,
-                provider.opencode_config_format(),
-            )?;
-            if format == OpenCodeConfigFormat::V2 {
-                return opencode_config::set_provider_with_format(
-                    &provider.id,
-                    config_to_write.clone(),
-                    format,
-                );
-            }
-
-            // A new ID cannot inherit an existing provider's built-in definition.
-            // Check at the write boundary as well as in the UI, including old copies.
-            let has_npm = config_to_write
-                .get("npm")
-                .and_then(Value::as_str)
-                .is_some_and(|npm| !npm.trim().is_empty());
-            let has_models = config_to_write
-                .get("models")
-                .and_then(Value::as_object)
-                .is_some_and(|models| !models.is_empty());
-            if (!has_npm || !has_models)
-                && !opencode_config::get_providers()?.contains_key(&provider.id)
-            {
-                return Err(AppError::localized(
-                    "provider.opencode.custom_definition_required",
-                    "新的 OpenCode 供应商标识需要填写 npm 包和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
-                    "A new OpenCode provider ID requires an npm package and at least one model; only an existing ID in the live config may inherit defaults",
-                ));
-            }
-
-            // Validate with the existing type, but persist the original fragment:
-            // the type does not describe every OpenCode provider/model field.
-            let opencode_config_result = OpenCodeProviderConfig::deserialize(config_to_write);
-
-            match opencode_config_result {
-                Ok(_) => {
-                    opencode_config::set_provider_with_format(
-                        &provider.id,
-                        config_to_write.clone(),
-                        format,
-                    )?;
-                    log::info!("OpenCode provider '{}' written to live config", provider.id);
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to parse OpenCode provider config for '{}': {}",
-                        provider.id,
-                        e
-                    );
-                    // Only write if config looks like a valid provider fragment
-                    if config_to_write.get("npm").is_some()
-                        || config_to_write.get("options").is_some()
-                    {
-                        opencode_config::set_provider_with_format(
-                            &provider.id,
-                            config_to_write.clone(),
-                            format,
-                        )?;
-                        log::info!(
-                            "OpenCode provider '{}' written as raw JSON to live config",
-                            provider.id
-                        );
-                    } else {
-                        return Err(AppError::Message(format!(
-                            "OpenCode provider '{}' has invalid config structure for live config (must contain 'npm' or 'options')",
-                            provider.id
-                        )));
-                    }
-                }
-            }
-        }
-        AppType::OpenClaw => {
-            // OpenClaw uses additive mode - write provider to config
-            use crate::openclaw_config;
-            use crate::openclaw_config::OpenClawProviderConfig;
-
-            // Convert settings_config to OpenClawProviderConfig
-            let openclaw_config_result =
-                serde_json::from_value::<OpenClawProviderConfig>(provider.settings_config.clone());
-
-            match openclaw_config_result {
-                Ok(config) => {
-                    openclaw_config::set_typed_provider(&provider.id, &config)?;
-                    log::info!("OpenClaw provider '{}' written to live config", provider.id);
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to parse OpenClaw provider config for '{}': {}",
-                        provider.id,
-                        e
-                    );
-                    // Try to write as raw JSON if it looks valid
-                    if provider.settings_config.get("baseUrl").is_some()
-                        || provider.settings_config.get("api").is_some()
-                        || provider.settings_config.get("models").is_some()
-                    {
-                        openclaw_config::set_provider(
-                            &provider.id,
-                            provider.settings_config.clone(),
-                        )?;
-                        log::info!(
-                            "OpenClaw provider '{}' written as raw JSON to live config",
-                            provider.id
-                        );
-                    } else {
-                        return Err(AppError::Message(format!(
-                            "OpenClaw provider '{}' has invalid config structure for live config (must contain 'baseUrl', 'api', or 'models')",
-                            provider.id
-                        )));
-                    }
-                }
-            }
-        }
-        AppType::Hermes => {
-            crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
-            log::debug!("Hermes provider '{}' written to live config", provider.id);
-        }
-        AppType::Mcode => {
-            crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
-        }
-        AppType::Pi => {
-            return Err(AppError::InvalidInput(
-                "Pi providers use the Pi provider service".to_string(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Sync all providers to live configuration (for additive mode apps)
 ///
-/// Writes all providers from the database to the live configuration file.
-/// Used for OpenCode and other additive mode applications.
-fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
-    let providers = state.db.get_all_providers(app_type.as_str())?;
-    let mut synced_count = 0usize;
-
-    for provider in providers.values() {
-        if provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.live_config_managed)
-            == Some(false)
-        {
-            continue;
-        }
-
-        if let Err(e) = write_live_for_state(state, app_type, provider) {
-            log::warn!(
-                "Failed to sync {:?} provider '{}' to live: {e}",
-                app_type,
-                provider.id
-            );
-            continue;
-        }
-        synced_count += 1;
-    }
-
-    log::info!("Synced {synced_count} {app_type:?} providers to live config");
-    Ok(())
-}
-
-/// 把累加式应用的全部供应商同步到 live，再重投影它的 MCP。
-pub(crate) fn sync_additive_app_to_live(
-    state: &AppState,
+/// Every supported app now has a dedicated key-field write engine, so this
+/// snapshot path is only reachable if a new app type is added without one.
+pub(crate) fn write_live_snapshot(
     app_type: &AppType,
+    _provider: &Provider,
 ) -> Result<(), AppError> {
-    sync_all_providers_to_live(state, app_type)?;
-
-    // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
-    // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
-    // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
-    McpService::sync_enabled_for_app(state, app_type)?;
-
-    Ok(())
+    match app_type {
+        AppType::Claude => Err(AppError::localized(
+            "claude.live.requires_engine",
+            "Claude Code 配置只能经关键字段写入流程写入",
+            "Claude Code configuration must be written through the key-field write flow",
+        )),
+        AppType::ClaudeDesktop => Err(AppError::localized(
+            "claude_desktop.live.requires_db_context",
+            "Claude Desktop 配置写入需要通过供应商切换流程执行",
+            "Claude Desktop configuration must be written through the provider switch flow",
+        )),
+        AppType::Codex => Err(AppError::localized(
+            "codex.live.requires_engine",
+            "Codex 配置只能经关键字段写入流程写入",
+            "Codex configuration must be written through the key-field write flow",
+        )),
+        AppType::Gemini => Err(AppError::localized(
+            "gemini.live.requires_engine",
+            "Gemini CLI 配置只能经关键字段写入流程写入",
+            "Gemini CLI configuration must be written through the key-field write flow",
+        )),
+        AppType::GrokBuild => Err(AppError::localized(
+            "grokbuild.live.requires_engine",
+            "Grok Build 配置只能经关键字段写入流程写入",
+            "Grok Build configuration must be written through the key-field write flow",
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -819,25 +599,15 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 /// 使用有效的当前供应商 ID（验证过存在性）。
 /// 优先从本地 settings 读取，验证后 fallback 到数据库的 is_current 字段。
 /// 这确保了配置导入后无效 ID 会自动 fallback 到数据库。
-///
-/// For additive mode apps (OpenCode), all providers are synced instead of just the current one.
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     let mut failures = Vec::new();
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi | AppType::Mcode) {
-            continue;
-        }
-        let result = if app_type.is_additive_mode() {
-            // Additive mode: sync ALL providers
-            sync_all_providers_to_live(state, &app_type)
-        } else {
-            // Switch mode: sync only current provider. During proxy takeover,
-            // update the restore backup instead of rewriting the taken-over
-            // live file.
-            sync_current_provider_for_app_respecting_mode(state, &app_type).map(|_| ())
-        };
+        // Switch mode: sync only current provider. During proxy takeover,
+        // update the restore backup instead of rewriting the taken-over
+        // live file.
+        let result = sync_current_provider_for_app_respecting_mode(state, &app_type).map(|_| ());
 
         if let Err(error) = result {
             log::warn!("同步 Provider 到 {app_type:?} 失败: {error}");
@@ -937,54 +707,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                 "config": config_obj
             }))
         }
-        AppType::OpenCode => {
-            use crate::opencode_config::{get_opencode_config_path, read_opencode_config_from_path};
-
-            let config_path = get_opencode_config_path()?;
-            if !config_path.try_exists().map_err(|e| AppError::io(&config_path, e))? {
-                return Err(AppError::localized(
-                    "opencode.config.missing",
-                    "OpenCode 配置文件不存在",
-                    "OpenCode configuration file not found",
-                ));
-            }
-
-            let config = read_opencode_config_from_path(&config_path)?;
-            Ok(config)
-        }
         AppType::GrokBuild => crate::grok_config::read_grok_live_settings(),
-        AppType::OpenClaw => {
-            use crate::openclaw_config::{get_openclaw_config_path, read_openclaw_config};
-
-            let config_path = get_openclaw_config_path();
-            if !config_path.exists() {
-                return Err(AppError::localized(
-                    "openclaw.config.missing",
-                    "OpenClaw 配置文件不存在",
-                    "OpenClaw configuration file not found",
-                ));
-            }
-
-            let config = read_openclaw_config()?;
-            Ok(config)
-        }
-        AppType::Hermes => {
-            let config_path = crate::hermes_config::get_hermes_config_path();
-            if !config_path.exists() {
-                return Err(AppError::localized(
-                    "hermes.config.missing",
-                    "Hermes 配置文件不存在",
-                    "Hermes configuration file not found",
-                ));
-            }
-            let yaml_config = crate::hermes_config::read_hermes_config()?;
-            let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
-            Ok(config)
-        }
-        AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
-        AppType::Pi => Err(AppError::InvalidInput(
-            "Pi providers are read from Pi's native models file".to_string(),
-        )),
     }
 }
 
@@ -993,12 +716,6 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 /// Returns `Ok(true)` if a provider was actually imported,
 /// `Ok(false)` if skipped (providers already exist for this app).
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
-    // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
-    // import_xxx_providers_from_live functions, not this generic default config import
-    if app_type.is_additive_mode() {
-        return Ok(false);
-    }
-
     // 允许 "只有官方 seed 预设" 的情况下继续导入 live：
     // - 启动编排顺序是先 import 后 seed，新用户启动时 providers 为空，导入照常
     // - 老用户已有非 seed provider，跳过导入（正确）
@@ -1089,10 +806,6 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
-            unreachable!("additive mode apps are handled by early return")
-        }
     };
 
     let mut provider = Provider::with_id(
@@ -1160,320 +873,7 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() {
-        return Ok(false);
-    }
-
     Ok(!state.db.has_any_provider_for_app(app_type.as_str())?)
-}
-
-/// Remove an OpenCode provider from the live configuration
-///
-/// This is specific to OpenCode's additive mode - removing a provider
-/// from the opencode.json file.
-pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
-    use crate::opencode_config;
-
-    // Check if OpenCode config directory exists
-    if !opencode_config::get_opencode_dir().exists() {
-        log::debug!("OpenCode config directory doesn't exist, skipping removal of '{provider_id}'");
-        return Ok(());
-    }
-
-    opencode_config::remove_provider(provider_id)?;
-    log::info!("OpenCode provider '{provider_id}' removed from live config");
-
-    Ok(())
-}
-
-/// Import all providers from OpenCode live config to database
-///
-/// This imports existing providers from ~/.config/opencode/opencode.json
-/// into the CC Switch database. Each provider found will be added to the
-/// database with is_current set to false.
-pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
-    use crate::opencode_config;
-    use crate::provider::{OpenCodeConfigFormat, OpenCodeProviderConfig};
-    use serde::Deserialize;
-
-    let providers = opencode_config::get_providers_with_format()?;
-    if providers.is_empty() {
-        return Ok(0);
-    }
-
-    let mut imported = 0;
-    let mut updated = 0;
-    let existing_ids = state.db.get_provider_ids("opencode")?;
-
-    for (id, (settings_config, format)) in providers {
-        // Keep validation and display-name extraction separate from persistence.
-        // Serializing this partial type would discard fields such as api, env,
-        // and models.<id>.limit.input before they ever reach the database.
-        let name = match format {
-            OpenCodeConfigFormat::V1 => {
-                match OpenCodeProviderConfig::deserialize(&settings_config) {
-                    Ok(config) => config.name,
-                    Err(e) => {
-                        log::warn!("Failed to parse provider '{id}': {e}");
-                        continue;
-                    }
-                }
-            }
-            OpenCodeConfigFormat::V2 => settings_config
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-        };
-        let native_format =
-            (format == OpenCodeConfigFormat::V2).then_some(OpenCodeConfigFormat::V2);
-
-        if existing_ids.contains(&id) {
-            match state.db.get_provider_by_id(&id, "opencode") {
-                Ok(Some(existing)) => {
-                    let display_name = name.clone().unwrap_or_else(|| existing.name.clone());
-                    if existing.settings_config != settings_config
-                        || existing.name != display_name
-                        || existing.opencode_config_format() != native_format
-                    {
-                        let mut provider = existing;
-                        provider.name = display_name;
-                        provider.settings_config = settings_config;
-                        provider
-                            .meta
-                            .get_or_insert_with(Default::default)
-                            .opencode_config_format = native_format;
-                        if let Err(e) = state.db.save_provider("opencode", &provider) {
-                            log::warn!(
-                                "Failed to update OpenCode provider '{id}' from live config: {e}"
-                            );
-                        } else {
-                            updated += 1;
-                            log::info!("Updated OpenCode provider '{id}' from live config");
-                        }
-                    }
-                }
-                Ok(None) => {
-                    log::warn!("OpenCode provider '{id}' disappeared while importing live config")
-                }
-                Err(e) => log::warn!("Failed to look up OpenCode provider '{id}': {e}"),
-            }
-            continue;
-        }
-
-        // Create provider
-        let display_name = name.unwrap_or_else(|| id.clone());
-        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
-        provider.meta = Some(crate::provider::ProviderMeta {
-            live_config_managed: Some(true),
-            opencode_config_format: native_format,
-            ..Default::default()
-        });
-
-        // Save to database
-        if let Err(e) = state.db.save_provider("opencode", &provider) {
-            log::warn!("Failed to import OpenCode provider '{id}': {e}");
-            continue;
-        }
-
-        imported += 1;
-        log::info!("Imported OpenCode provider '{id}' from live config");
-    }
-
-    Ok(imported + updated)
-}
-
-/// Import all providers from OpenClaw live config to database
-///
-/// This imports existing providers from ~/.openclaw/openclaw.json
-/// into the CC Switch database. Each provider found will be added to the
-/// database with is_current set to false.
-pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, AppError> {
-    use crate::openclaw_config;
-
-    let providers = openclaw_config::get_typed_providers()?;
-    if providers.is_empty() {
-        return Ok(0);
-    }
-
-    let mut imported = 0;
-    let mut updated = 0;
-    let existing_ids = state.db.get_provider_ids("openclaw")?;
-
-    for (id, config) in providers {
-        // Validate: skip entries with empty id or no models
-        if id.trim().is_empty() {
-            log::warn!("Skipping OpenClaw provider with empty id");
-            continue;
-        }
-        if config.models.is_empty() {
-            log::warn!("Skipping OpenClaw provider '{id}': no models defined");
-            continue;
-        }
-
-        // Convert to Value for settings_config
-        let settings_config = match serde_json::to_value(&config) {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!("Failed to serialize OpenClaw provider '{id}': {e}");
-                continue;
-            }
-        };
-
-        if existing_ids.contains(&id) {
-            match state.db.get_provider_by_id(&id, "openclaw") {
-                Ok(Some(existing)) => {
-                    if existing.settings_config != settings_config {
-                        let mut provider = existing;
-                        provider.settings_config = settings_config;
-                        if let Err(e) = state.db.save_provider("openclaw", &provider) {
-                            log::warn!(
-                                "Failed to update OpenClaw provider '{id}' from live config: {e}"
-                            );
-                        } else {
-                            updated += 1;
-                            log::info!("Updated OpenClaw provider '{id}' from live config");
-                        }
-                    }
-                }
-                Ok(None) => {
-                    log::warn!("OpenClaw provider '{id}' disappeared while importing live config")
-                }
-                Err(e) => log::warn!("Failed to look up OpenClaw provider '{id}': {e}"),
-            }
-            continue;
-        }
-
-        // Determine display name: use first model name if available, otherwise use id
-        let display_name = config
-            .models
-            .first()
-            .and_then(|m| m.name.clone())
-            .unwrap_or_else(|| id.clone());
-
-        // Create provider
-        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
-        provider.meta = Some(crate::provider::ProviderMeta {
-            live_config_managed: Some(true),
-            ..Default::default()
-        });
-
-        // Save to database
-        if let Err(e) = state.db.save_provider("openclaw", &provider) {
-            log::warn!("Failed to import OpenClaw provider '{id}': {e}");
-            continue;
-        }
-
-        imported += 1;
-        log::info!("Imported OpenClaw provider '{id}' from live config");
-    }
-
-    Ok(imported + updated)
-}
-
-/// Import all providers from Hermes live config to database
-///
-/// This imports existing providers from ~/.hermes/config.yaml
-/// into the CC Switch database. Each provider found will be added to the
-/// database with is_current set to false.
-pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
-    use crate::hermes_config;
-
-    let providers = hermes_config::get_providers()?;
-    if providers.is_empty() {
-        return Ok(0);
-    }
-
-    let mut imported = 0;
-    let mut updated = 0;
-    let existing_ids = state.db.get_provider_ids("hermes")?;
-
-    for (name, config) in providers {
-        // Validate: skip entries with empty name
-        if name.trim().is_empty() {
-            log::warn!("Skipping Hermes provider with empty name");
-            continue;
-        }
-
-        if existing_ids.contains(&name) {
-            match state.db.get_provider_by_id(&name, "hermes") {
-                Ok(Some(existing)) => {
-                    if existing.settings_config != config {
-                        let mut provider = existing;
-                        provider.settings_config = config;
-                        if let Err(e) = state.db.save_provider("hermes", &provider) {
-                            log::warn!(
-                                "Failed to update Hermes provider '{name}' from live config: {e}"
-                            );
-                        } else {
-                            updated += 1;
-                            log::info!("Updated Hermes provider '{name}' from live config");
-                        }
-                    }
-                }
-                Ok(None) => {
-                    log::warn!("Hermes provider '{name}' disappeared while importing live config")
-                }
-                Err(e) => log::warn!("Failed to look up Hermes provider '{name}': {e}"),
-            }
-            continue;
-        }
-
-        // Create provider
-        let mut provider = Provider::with_id(name.clone(), name.clone(), config, None);
-        provider.meta = Some(crate::provider::ProviderMeta {
-            live_config_managed: Some(true),
-            ..Default::default()
-        });
-
-        // Save to database
-        if let Err(e) = state.db.save_provider("hermes", &provider) {
-            log::warn!("Failed to import Hermes provider '{name}': {e}");
-            continue;
-        }
-
-        imported += 1;
-        log::info!("Imported Hermes provider '{name}' from live config");
-    }
-
-    Ok(imported + updated)
-}
-
-/// Remove a Hermes provider from live config
-///
-/// This removes a specific provider from ~/.hermes/config.yaml
-/// without affecting other providers in the file.
-pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
-    use crate::hermes_config;
-
-    // Check if Hermes config directory exists
-    if !hermes_config::get_hermes_dir().exists() {
-        log::debug!("Hermes config directory doesn't exist, skipping removal of '{provider_id}'");
-        return Ok(());
-    }
-
-    hermes_config::remove_provider(provider_id)?;
-    log::info!("Hermes provider '{provider_id}' removed from live config");
-
-    Ok(())
-}
-
-/// Remove an OpenClaw provider from live config
-///
-/// This removes a specific provider from ~/.openclaw/openclaw.json
-/// without affecting other providers in the file.
-pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
-    use crate::openclaw_config;
-
-    // Check if OpenClaw config directory exists
-    if !openclaw_config::get_openclaw_dir().exists() {
-        log::debug!("OpenClaw config directory doesn't exist, skipping removal of '{provider_id}'");
-        return Ok(());
-    }
-
-    openclaw_config::remove_provider(provider_id)?;
-    log::info!("OpenClaw provider '{provider_id}' removed from live config");
-
-    Ok(())
 }
 
 #[cfg(test)]

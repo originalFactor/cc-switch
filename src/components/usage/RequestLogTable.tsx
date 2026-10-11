@@ -87,11 +87,6 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   codex: "Codex",
   gemini: "Gemini",
   grokbuild: "Grok",
-  opencode: "OpenCode",
-  openclaw: "OpenClaw",
-  hermes: "Hermes",
-  pi: "Pi",
-  mcode: "MiniMax",
 };
 
 export function appShortName(appType: string): string {
