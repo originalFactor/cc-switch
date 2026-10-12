@@ -346,7 +346,7 @@ async fn handle_messages_for_app(
         Ok(result) => result,
         Err(mut err) => {
             if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
+                ctx.provider = *provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return Err(err.error);
@@ -944,7 +944,7 @@ pub async fn handle_chat_completions(
         Ok(result) => result,
         Err(mut err) => {
             if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
+                ctx.provider = *provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
@@ -1069,7 +1069,7 @@ async fn handle_responses_for_app(
         Ok(result) => result,
         Err(mut err) => {
             if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
+                ctx.provider = *provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
@@ -1301,7 +1301,7 @@ async fn handle_codex_standalone_passthrough(
         Ok(result) => result,
         Err(mut err) => {
             if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
+                ctx.provider = *provider;
             }
             log_forward_error(&state, &ctx, false, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
@@ -1398,7 +1398,7 @@ async fn handle_responses_compact_for_app(
         Ok(result) => result,
         Err(mut err) => {
             if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
+                ctx.provider = *provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
@@ -2472,7 +2472,7 @@ pub async fn handle_gemini(
         Ok(result) => result,
         Err(mut err) => {
             if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
+                ctx.provider = *provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return Err(err.error);

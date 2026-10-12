@@ -298,7 +298,10 @@ pub struct ForwardResult {
 
 pub struct ForwardError {
     pub error: ProxyError,
-    pub provider: Option<Provider>,
+    /// Boxed: `Provider` carries the whole settings/metadata payload, so inlining it
+    /// would push the `Err` variant of every `Result<_, ForwardError>` past clippy's
+    /// `result_large_err` threshold on the hot forwarding paths.
+    pub provider: Option<Box<Provider>>,
 }
 
 /// 活跃连接 RAII guard
@@ -709,7 +712,7 @@ impl RequestForwarder {
         }
         ForwardError {
             error,
-            provider: Some(provider.clone()),
+            provider: Some(Box::new(provider.clone())),
         }
     }
 
@@ -1360,7 +1363,7 @@ impl RequestForwarder {
 
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
-            provider: last_provider,
+            provider: last_provider.map(Box::new),
         })
     }
 

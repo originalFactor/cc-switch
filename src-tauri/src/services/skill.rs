@@ -3857,7 +3857,7 @@ impl SkillService {
 
         let url = url::Url::parse_with_params(
             "https://skills.sh/api/search",
-            &[
+            [
                 ("q", query),
                 ("limit", &limit.to_string()),
                 ("offset", &offset.to_string()),

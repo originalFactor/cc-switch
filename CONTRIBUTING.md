@@ -22,7 +22,7 @@ There are many ways to contribute:
 
 - **Node.js** 20.19+ or 22.12+ (`.node-version` at the repository root is 22.12.0)
 - **pnpm** 10: the version is pinned by the `packageManager` field in `package.json`; run `corepack enable` once and that version is used automatically. To upgrade pnpm, edit this field directly (Dependabot no longer does it)
-- **Rust** 1.95: pinned by `rust-toolchain.toml`; rustup installs it automatically on the first build
+- **Rust** nightly: pinned to a dated nightly by `rust-toolchain.toml`; rustup installs it automatically on the first build
 - Platform-specific [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/): Windows needs the Microsoft C++ Build Tools and WebView2 (usually preinstalled on Windows 10/11); macOS needs the Xcode Command Line Tools; on Debian / Ubuntu you can use the install command from CI:
 
   ```bash
@@ -277,7 +277,7 @@ The CC Switch UI supports four languages: Simplified Chinese, Traditional Chines
 
 - **Node.js** 20.19+ 或 22.12+（仓库根目录的 `.node-version` 为 22.12.0）
 - **pnpm** 10：版本由 `package.json` 的 `packageManager` 字段固定，执行一次 `corepack enable` 后会自动使用该版本；升级 pnpm 时直接修改这个字段（不再由 Dependabot 代劳）
-- **Rust** 1.95：由 `rust-toolchain.toml` 固定，rustup 会在首次构建时自动安装
+- **Rust** nightly：由 `rust-toolchain.toml` 固定到某个具体日期的 nightly，rustup 会在首次构建时自动安装
 - 各平台的 [Tauri 2 前置依赖](https://v2.tauri.app/zh-cn/start/prerequisites/)：Windows 需要 Microsoft C++ 生成工具和 WebView2（Windows 10/11 通常已预装 WebView2）；macOS 需要 Xcode Command Line Tools；Debian / Ubuntu 可以参考 CI 使用的安装命令：
 
   ```bash

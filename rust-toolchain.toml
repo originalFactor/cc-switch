@@ -1,4 +1,6 @@
 [toolchain]
-channel = "1.95"
+# Dated nightly: the project needs nightly, but an unpinned `nightly` channel would
+# let the compiler drift between machines and CI runs.
+channel = "nightly-2026-10-12"
 components = ["rustfmt", "clippy"]
 profile = "minimal"
