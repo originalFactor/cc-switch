@@ -39,12 +39,11 @@ const locales = [
 const KNOWN_EXTRA_KEYS = new Set(["settings.oneClickInstall"]);
 
 /**
- * 这几条文案各语言刻意用不同的占位符表达同一件事：zh 用 `{{n}}` 而非 `{{more}}`、
- * `{{month}}/{{day}}` 而非 `{{date}}`，中文排版用 `{{labelSp}}` 而非 `{{label}}`。
+ * 这几条文案各语言刻意用不同的占位符表达同一件事：zh 用 `{{month}}/{{day}}` 而非
+ * `{{date}}`，中文排版用 `{{labelSp}}` 而非 `{{label}}`。
  * 逐个点名豁免，而不是放宽整张表的比较——否则新增的插值漂移会被一起放过。
  */
 const LANGUAGE_SPECIFIC_PLACEHOLDERS = new Set([
-  "providerPreset.matchedVersions",
   "prompts.updatedOn",
   "quota.tierLeft",
   "quota.tierUsedUp",

@@ -1160,8 +1160,6 @@ function App() {
         open={isAddOpen}
         onOpenChange={setIsAddOpen}
         appId={activeApp}
-        onSubmit={addProvider}
-        modeView={formModeView}
       />
 
       <EditProviderDialog

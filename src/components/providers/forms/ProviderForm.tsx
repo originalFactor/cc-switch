@@ -29,35 +29,18 @@ import type {
   ClaudeApiKeyField,
 } from "@/types";
 import {
-  providerPresets,
-  type ProviderPreset,
-} from "@/config/claudeProviderPresets";
-import {
-  codexProviderPresets,
-  type CodexProviderPreset,
-} from "@/config/codexProviderPresets";
-import {
-  geminiProviderPresets,
-  type GeminiProviderPreset,
-} from "@/config/geminiProviderPresets";
-import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
-import {
-  applyTemplateValues,
   hasApiKeyField,
-} from "@/utils/providerConfigUtils";
-import { mergeProviderMeta } from "@/utils/providerMetaUtils";
-import {
   codexApiFormatFromWireApi,
   extractCodexWireApi,
   setCodexWireApi,
   extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
+import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
 import GeminiConfigEditor from "./GeminiConfigEditor";
-import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import {
@@ -82,7 +65,6 @@ import {
   useModelState,
   useCodexConfigState,
   useApiKeyLink,
-  useTemplateValues,
   useSpeedTestEndpoints,
   useCodexTomlValidation,
   useGeminiConfigState,
@@ -107,22 +89,6 @@ const GEMINI_DEFAULT_CONFIG = JSON.stringify(
   null,
   2,
 );
-
-type PresetEntry = {
-  id: string;
-  preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset;
-};
-
-function getPresetProviderType(
-  preset: PresetEntry["preset"] | null | undefined,
-): "github_copilot" | "codex_oauth" | "xai_oauth" | undefined {
-  if (!preset || !("providerType" in preset)) return undefined;
-  return preset.providerType === "github_copilot" ||
-    preset.providerType === "codex_oauth" ||
-    preset.providerType === "xai_oauth"
-    ? preset.providerType
-    : undefined;
-}
 
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
@@ -243,8 +209,6 @@ export interface ProviderFormProps {
   submitLabel: string;
   onSubmit: (values: ProviderFormValues) => Promise<void> | void;
   onCancel: () => void;
-  onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
-  onManageUniversalProviders?: () => void;
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
   initialData?: {
@@ -297,8 +261,6 @@ function ProviderFormFull({
   submitLabel,
   onSubmit,
   onCancel,
-  onUniversalPresetSelect,
-  onManageUniversalProviders,
   onManageAuthAccounts,
   onSubmittingChange,
   initialData,
@@ -328,15 +290,6 @@ function ProviderFormFull({
   const hasExistingCodexOfficialIdentity =
     initialCodexOfficialIdentity !== null &&
     initialCodexOfficialIdentity !== "api_key";
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
-    initialData ? null : "custom",
-  );
-  const [activePreset, setActivePreset] = useState<{
-    id: string;
-    category?: ProviderCategory;
-    isPartner?: boolean;
-    partnerPromotionKey?: string;
-  } | null>(null);
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] =
     useState(false);
@@ -358,7 +311,6 @@ function ProviderFormFull({
 
   const { category } = useProviderCategory({
     appId,
-    selectedPresetId,
     isEditMode,
     initialCategory:
       initialData?.category ??
@@ -366,9 +318,6 @@ function ProviderFormFull({
   });
 
   useEffect(() => {
-    setSelectedPresetId(initialData ? null : "custom");
-    setActivePreset(null);
-
     if (!initialData) {
       setDraftCustomEndpoints([]);
     }
@@ -478,7 +427,6 @@ function ProviderFormFull({
   } = useApiKeyState({
     initialConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
-    selectedPresetId,
     category,
     appType: appId,
     apiKeyField: appId === "claude" ? localApiKeyField : undefined,
@@ -770,75 +718,22 @@ function ProviderFormFull({
   );
 
   useEffect(() => {
-    if (appId === "codex" && !initialData && selectedPresetId === "custom") {
+    if (appId === "codex" && !initialData) {
+      // 新增：把 Codex 自定义模板投影到当前 config.toml 上显示。
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
       setPromptCacheRouting("auto");
       projectCodexDraft(template.auth, template.config);
     }
-  }, [
-    appId,
-    initialData,
-    selectedPresetId,
-    resetCodexConfig,
-    projectCodexDraft,
-  ]);
+  }, [appId, initialData, resetCodexConfig, projectCodexDraft]);
 
   useEffect(() => {
     form.reset(defaultValues);
   }, [defaultValues, form]);
 
-  const presetCategoryLabels: Record<string, string> = useMemo(
-    () => ({
-      official: t("providerForm.categoryOfficial", {
-        defaultValue: "官方",
-      }),
-      cn_official: t("providerForm.categoryCnOfficial", {
-        defaultValue: "国内官方",
-      }),
-      aggregator: t("providerForm.categoryAggregation", {
-        defaultValue: "聚合服务",
-      }),
-      third_party: t("providerForm.categoryThirdParty", {
-        defaultValue: "第三方",
-      }),
-    }),
-    [t],
-  );
-
-  const presetEntries = useMemo(() => {
-    if (appId === "codex") {
-      return codexProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `codex-${index}`,
-        preset,
-      }));
-    } else if (appId === "gemini") {
-      return geminiProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `gemini-${index}`,
-        preset,
-      }));
-    }
-    return providerPresets
-      .filter((p) => !p.hidden)
-      .map<PresetEntry>((preset, index) => ({
-        id: `claude-${index}`,
-        preset,
-      }));
-  }, [appId]);
-
-  const selectedPresetEntry = useMemo(
-    () =>
-      selectedPresetId && selectedPresetId !== "custom"
-        ? (presetEntries.find((entry) => entry.id === selectedPresetId) ?? null)
-        : null,
-    [presetEntries, selectedPresetId],
-  );
-  const presetProviderType = getPresetProviderType(selectedPresetEntry?.preset);
   const initialProviderType = initialData?.meta?.providerType;
-  const hasManagedCopilotIdentity =
-    presetProviderType === "github_copilot" ||
-    initialProviderType === "github_copilot";
+  const hasManagedCopilotIdentity = initialProviderType === "github_copilot";
   const isCopilotProvider =
     (appId === "codex" && hasManagedCopilotIdentity) ||
     (appId === "claude" &&
@@ -848,21 +743,16 @@ function ProviderFormFull({
     ? effectiveCodexCopilotApiFormat !== "openai_responses"
     : localCodexApiFormat === "openai_chat";
   const isClaudeCodexOauthProvider =
-    appId === "claude" &&
-    (presetProviderType === "codex_oauth" ||
-      initialProviderType === "codex_oauth");
+    appId === "claude" && initialProviderType === "codex_oauth";
   const isXaiOauthProvider =
     (appId === "claude" || appId === "codex") &&
-    (presetProviderType === "xai_oauth" || initialProviderType === "xai_oauth");
+    initialProviderType === "xai_oauth";
   const wasCodexOfficialManagedOauthBound =
     appId === "codex" &&
     Boolean(resolveManagedAccountId(initialData?.meta, "codex_oauth"));
   const isCodexOfficialProvider =
     appId === "codex" &&
-    (hasExistingCodexOfficialIdentity ||
-      wasCodexOfficialManagedOauthBound ||
-      (presetProviderType === "codex_oauth" &&
-        selectedPresetEntry?.preset.category === "official"));
+    (hasExistingCodexOfficialIdentity || wasCodexOfficialManagedOauthBound);
   const isCodexOfficialManagedOauthBound =
     isCodexOfficialProvider && Boolean(selectedCodexAccountId);
   // 在聚合那格打开（没给就看应用实际是否在聚合模式）时，新增 / 编辑用聚合的简化表单
@@ -879,19 +769,6 @@ function ProviderFormFull({
     isCodexOfficialProvider && !hasValidCodexOfficialSelection;
   const requiresCodexOauthLogin =
     isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound;
-
-  const {
-    templateValues,
-    templateValueEntries,
-    selectedPreset: templatePreset,
-    handleTemplateValueChange,
-    validateTemplateValues,
-  } = useTemplateValues({
-    selectedPresetId: appId === "claude" ? selectedPresetId : null,
-    presetEntries: appId === "claude" ? presetEntries : [],
-    settingsConfig: form.getValues("settingsConfig"),
-    onConfigChange: handleSettingsConfigChange,
-  });
 
   const {
     geminiEnv,
@@ -929,10 +806,10 @@ function ProviderFormFull({
   projectGeminiDraftRef.current = projectGeminiDraft;
 
   useEffect(() => {
-    if (appId === "gemini" && !initialData && selectedPresetId === "custom") {
+    if (appId === "gemini" && !initialData) {
       projectGeminiDraftRef.current({}, {});
     }
-  }, [appId, initialData, selectedPresetId]);
+  }, [appId, initialData]);
 
   const updateGeminiEnvField = useCallback(
     (
@@ -1002,19 +879,6 @@ function ProviderFormFull({
 
     // 软性问题（业务约束，用户可选择仍要保存）
     const issues: string[] = [];
-
-    // 模板变量未填：A 类（空值）
-    if (appId === "claude" && templateValueEntries.length > 0) {
-      const validation = validateTemplateValues();
-      if (!validation.isValid && validation.missingField) {
-        issues.push(
-          t("providerForm.fillParameter", {
-            label: validation.missingField.label,
-            defaultValue: `请填写 ${validation.missingField.label}`,
-          }),
-        );
-      }
-    }
 
     // 供应商名空：A 类
     if (!values.name.trim()) {
@@ -1330,28 +1194,17 @@ function ProviderFormFull({
       payload.presetCategory = "official";
     }
 
-    if (activePreset) {
-      payload.presetId = activePreset.id;
-      if (activePreset.category) {
-        payload.presetCategory = activePreset.category;
-      }
-      if (activePreset.isPartner) {
-        payload.isPartner = activePreset.isPartner;
-      }
-    }
-
-    if (!isEditMode && isCodexOfficialManagedOauthBound) {
+    // 官方卡绑了托管账号：名字带上账号登录名（预设移除后官方卡只能由 seed 创建、
+    // 在这里编辑，所以新增和编辑都要补；已经带上的不重复加）。
+    if (isCodexOfficialManagedOauthBound) {
       const selectedAccountLogin = codexOauthAccounts.find(
         (account) => account.id === selectedCodexAccountId,
       )?.login;
-      const presetName = selectedPresetEntry
-        ? "nameKey" in selectedPresetEntry.preset &&
-          selectedPresetEntry.preset.nameKey
-          ? t(selectedPresetEntry.preset.nameKey)
-          : selectedPresetEntry.preset.name
-        : null;
-      if (selectedAccountLogin && presetName && payload.name === presetName) {
-        payload.name = `${presetName} (${selectedAccountLogin})`;
+      if (selectedAccountLogin) {
+        const suffix = ` (${selectedAccountLogin})`;
+        if (!payload.name.endsWith(suffix)) {
+          payload.name = `${payload.name}${suffix}`;
+        }
       }
     }
 
@@ -1377,20 +1230,6 @@ function ProviderFormFull({
       let mergedMeta = needsClearEndpoints
         ? mergeProviderMeta(initialData?.meta, {})
         : mergeProviderMeta(initialData?.meta, customEndpointsToSave);
-
-      if (activePreset?.isPartner) {
-        mergedMeta = {
-          ...(mergedMeta ?? {}),
-          isPartner: true,
-        };
-      }
-
-      if (activePreset?.partnerPromotionKey) {
-        mergedMeta = {
-          ...(mergedMeta ?? {}),
-          partnerPromotionKey: activePreset.partnerPromotionKey,
-        };
-      }
 
       if (mergedMeta !== undefined) {
         payload.meta = mergedMeta;
@@ -1566,177 +1405,37 @@ function ProviderFormFull({
   const {
     shouldShowApiKeyLink: shouldShowClaudeApiKeyLink,
     websiteUrl: claudeWebsiteUrl,
-    isPartner: isClaudePartner,
-    partnerPromotionKey: claudePartnerPromotionKey,
   } = useApiKeyLink({
     appId: "claude",
     category,
-    selectedPresetId,
-    presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
   const {
     shouldShowApiKeyLink: shouldShowCodexApiKeyLink,
     websiteUrl: codexWebsiteUrl,
-    isPartner: isCodexPartner,
-    partnerPromotionKey: codexPartnerPromotionKey,
   } = useApiKeyLink({
     appId: "codex",
     category,
-    selectedPresetId,
-    presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
   const {
     shouldShowApiKeyLink: shouldShowGeminiApiKeyLink,
     websiteUrl: geminiWebsiteUrl,
-    isPartner: isGeminiPartner,
-    partnerPromotionKey: geminiPartnerPromotionKey,
   } = useApiKeyLink({
     appId: "gemini",
     category,
-    selectedPresetId,
-    presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
-    selectedPresetId,
-    presetEntries,
     baseUrl,
     codexBaseUrl,
     initialData,
   });
-
-  const handlePresetChange = (value: string) => {
-    setSelectedPresetId(value);
-    // Stack 模型是这家自己的：换预设后回到跟着新预设的模型映射。
-    setClaudeStackRows(null);
-    if (value === "custom") {
-      setActivePreset(null);
-      form.reset(defaultValues);
-
-      if (appId === "codex") {
-        const template = getCodexCustomTemplate();
-        resetCodexConfig(template.auth, template.config);
-        setCodexChatReasoning({});
-        setPromptCacheRouting("auto");
-        setCodexCopilotApiFormat("auto");
-        setLocalCodexApiFormat(
-          codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
-            "openai_responses",
-        );
-        projectCodexDraft(template.auth, template.config);
-      }
-      if (appId === "gemini") {
-        resetGeminiConfig({}, {});
-        projectGeminiDraft({}, {});
-      }
-      return;
-    }
-
-    const entry = presetEntries.find((item) => item.id === value);
-    if (!entry) {
-      return;
-    }
-
-    setActivePreset({
-      id: value,
-      category: entry.preset.category,
-      isPartner: entry.preset.isPartner,
-      partnerPromotionKey: entry.preset.partnerPromotionKey,
-    });
-
-    if (appId === "codex") {
-      const preset = entry.preset as CodexProviderPreset;
-      const auth = preset.auth ?? {};
-      const config = preset.config ?? "";
-
-      resetCodexConfig(auth, config, preset.modelCatalog ?? []);
-      setCodexChatReasoning(preset.codexChatReasoning ?? {});
-      setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
-      setCodexCopilotApiFormat("auto");
-      setLocalCodexApiFormat(
-        preset.apiFormat ??
-          codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
-          "openai_responses",
-      );
-
-      form.reset({
-        name: preset.nameKey ? t(preset.nameKey) : preset.name,
-        websiteUrl: preset.websiteUrl ?? "",
-        settingsConfig: JSON.stringify({ auth, config }, null, 2),
-        icon: preset.icon ?? "",
-        iconColor: preset.iconColor ?? "",
-      });
-      // Preset selection resets Copilot to auto; do not reuse the previous render's metadata.
-      projectCodexDraft(
-        auth,
-        config,
-        preset.category,
-        preset.providerType === "github_copilot"
-          ? { providerType: preset.providerType }
-          : undefined,
-      );
-      return;
-    }
-
-    if (appId === "gemini") {
-      const preset = entry.preset as GeminiProviderPreset;
-      const env = (preset.settingsConfig as any)?.env ?? {};
-      const config = (preset.settingsConfig as any)?.config ?? {};
-
-      resetGeminiConfig(env, config);
-
-      form.reset({
-        name: preset.nameKey ? t(preset.nameKey) : preset.name,
-        websiteUrl: preset.websiteUrl ?? "",
-        settingsConfig: JSON.stringify(preset.settingsConfig, null, 2),
-        icon: preset.icon ?? "",
-        iconColor: preset.iconColor ?? "",
-      });
-      projectGeminiDraft(env, config, preset.category);
-      return;
-    }
-
-    const preset = entry.preset as ProviderPreset;
-    const templated = applyTemplateValues(
-      preset.settingsConfig,
-      preset.templateValues,
-    );
-    // 预设只带关键字段和独有字段，套在当前 live 上显示（和切换的结果一致）。
-    const config =
-      appId === "claude"
-        ? overlayClaudeProviderFields(
-            claudeLiveBase ?? {},
-            withClaudeGatewayDefaults(
-              templated as Record<string, unknown>,
-              preset.category,
-            ),
-          )
-        : templated;
-
-    if (preset.apiFormat) {
-      setLocalApiFormat(preset.apiFormat);
-    } else {
-      setLocalApiFormat("anthropic");
-    }
-
-    setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
-    setLocalIsFullUrl(false);
-
-    form.reset({
-      name: preset.nameKey ? t(preset.nameKey) : preset.name,
-      websiteUrl: preset.websiteUrl ?? "",
-      settingsConfig: JSON.stringify(config, null, 2),
-      icon: preset.icon ?? "",
-      iconColor: preset.iconColor ?? "",
-    });
-  };
 
   const settingsConfigErrorField = (
     <FormField
@@ -1758,18 +1457,6 @@ function ProviderFormFull({
           onSubmit={form.handleSubmit(handleSubmit)}
           className="space-y-6"
         >
-          {!initialData && (
-            <ProviderPresetSelector
-              selectedPresetId={selectedPresetId}
-              presetEntries={presetEntries}
-              presetCategoryLabels={presetCategoryLabels}
-              onPresetChange={handlePresetChange}
-              onUniversalPresetSelect={onUniversalPresetSelect}
-              onManageUniversalProviders={onManageUniversalProviders}
-              category={category}
-            />
-          )}
-
           <BasicFormFields form={form} />
 
           {appId === "claude" && (
@@ -1785,13 +1472,10 @@ function ProviderFormFull({
               category={category}
               shouldShowApiKeyLink={shouldShowClaudeApiKeyLink}
               websiteUrl={claudeWebsiteUrl}
-              isPartner={isClaudePartner}
-              partnerPromotionKey={claudePartnerPromotionKey}
               isCopilotPreset={isCopilotProvider}
               isCodexOauthPreset={isClaudeCodexOauthProvider}
               isXaiOauthPreset={isXaiOauthProvider}
               usesOAuth={
-                templatePreset?.requiresOAuth === true ||
                 isCopilotProvider ||
                 isClaudeCodexOauthProvider ||
                 isXaiOauthProvider
@@ -1808,10 +1492,6 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
-              templateValueEntries={templateValueEntries}
-              templateValues={templateValues}
-              templatePresetName={templatePreset?.name || ""}
-              onTemplateValueChange={handleTemplateValueChange}
               shouldShowSpeedTest={shouldShowSpeedTest}
               baseUrl={baseUrl}
               onBaseUrlChange={handleClaudeBaseUrlChange}
@@ -1861,10 +1541,7 @@ function ProviderFormFull({
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
               onGitHubAccountSelect={setSelectedGitHubAccountId}
-              isXaiOauthPreset={
-                presetProviderType === "xai_oauth" ||
-                initialData?.meta?.providerType === "xai_oauth"
-              }
+              isXaiOauthPreset={initialData?.meta?.providerType === "xai_oauth"}
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
@@ -1873,8 +1550,6 @@ function ProviderFormFull({
               category={category}
               shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
               websiteUrl={codexWebsiteUrl}
-              isPartner={isCodexPartner}
-              partnerPromotionKey={codexPartnerPromotionKey}
               isCodexOauthPreset={isCodexOfficialProvider}
               selectedCodexAccountId={selectedCodexAccountId}
               onCodexAccountSelect={setSelectedCodexAccountId}
@@ -1948,8 +1623,6 @@ function ProviderFormFull({
               category={category}
               shouldShowApiKeyLink={shouldShowGeminiApiKeyLink}
               websiteUrl={geminiWebsiteUrl}
-              isPartner={isGeminiPartner}
-              partnerPromotionKey={geminiPartnerPromotionKey}
               shouldShowSpeedTest={shouldShowSpeedTest}
               baseUrl={geminiBaseUrl}
               onBaseUrlChange={handleGeminiBaseUrlChange}

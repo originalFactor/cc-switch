@@ -5,6 +5,8 @@ import type {
   SessionMessage,
   SessionMeta,
   Settings,
+  UniversalProvider,
+  UniversalProvidersMap,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
 
@@ -78,6 +80,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
 
 let providers = createDefaultProviders();
 let current = createDefaultCurrent();
+let universalProvidersState: UniversalProvidersMap = {};
 let settingsState: Settings = {
   showInTray: true,
   minimizeToTrayOnClose: true,
@@ -181,6 +184,7 @@ const cloneProviders = (value: ProvidersByApp) =>
 export const resetProviderState = () => {
   providers = createDefaultProviders();
   current = createDefaultCurrent();
+  universalProvidersState = {};
   sessionsState = createDefaultSessions();
   sessionMessagesState = createDefaultSessionMessages();
   settingsState = {
@@ -293,6 +297,63 @@ export const updateSortOrder = (
 
 export const listProviders = (appType: AppId) =>
   deepClone(providers[appType] ?? {}) as Record<string, Provider>;
+
+// ─── 统一供应商 ───────────────────────────────────────────────────────────────
+
+export const listUniversalProviders = () =>
+  deepClone(universalProvidersState) as UniversalProvidersMap;
+
+export const getUniversalProvider = (id: string) =>
+  deepClone(universalProvidersState[id] ?? null) as UniversalProvider | null;
+
+export const saveUniversalProvider = (provider: UniversalProvider) => {
+  universalProvidersState = {
+    ...universalProvidersState,
+    [provider.id]: deepClone(provider) as UniversalProvider,
+  };
+};
+
+export const deleteUniversalProvider = (id: string) => {
+  if (!(id in universalProvidersState)) return false;
+  const next = { ...universalProvidersState };
+  delete next[id];
+  universalProvidersState = next;
+  return true;
+};
+
+/**
+ * 把统一供应商同步成各应用的子供应商（id 规则与后端一致：
+ * `universal-{app}-{id}`）。子卡只在对应的应用开关打开时创建，关掉时删除。
+ */
+export const syncUniversalProviderToApps = (id: string) => {
+  const universal = universalProvidersState[id];
+  if (!universal) return false;
+
+  const apps: Array<[AppId, boolean]> = [
+    ["claude", universal.apps.claude],
+    ["claude-desktop", universal.apps.claudeDesktop ?? false],
+    ["codex", universal.apps.codex],
+    ["gemini", universal.apps.gemini],
+    ["grokbuild", universal.apps.grokbuild ?? false],
+  ];
+
+  for (const [app, enabled] of apps) {
+    const childId = `universal-${app}-${id}`;
+    if (!enabled) {
+      deleteProvider(app, childId);
+      continue;
+    }
+    addProvider(app, {
+      id: childId,
+      name: universal.name,
+      settingsConfig: {},
+      category: "aggregator",
+      sortIndex: 99,
+      createdAt: universal.createdAt ?? Date.now(),
+    });
+  }
+  return true;
+};
 
 export const getSettings = () => deepClone(settingsState) as Settings;
 

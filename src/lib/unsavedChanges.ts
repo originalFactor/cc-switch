@@ -32,7 +32,7 @@ const EDIT_CONTROL_SELECTOR = [
 /**
  * 挂到编辑器内容区：文字输入、原生选择变化、以及点到上面那些控件时登记为有未保存改动。
  * React 的合成事件沿组件树冒泡，渲染到 body 的下拉选项也能收到。
- * `enabled` 为 false 时不登记（例如新增供应商还在选预设）。
+ * `enabled` 为 false 时不登记（例如新增供应商表单还没打开）。
  */
 export function useUnsavedChangesTracker(enabled = true) {
   const token = useRef({}).current;

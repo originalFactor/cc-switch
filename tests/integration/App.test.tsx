@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { universalProvidersApi } from "@/lib/api";
 import { resetProviderState } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 
@@ -60,19 +61,40 @@ vi.mock("@/components/providers/ProviderList", () => ({
   ),
 }));
 
+// 添加入口只走统一供应商：这里替身直接回一个统一供应商，
+// 然后 upsert + sync，并按后端的行为发出 universal-provider-synced
+// （App 靠这个事件刷新供应商列表）。
 vi.mock("@/components/providers/AddProviderDialog", () => ({
-  AddProviderDialog: ({ open, onOpenChange, onSubmit, appId }: any) =>
+  AddProviderDialog: ({ open, onOpenChange }: any) =>
     open ? (
       <div data-testid="add-provider-dialog">
         <button
-          onClick={() =>
-            onSubmit({
-              name: `New ${appId} Provider`,
-              settingsConfig: {},
-              category: "custom",
-              sortIndex: 99,
-            })
-          }
+          onClick={() => {
+            const provider = {
+              id: "u-new",
+              name: "New codex Provider",
+              providerType: "newapi",
+              apps: {
+                claude: true,
+                codex: true,
+                gemini: true,
+                claudeDesktop: false,
+                grokbuild: false,
+              },
+              baseUrl: "https://api.example.com",
+              apiKey: "sk-new",
+              models: {},
+              createdAt: 1,
+            };
+            void (async () => {
+              await universalProvidersApi.upsert(provider);
+              await universalProvidersApi.sync(provider.id);
+              emitTauriEvent("universal-provider-synced", {
+                action: "upsert",
+                id: provider.id,
+              });
+            })();
+          }}
         >
           confirm-add
         </button>

@@ -53,6 +53,25 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
   gemini: {
     model: "gemini-3.6-flash",
   },
+  claudeDesktop: {
+    sonnetModel: "claude-sonnet-5",
+    opusModel: "claude-opus-5",
+    haikuModel: "claude-haiku-4-5-20251001",
+  },
+  grokbuild: {
+    model: "grok-4.5",
+    upstreamModel: "grok-4.5",
+    apiBackend: "responses",
+  },
+};
+
+/** 新建时默认勾选的应用：五个应用全开（不含已下线的） */
+const DEFAULT_APPS: UniversalProviderApps = {
+  claude: true,
+  codex: true,
+  gemini: true,
+  claudeDesktop: true,
+  grokbuild: true,
 };
 
 /**
@@ -62,11 +81,7 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
   {
     name: "NewAPI",
     providerType: "newapi",
-    defaultApps: {
-      claude: true,
-      codex: true,
-      gemini: true,
-    },
+    defaultApps: { ...DEFAULT_APPS },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     websiteUrl: "https://www.newapi.pro",
     icon: "newapi",
@@ -77,11 +92,7 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
   {
     name: "自定义网关",
     providerType: "custom_gateway",
-    defaultApps: {
-      claude: true,
-      codex: true,
-      gemini: true,
-    },
+    defaultApps: { ...DEFAULT_APPS },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     icon: "openai",
     iconColor: "#6366F1",

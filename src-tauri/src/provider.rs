@@ -666,6 +666,10 @@ pub struct UniversalProviderApps {
     pub codex: bool,
     #[serde(default)]
     pub gemini: bool,
+    #[serde(default, rename = "claudeDesktop")]
+    pub claude_desktop: bool,
+    #[serde(default, rename = "grokbuild")]
+    pub grokbuild: bool,
 }
 
 /// Claude 模型配置
@@ -708,6 +712,37 @@ pub struct GeminiModelConfig {
     pub model: Option<String>,
 }
 
+/// Claude Desktop 模型配置：映射到 Desktop 三档角色 ID 的上游模型
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClaudeDesktopModelConfig {
+    /// Sonnet 档实际上游模型
+    #[serde(rename = "sonnetModel", skip_serializing_if = "Option::is_none")]
+    pub sonnet_model: Option<String>,
+    /// Opus 档实际上游模型
+    #[serde(rename = "opusModel", skip_serializing_if = "Option::is_none")]
+    pub opus_model: Option<String>,
+    /// Haiku 档实际上游模型
+    #[serde(rename = "haikuModel", skip_serializing_if = "Option::is_none")]
+    pub haiku_model: Option<String>,
+    /// 菜单显示名（三档共用）
+    #[serde(rename = "labelOverride", skip_serializing_if = "Option::is_none")]
+    pub label_override: Option<String>,
+}
+
+/// Grok Build 模型配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GrokBuildModelConfig {
+    /// 客户端侧 profile 名（`[models].default`）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// 实际发给上游的模型名
+    #[serde(rename = "upstreamModel", skip_serializing_if = "Option::is_none")]
+    pub upstream_model: Option<String>,
+    /// 上游协议：responses / chat_completions / anthropic_messages
+    #[serde(rename = "apiBackend", skip_serializing_if = "Option::is_none")]
+    pub api_backend: Option<String>,
+}
+
 /// 各应用的模型配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UniversalProviderModels {
@@ -717,6 +752,10 @@ pub struct UniversalProviderModels {
     pub codex: Option<CodexModelConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gemini: Option<GeminiModelConfig>,
+    #[serde(rename = "claudeDesktop", skip_serializing_if = "Option::is_none")]
+    pub claude_desktop: Option<ClaudeDesktopModelConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grokbuild: Option<GrokBuildModelConfig>,
 }
 
 /// 统一供应商（跨应用共享配置）
@@ -940,13 +979,157 @@ requires_openai_auth = true"#
             in_failover_queue: false,
         })
     }
+
+    /// 生成 Claude Desktop 供应商配置
+    ///
+    /// Claude Desktop 只接受三档角色 ID，统一供应商在这里始终走「模型映射」模式：
+    /// 三个角色各映射一个上游模型，全部留空时共用主模型。
+    pub fn to_claude_desktop_provider(&self) -> Option<Provider> {
+        if !self.apps.claude_desktop {
+            return None;
+        }
+
+        let models = self.models.claude_desktop.as_ref();
+        let fallback = self
+            .models
+            .claude
+            .as_ref()
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+        let sonnet = models
+            .and_then(|m| m.sonnet_model.clone())
+            .unwrap_or_else(|| fallback.clone());
+        let opus = models
+            .and_then(|m| m.opus_model.clone())
+            .unwrap_or_else(|| sonnet.clone());
+        let haiku = models
+            .and_then(|m| m.haiku_model.clone())
+            .unwrap_or_else(|| sonnet.clone());
+        let label_override = models.and_then(|m| m.label_override.clone());
+
+        let route = |route_id: &str, model: &str| {
+            let mut route = ClaudeDesktopModelRoute {
+                model: model.to_string(),
+                label_override: None,
+                supports_1m: None,
+            };
+            if let Some(label) = label_override.clone() {
+                if !label.trim().is_empty() {
+                    route.label_override = Some(label);
+                }
+            }
+            (route_id.to_string(), route)
+        };
+
+        let routes: HashMap<String, ClaudeDesktopModelRoute> = [
+            // route id 与后端 DEFAULT_PROXY_ROUTES / 前端 ROLE_ROUTE_IDS 一致
+            route("claude-sonnet-5", &sonnet),
+            route("claude-opus-5", &opus),
+            route("claude-haiku-4-5", &haiku),
+        ]
+        .into_iter()
+        .collect();
+
+        let mut meta = self.meta.clone().unwrap_or_default();
+        meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
+        meta.claude_desktop_model_routes = routes;
+        // 统一供应商的子卡不走端点自动选择，地址由统一供应商驱动。
+        meta.endpoint_auto_select = None;
+        meta.is_full_url = None;
+
+        let settings_config = serde_json::json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": self.base_url.trim_end_matches('/'),
+                "ANTHROPIC_AUTH_TOKEN": self.api_key,
+            }
+        });
+
+        Some(Provider {
+            id: format!("universal-claude-desktop-{}", self.id),
+            name: self.name.clone(),
+            settings_config,
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: Some(meta),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
+
+    /// 生成 Grok Build 供应商配置
+    pub fn to_grokbuild_provider(&self) -> Option<Provider> {
+        if !self.apps.grokbuild {
+            return None;
+        }
+
+        let models = self.models.grokbuild.as_ref();
+        let profile = models
+            .and_then(|m| m.model.clone())
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| "grok-4.5".to_string());
+        let upstream_model = models
+            .and_then(|m| m.upstream_model.clone())
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| profile.clone());
+        let api_backend = models
+            .and_then(|m| m.api_backend.clone())
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| "responses".to_string());
+
+        let context_window = 500_000;
+        let config = format!(
+            r#"[models]
+default = "{profile}"
+
+[model."{profile}"]
+model = "{upstream_model}"
+base_url = "{base_url}"
+name = "{name}"
+api_key = "{api_key}"
+api_backend = "{api_backend}"
+context_window = {context_window}
+"#,
+            profile = profile,
+            upstream_model = upstream_model,
+            base_url = self.base_url.trim_end_matches('/'),
+            name = self.name,
+            api_key = self.api_key,
+            api_backend = api_backend,
+            context_window = context_window,
+        );
+
+        let settings_config = serde_json::json!({
+            "config": config
+        });
+
+        Some(Provider {
+            id: format!("universal-grokbuild-{}", self.id),
+            name: self.name.clone(),
+            settings_config,
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
-        LocalProxyRequestOverrides, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeDesktopModelConfig, ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig,
+        GeminiModelConfig, GrokBuildModelConfig, LocalProxyRequestOverrides, Provider,
+        ProviderManager, ProviderMeta, UniversalProvider, UniversalProviderApps,
+        UniversalProviderModels,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1559,5 +1742,176 @@ mod tests {
             p.resolve_usage_credentials(&AppType::Claude),
             (String::new(), String::new())
         );
+    }
+
+    fn universal_with_apps(
+        id: &str,
+        apps: impl FnOnce(&mut UniversalProviderApps),
+        models: impl FnOnce(&mut UniversalProviderModels),
+    ) -> UniversalProvider {
+        let mut universal = UniversalProvider::new(
+            id.to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com/".to_string(),
+            "api-key".to_string(),
+        );
+        apps(&mut universal.apps);
+        models(&mut universal.models);
+        universal
+    }
+
+    #[test]
+    fn universal_provider_to_claude_desktop_provider_maps_three_roles() {
+        let universal = universal_with_apps(
+            "u1",
+            |apps| apps.claude_desktop = true,
+            |models| {
+                models.claude_desktop = Some(ClaudeDesktopModelConfig {
+                    sonnet_model: Some("up-sonnet".to_string()),
+                    opus_model: Some("up-opus".to_string()),
+                    haiku_model: Some("up-haiku".to_string()),
+                    label_override: Some("Gateway".to_string()),
+                })
+            },
+        );
+
+        let provider = universal
+            .to_claude_desktop_provider()
+            .expect("claude desktop provider");
+
+        assert_eq!(provider.id, "universal-claude-desktop-u1");
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(|item| item.as_str()),
+            // 尾斜杠要清掉，否则 Claude Desktop 拼出双斜杠
+            Some("https://api.example.com")
+        );
+        let meta = provider.meta.expect("meta");
+        assert_eq!(
+            meta.claude_desktop_mode,
+            Some(crate::provider::ClaudeDesktopMode::Proxy)
+        );
+        let routes = &meta.claude_desktop_model_routes;
+        assert_eq!(routes.len(), 3, "{routes:?}");
+        for (route, expected) in [
+            ("claude-sonnet-5", "up-sonnet"),
+            ("claude-opus-5", "up-opus"),
+            ("claude-haiku-4-5", "up-haiku"),
+        ] {
+            let entry = routes.get(route).unwrap_or_else(|| panic!("{route}"));
+            assert_eq!(entry.model, expected);
+            assert_eq!(entry.label_override.as_deref(), Some("Gateway"));
+        }
+    }
+
+    #[test]
+    fn universal_provider_to_claude_desktop_provider_falls_back_to_claude_model() {
+        let universal = universal_with_apps(
+            "u1",
+            |apps| apps.claude_desktop = true,
+            |models| {
+                models.claude = Some(ClaudeModelConfig {
+                    model: Some("claude-main".to_string()),
+                    ..ClaudeModelConfig::default()
+                })
+            },
+        );
+
+        let provider = universal.to_claude_desktop_provider().expect("provider");
+        let meta = provider.meta.expect("meta");
+        for route in ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"] {
+            assert_eq!(
+                meta.claude_desktop_model_routes
+                    .get(route)
+                    .map(|entry| entry.model.as_str()),
+                Some("claude-main"),
+                "{route}"
+            );
+        }
+        // 没有单独写菜单显示名时不塞空 label
+        assert!(meta
+            .claude_desktop_model_routes
+            .values()
+            .all(|entry| entry.label_override.is_none()));
+    }
+
+    #[test]
+    fn universal_provider_to_claude_desktop_provider_disabled_returns_none() {
+        let universal = universal_with_apps("u1", |_| {}, |_| {});
+        assert!(universal.to_claude_desktop_provider().is_none());
+    }
+
+    #[test]
+    fn universal_provider_to_grokbuild_provider_builds_config_toml() {
+        let universal = universal_with_apps(
+            "u1",
+            |apps| apps.grokbuild = true,
+            |models| {
+                models.grokbuild = Some(GrokBuildModelConfig {
+                    model: Some("grok-profile".to_string()),
+                    upstream_model: Some("grok-upstream".to_string()),
+                    api_backend: Some("chat_completions".to_string()),
+                })
+            },
+        );
+
+        let provider = universal
+            .to_grokbuild_provider()
+            .expect("grokbuild provider");
+
+        assert_eq!(provider.id, "universal-grokbuild-u1");
+        let config = provider
+            .settings_config
+            .get("config")
+            .and_then(|item| item.as_str())
+            .expect("config toml");
+        assert!(config.contains("[models]"), "{config}");
+        assert!(config.contains("default = \"grok-profile\""), "{config}");
+        assert!(config.contains("model = \"grok-upstream\""), "{config}");
+        assert!(
+            config.contains("base_url = \"https://api.example.com\""),
+            "{config}"
+        );
+        assert!(
+            config.contains("api_backend = \"chat_completions\""),
+            "{config}"
+        );
+        assert!(config.contains("api_key = \"api-key\""), "{config}");
+        // 后端自己的校验器要能读回去（和前端的 parseGrokBuildConfig 同一形状）
+        crate::grok_config::validate_config_toml(config).expect("valid grok config");
+        let model_config =
+            crate::grok_config::extract_model_config(config).expect("extract model config");
+        assert_eq!(model_config.model, "grok-upstream");
+        assert_eq!(model_config.base_url, "https://api.example.com");
+        assert_eq!(model_config.api_backend, "chat_completions");
+        assert!(model_config.context_window > 0);
+        assert_eq!(
+            crate::grok_config::extract_credentials(config),
+            // (base_url, api_key)
+            Some(("https://api.example.com".to_string(), "api-key".to_string()))
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_grokbuild_provider_disabled_returns_none() {
+        let universal = universal_with_apps("u1", |_| {}, |_| {});
+        assert!(universal.to_grokbuild_provider().is_none());
+    }
+
+    #[test]
+    fn universal_provider_apps_default_to_false_for_new_apps() {
+        // 旧数据里没有 claudeDesktop / grokbuild 两个键，反序列化后必须是 false
+        let value = json!({
+            "claude": true,
+            "codex": true,
+            "gemini": true,
+        });
+        let apps: UniversalProviderApps = serde_json::from_value(value).expect("apps");
+        assert!(apps.claude && apps.codex && apps.gemini);
+        assert!(!apps.claude_desktop);
+        assert!(!apps.grokbuild);
     }
 }

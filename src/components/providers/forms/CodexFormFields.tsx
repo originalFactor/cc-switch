@@ -65,7 +65,6 @@ import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesFie
 import { cn } from "@/lib/utils";
 import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
-import { codexPresetModelSources } from "@/config/presetModelMetadata";
 import {
   fillCodexCatalogModel,
   metadataFilledAnything,
@@ -848,7 +847,7 @@ export function CodexFormFields({
 
   const fillModelMetadata = useModelMetadataFill({
     baseUrl: codexBaseUrl,
-    presets: codexPresetModelSources,
+    presets: () => [],
     prefetch: fetchedModels.length > 0,
   });
   // 补全要在「改模型名」提交后立刻读到那一行，所以这两处经 ref 同步提交。

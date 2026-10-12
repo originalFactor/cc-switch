@@ -1,361 +1,187 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { useEffect } from "react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
-import type { ProviderFormValues } from "@/components/providers/forms/ProviderForm";
-import { codexProviderPresets } from "@/config/codexProviderPresets";
+import { universalProviderPresets } from "@/config/universalProviderPresets";
+import type { UniversalProvider } from "@/types";
 
-vi.mock("@/components/ui/dialog", () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
-  DialogContent: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
-  DialogHeader: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
-  DialogTitle: ({ children }: { children: React.ReactNode }) => (
-    <h1>{children}</h1>
-  ),
-  DialogDescription: ({ children }: { children: React.ReactNode }) => (
-    <p>{children}</p>
-  ),
-  DialogFooter: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
-}));
+const upsert = vi.fn().mockResolvedValue(undefined);
+const sync = vi.fn().mockResolvedValue(undefined);
 
-let mockFormValues: ProviderFormValues;
-let mockFormReady = true;
-// 表单把预设投影到配置文件上之后交给对话框的底（Codex、Gemini CLI、Grok Build）。
-let mockProjectedBase: Record<string, unknown> | null = null;
-// 投影成那份底的草稿（预设或模板）。
-let mockProjectedDraft: Record<string, unknown> | undefined;
-let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return {
+    ...actual,
+    universalProvidersApi: {
+      getAll: vi.fn().mockResolvedValue({}),
+      upsert: (...args: unknown[]) => upsert(...args),
+      sync: (...args: unknown[]) => sync(...args),
+      delete: vi.fn().mockResolvedValue(true),
+    },
+  };
+});
 
-vi.mock("@/components/providers/forms/ProviderForm", () => ({
-  ProviderForm: ({
-    onSubmit,
-    onSubmitReadyChange,
-    onManageAuthAccounts,
-    onEditorBaseChange,
+// 表单是重组件（图标、JSON 编辑器），这里只关心它收到/回传了什么。
+let lastSubmitFormId: string | undefined;
+
+vi.mock("@/components/universal/UniversalProviderFormModal", () => ({
+  UniversalProviderFormModal: ({
+    isOpen,
+    onSave,
+    submitFormId,
+    editingProvider,
+    initialPreset,
   }: {
-    onSubmit: (values: ProviderFormValues) => void;
-    onSubmitReadyChange?: (isReady: boolean) => void;
-    onManageAuthAccounts?: (target: "codex_oauth") => void;
-    onEditorBaseChange?: (
-      base: Record<string, unknown> | null,
-      draft?: Record<string, unknown>,
-    ) => void;
+    isOpen: boolean;
+    onSave: (provider: UniversalProvider) => void;
+    submitFormId?: string;
+    editingProvider?: UniversalProvider | null;
+    initialPreset?: { name: string } | null;
   }) => {
-    useEffect(() => {
-      if (onSubmitReadyChange) {
-        submitReadyCallbacks.push(onSubmitReadyChange);
-        onSubmitReadyChange(mockFormReady);
-      }
-    }, [onSubmitReadyChange]);
-    useEffect(() => {
-      onEditorBaseChange?.(mockProjectedBase, mockProjectedDraft);
-    }, [onEditorBaseChange]);
+    if (!isOpen) return null;
+    lastSubmitFormId = submitFormId;
     return (
-      <form
-        id="provider-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSubmit(mockFormValues);
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => onManageAuthAccounts?.("codex_oauth")}
-        >
-          manage-auth
+      <div data-testid="universal-form">
+        <span data-testid="form-preset">
+          {initialPreset ? initialPreset.name : "none"}
+        </span>
+        <span data-testid="form-editing">
+          {editingProvider ? editingProvider.name : "new"}
+        </span>
+        <button type="button" onClick={() => onSave(savedProvider)}>
+          save
         </button>
-      </form>
+      </div>
     );
   },
 }));
 
-vi.mock("@/components/providers/AuthSettingsPanel", () => ({
-  AuthSettingsPanel: ({ target }: { target: string | null }) =>
-    target ? <div data-testid="auth-settings-panel">{target}</div> : null,
-}));
+const savedProvider: UniversalProvider = {
+  id: "u-new",
+  name: "我的网关",
+  providerType: "newapi",
+  apps: {
+    claude: true,
+    codex: true,
+    gemini: true,
+    claudeDesktop: true,
+    grokbuild: true,
+  },
+  baseUrl: "https://api.example.com",
+  apiKey: "sk-test",
+  models: {},
+  createdAt: 1,
+};
 
 describe("AddProviderDialog", () => {
   beforeEach(() => {
-    mockFormReady = true;
-    mockProjectedBase = null;
-    mockProjectedDraft = undefined;
-    submitReadyCallbacks = [];
-    mockFormValues = {
-      name: "Test Provider",
-      websiteUrl: "https://provider.example.com",
-      settingsConfig: JSON.stringify({ env: {}, config: {} }),
-      meta: {
-        custom_endpoints: {
-          "https://api.new-endpoint.com": {
-            url: "https://api.new-endpoint.com",
-            addedAt: 1,
-          },
-        },
-      },
-    };
+    upsert.mockClear();
+    sync.mockClear();
+    lastSubmitFormId = undefined;
   });
 
-  it("使用 ProviderForm 返回的自定义端点", async () => {
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-    const handleOpenChange = vi.fn();
+  it("打开就直接进入统一供应商表单，没有预设选择那一步", () => {
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="claude"
+      />,
+    );
 
+    expect(screen.getByTestId("universal-form")).toBeInTheDocument();
+    expect(screen.getByTestId("form-editing")).toHaveTextContent("new");
+    // 表单自己选默认预设，添加页不预设某一个
+    expect(screen.getByTestId("form-preset")).toHaveTextContent("none");
+    // 没有 ProviderForm（按应用区分的自定义表单）
+    expect(screen.queryByRole("button", { name: "manage-auth" })).toBeNull();
+  });
+
+  it("保存时先 upsert 再 sync，成功后关闭", async () => {
+    const handleOpenChange = vi.fn();
     render(
       <AddProviderDialog
         open
         onOpenChange={handleOpenChange}
         appId="claude"
-        onSubmit={handleSubmit}
       />,
     );
 
-    // Claude 的表单要等 live 底读回来才渲染。
-    await screen.findByRole("button", { name: "manage-auth" });
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "common.add",
-      }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "save" }));
 
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-
-    const submitted = handleSubmit.mock.calls[0][0];
-    expect(submitted.meta?.custom_endpoints).toEqual(
-      mockFormValues.meta?.custom_endpoints,
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    expect(upsert).toHaveBeenCalledWith(savedProvider);
+    expect(sync).toHaveBeenCalledWith("u-new");
+    await waitFor(() =>
+      expect(handleOpenChange).toHaveBeenCalledWith(false),
     );
-    // 保存时带上打开时的 live 底，后端据此把全局改动写进 live、三方比较。
-    expect(submitted.editorSave).toEqual({ base: {}, onConflict: "refuse" });
-    expect(handleOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("在缺少自定义端点时回退到配置中的 baseUrl", async () => {
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
-    mockFormValues = {
-      name: "Base URL Provider",
-      websiteUrl: "",
-      settingsConfig: JSON.stringify({
-        env: { ANTHROPIC_BASE_URL: "https://claude.base" },
-        config: {},
-      }),
-    };
-
+  it("sync 失败时也关闭，只是提示降级为警告", async () => {
+    sync.mockRejectedValueOnce(new Error("sync failed"));
+    const handleOpenChange = vi.fn();
     render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="claude"
-        onSubmit={handleSubmit}
-      />,
+      <AddProviderDialog open onOpenChange={handleOpenChange} appId="codex" />,
     );
 
-    await screen.findByRole("button", { name: "manage-auth" });
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "common.add",
-      }),
+    await userEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+    expect(upsert).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(handleOpenChange).toHaveBeenCalledWith(false),
     );
-
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-
-    const submitted = handleSubmit.mock.calls[0][0];
-    expect(submitted.meta?.custom_endpoints).toEqual({
-      "https://claude.base": {
-        url: "https://claude.base",
-        addedAt: expect.any(Number),
-        lastUsed: undefined,
-      },
-    });
   });
 
-  it.each(["codex", "gemini", "grokbuild"] as const)(
-    "%s 新增时带上表单投影出的底，和编辑器同一套保存规则",
-    async (appId) => {
-      const handleSubmit = vi.fn().mockResolvedValue(undefined);
-      const projected = { config: '[ui]\ntheme = "dark"\n' };
-      const draft = { config: "" };
-      mockProjectedBase = projected;
-      mockProjectedDraft = draft;
-      mockFormValues = {
-        name: "Draft",
-        websiteUrl: "",
-        settingsConfig: JSON.stringify(projected),
-      };
+  it("upsert 失败时不 sync、不关闭", async () => {
+    upsert.mockRejectedValueOnce(new Error("boom"));
+    const handleOpenChange = vi.fn();
+    render(
+      <AddProviderDialog open onOpenChange={handleOpenChange} appId="gemini" />,
+    );
 
-      render(
-        <AddProviderDialog
-          open
-          onOpenChange={vi.fn()}
-          appId={appId}
-          onSubmit={handleSubmit}
-        />,
+    await userEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    expect(sync).not.toHaveBeenCalled();
+    expect(handleOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("外层页脚提交按钮通过 form id 指向表单", () => {
+    render(<AddProviderDialog open onOpenChange={vi.fn()} appId="claude" />);
+    expect(lastSubmitFormId).toBe("universal-provider-form");
+    const submit = screen.getByRole("button", { name: "common.add" });
+    expect(submit).toHaveAttribute("form", "universal-provider-form");
+  });
+
+  it("每个应用都走同一条统一供应商路径", () => {
+    for (const appId of [
+      "claude",
+      "claude-desktop",
+      "codex",
+      "gemini",
+      "grokbuild",
+    ] as const) {
+      const { unmount } = render(
+        <AddProviderDialog open onOpenChange={vi.fn()} appId={appId} />,
       );
+      expect(screen.getByTestId("universal-form")).toBeInTheDocument();
+      unmount();
+    }
+  });
 
-      await screen.findByRole("button", { name: "manage-auth" });
-      fireEvent.click(
-        await screen.findByRole("button", { name: "common.add" }),
-      );
-
-      await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-      expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
-        base: projected,
-        draft,
-        onConflict: "refuse",
+  it("统一供应商预设覆盖全部五个应用", () => {
+    expect(universalProviderPresets.length).toBeGreaterThan(0);
+    for (const preset of universalProviderPresets) {
+      expect(preset.defaultApps).toEqual({
+        claude: true,
+        codex: true,
+        gemini: true,
+        claudeDesktop: true,
+        grokbuild: true,
       });
-    },
-  );
-
-  it("投影还没回来或失败时只存供应商，不带底", async () => {
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-    mockProjectedBase = null;
-    mockFormValues = {
-      name: "Draft",
-      websiteUrl: "",
-      settingsConfig: JSON.stringify({ auth: {}, config: "" }),
-    };
-
-    render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="codex"
-        onSubmit={handleSubmit}
-      />,
-    );
-
-    await screen.findByRole("button", { name: "manage-auth" });
-    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
-
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit.mock.calls[0][0].editorSave).toBeUndefined();
-  });
-
-  it("submits the optional managed account from the Codex Official preset", async () => {
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-    const officialPresetIndex = codexProviderPresets.findIndex(
-      (preset) =>
-        preset.category === "official" && preset.providerType === "codex_oauth",
-    );
-    expect(officialPresetIndex).toBeGreaterThanOrEqual(0);
-
-    mockFormValues = {
-      name: "OpenAI Official",
-      websiteUrl: "https://chatgpt.com/codex",
-      settingsConfig: JSON.stringify({ auth: {}, config: "" }),
-      presetId: `codex-${officialPresetIndex}`,
-      presetCategory: "official",
-      meta: {
-        providerType: "codex_oauth",
-        authBinding: {
-          source: "managed_account",
-          authProvider: "codex_oauth",
-          accountId: "acct-managed",
-        },
-      },
-    };
-
-    render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="codex"
-        onSubmit={handleSubmit}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
-
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        category: "official",
-        meta: expect.objectContaining({
-          authBinding: {
-            source: "managed_account",
-            authProvider: "codex_oauth",
-            accountId: "acct-managed",
-          },
-        }),
-      }),
-    );
-    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
-      "ensureCodexOfficialSeed",
-    );
-  });
-
-  it("clears the nested auth panel before the dialog reopens", async () => {
-    const props = {
-      onOpenChange: vi.fn(),
-      appId: "codex" as const,
-      onSubmit: vi.fn(),
-    };
-    const { rerender } = render(<AddProviderDialog open {...props} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "manage-auth" }));
-    expect(screen.getByTestId("auth-settings-panel")).toHaveTextContent(
-      "codex_oauth",
-    );
-
-    rerender(<AddProviderDialog open={false} {...props} />);
-    rerender(<AddProviderDialog open {...props} />);
-
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId("auth-settings-panel"),
-      ).not.toBeInTheDocument();
-    });
-  });
-
-  it("新建 Grok Build 自定义供应商时不补默认 Grok 图标", async () => {
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
-    mockFormValues = {
-      name: "tes 1",
-      websiteUrl: "",
-      icon: "",
-      iconColor: "",
-      settingsConfig: JSON.stringify({
-        config: `[models]
-default = "grok-4.5"
-
-[model."grok-4.5"]
-model = "grok-4.5"
-base_url = "https://grok.example.com/v1"
-name = "tes 1"
-api_key = "secret"
-api_backend = "responses"
-context_window = 500000
-`,
-      }),
-    };
-
-    render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="grokbuild"
-        onSubmit={handleSubmit}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
-
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-
-    const submitted = handleSubmit.mock.calls[0][0];
-    expect(submitted.icon).toBeUndefined();
-    expect(submitted.iconColor).toBeUndefined();
+      expect(preset.defaultModels.claudeDesktop?.sonnetModel).toBeTruthy();
+      expect(preset.defaultModels.grokbuild?.model).toBeTruthy();
+    }
   });
 });

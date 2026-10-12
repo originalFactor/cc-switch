@@ -18,8 +18,9 @@ export function toastEditorViewFailed(t: TFunction, error: unknown) {
 }
 
 /**
- * 投影出的底，和投影成它的那份草稿（预设或模板）。投影进行中或失败时底为 `null`。保存时
- * 两者一起交给后端：草稿里没有、底里有的字段是从 live 带进来的，不归新供应商。
+ * 投影出的底，和投影成它的那份草稿（新增时的自定义模板）。投影进行中或失败时底为
+ * `null`。保存时两者一起交给后端：草稿里没有、底里有的字段是从 live 带进来的，不归
+ * 新供应商。
  */
 export type EditorBaseChange = (
   base: Record<string, unknown> | null,
@@ -27,7 +28,7 @@ export type EditorBaseChange = (
 ) => void;
 
 /**
- * 新增对话框（Codex、Gemini CLI、Grok Build）：把预设或模板投影到当前配置文件上显示，和
+ * 新增对话框（Codex、Gemini CLI、Grok Build）：把自定义模板投影到当前配置文件上显示，和
  * 编辑器同一套规则（投影在后端算）。投影结果交给 `onEditorBaseChange`，保存时作为三方
  * 比较的底；投影进行中或失败时为 `null`，保存退回只存供应商。
  */

@@ -749,6 +749,8 @@ export interface UniversalProviderApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  claudeDesktop: boolean;
+  grokbuild: boolean;
 }
 
 // Claude 模型配置
@@ -757,6 +759,15 @@ export interface ClaudeModelConfig {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+}
+
+// Claude Desktop 模型配置：三档角色各自的上游模型
+export interface ClaudeDesktopModelConfig {
+  sonnetModel?: string;
+  opusModel?: string;
+  haikuModel?: string;
+  /** 菜单显示名（三档共用） */
+  labelOverride?: string;
 }
 
 // Codex 模型配置
@@ -770,11 +781,23 @@ export interface GeminiModelConfig {
   model?: string;
 }
 
+// Grok Build 模型配置
+export interface GrokBuildModelConfig {
+  /** 客户端侧 profile 名（[models].default） */
+  model?: string;
+  /** 实际发给上游的模型名 */
+  upstreamModel?: string;
+  /** 上游协议：responses / chat_completions / anthropic_messages */
+  apiBackend?: string;
+}
+
 // 各应用的模型配置
 export interface UniversalProviderModels {
   claude?: ClaudeModelConfig;
   codex?: CodexModelConfig;
   gemini?: GeminiModelConfig;
+  claudeDesktop?: ClaudeDesktopModelConfig;
+  grokbuild?: GrokBuildModelConfig;
 }
 
 // 统一供应商（跨应用共享配置）

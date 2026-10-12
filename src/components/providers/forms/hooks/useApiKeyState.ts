@@ -9,7 +9,6 @@ import {
 interface UseApiKeyStateProps {
   initialConfig?: string;
   onConfigChange: (config: string) => void;
-  selectedPresetId: string | null;
   category?: ProviderCategory;
   appType?: string;
   apiKeyField?: string;
@@ -22,7 +21,6 @@ interface UseApiKeyStateProps {
 export function useApiKeyState({
   initialConfig,
   onConfigChange,
-  selectedPresetId,
   category,
   appType,
   apiKeyField,
@@ -73,27 +71,19 @@ export function useApiKeyState({
 
       onConfigChange(configString);
     },
-    [
-      initialConfig,
-      selectedPresetId,
-      category,
-      appType,
-      apiKeyField,
-      onConfigChange,
-    ],
+    [initialConfig, category, appType, apiKeyField, onConfigChange],
   );
 
   const showApiKey = useCallback(
     (config: string, isEditMode: boolean) => {
       return (
-        selectedPresetId !== null ||
         (isEditMode &&
           category !== "official" &&
           category !== "cloud_provider") ||
         (isEditMode && hasApiKeyField(config, appType))
       );
     },
-    [selectedPresetId, category, appType],
+    [category, appType],
   );
 
   return {

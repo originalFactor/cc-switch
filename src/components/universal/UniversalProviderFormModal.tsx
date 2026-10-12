@@ -6,6 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -25,6 +32,11 @@ interface UniversalProviderFormModalProps {
   onSaveAndSync?: (provider: UniversalProvider) => void;
   editingProvider?: UniversalProvider | null;
   initialPreset?: UniversalProviderPreset | null;
+  /**
+   * 外层（如添加供应商面板）的提交按钮要提交本表单时，把那个按钮的 form id 传进来。
+   * 不传时用本组件自己的 footer 按钮。
+   */
+  submitFormId?: string;
 }
 
 export function UniversalProviderFormModal({
@@ -34,6 +46,7 @@ export function UniversalProviderFormModal({
   onSaveAndSync,
   editingProvider,
   initialPreset,
+  submitFormId,
 }: UniversalProviderFormModalProps) {
   const isDarkMode = useDarkMode();
   const { t } = useTranslation();
@@ -53,6 +66,8 @@ export function UniversalProviderFormModal({
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
+  const [claudeDesktopEnabled, setClaudeDesktopEnabled] = useState(true);
+  const [grokbuildEnabled, setGrokbuildEnabled] = useState(true);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -74,6 +89,8 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
+      setClaudeDesktopEnabled(editingProvider.apps.claudeDesktop ?? false);
+      setGrokbuildEnabled(editingProvider.apps.grokbuild ?? false);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -93,6 +110,8 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setClaudeDesktopEnabled(defaultPreset.defaultApps.claudeDesktop);
+      setGrokbuildEnabled(defaultPreset.defaultApps.grokbuild);
       setModels(deepClone(defaultPreset.defaultModels));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -106,6 +125,8 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
+        setClaudeDesktopEnabled(preset.defaultApps.claudeDesktop);
+        setGrokbuildEnabled(preset.defaultApps.grokbuild);
         setModels(deepClone(preset.defaultModels));
       }
     },
@@ -114,7 +135,11 @@ export function UniversalProviderFormModal({
 
   // 更新模型配置
   const updateModel = useCallback(
-    (app: "claude" | "codex" | "gemini", field: string, value: string) => {
+    (
+      app: "claude" | "codex" | "gemini" | "claudeDesktop" | "grokbuild",
+      field: string,
+      value: string,
+    ) => {
       setModels((prev) => ({
         ...prev,
         [app]: {
@@ -185,6 +210,56 @@ requires_openai_auth = true`;
     };
   }, [geminiEnabled, baseUrl, apiKey, models.gemini]);
 
+  // 计算 Claude Desktop 配置 JSON 预览
+  const claudeDesktopConfigJson = useMemo(() => {
+    if (!claudeDesktopEnabled) return null;
+    const routes = models.claudeDesktop ?? {};
+    const sonnet = routes.sonnetModel || "claude-sonnet-5";
+    // route id 与后端 DEFAULT_PROXY_ROUTES 一致
+    const routeMap = (routeId: string, model: string) => {
+      const entry: Record<string, string> = { model };
+      if (routes.labelOverride?.trim()) {
+        entry.labelOverride = routes.labelOverride.trim();
+      }
+      return { [routeId]: entry };
+    };
+    const meta: Record<string, unknown> = {
+      claudeDesktopMode: "proxy",
+      claudeDesktopModelRoutes: {
+        ...routeMap("claude-sonnet-5", sonnet),
+        ...routeMap("claude-opus-5", routes.opusModel || sonnet),
+        ...routeMap("claude-haiku-4-5", routes.haikuModel || sonnet),
+      },
+    };
+    return {
+      env: {
+        ANTHROPIC_BASE_URL: baseUrl,
+        ANTHROPIC_AUTH_TOKEN: apiKey,
+      },
+      meta,
+    };
+  }, [claudeDesktopEnabled, baseUrl, apiKey, models.claudeDesktop]);
+
+  // 计算 Grok Build 配置 TOML 预览
+  const grokbuildConfigJson = useMemo(() => {
+    if (!grokbuildEnabled) return null;
+    const grok = models.grokbuild ?? {};
+    const profile = grok.model?.trim() || "grok-4.5";
+    const upstreamModel = grok.upstreamModel?.trim() || profile;
+    const apiBackend = grok.apiBackend?.trim() || "responses";
+    const config = `[models]
+default = "${profile}"
+
+[model."${profile}"]
+model = "${upstreamModel}"
+base_url = "${baseUrl}"
+name = "${name}"
+api_key = "${apiKey}"
+api_backend = "${apiBackend}"
+context_window = 500000`;
+    return { config };
+  }, [grokbuildEnabled, baseUrl, apiKey, name, models.grokbuild]);
+
   // 提交表单
   const handleSubmit = useCallback(() => {
     if (!name.trim() || !baseUrl.trim() || !apiKey.trim()) {
@@ -203,6 +278,8 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            claudeDesktop: claudeDesktopEnabled,
+            grokbuild: grokbuildEnabled,
           },
           models,
         }
@@ -220,6 +297,8 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        claudeDesktop: claudeDesktopEnabled,
+        grokbuild: grokbuildEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -238,6 +317,8 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    claudeDesktopEnabled,
+    grokbuildEnabled,
     models,
     selectedPreset,
     onSave,
@@ -262,6 +343,8 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            claudeDesktop: claudeDesktopEnabled,
+            grokbuild: grokbuildEnabled,
           },
           models,
         }
@@ -279,6 +362,8 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        claudeDesktop: claudeDesktopEnabled,
+        grokbuild: grokbuildEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -296,6 +381,8 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    claudeDesktopEnabled,
+    grokbuildEnabled,
     models,
     selectedPreset,
   ]);
@@ -353,9 +440,21 @@ requires_openai_auth = true`;
           : t("universalProvider.add", { defaultValue: "添加统一供应商" })
       }
       onClose={onClose}
-      footer={footer}
+      footer={submitFormId ? undefined : footer}
     >
-      <div className="space-y-6">
+      {/* 用真正的 form 包住字段，外层提交按钮（submitFormId）才能提交它 */}
+      <form
+        id={submitFormId}
+        className="space-y-6"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (isEditMode && onSaveAndSync) {
+            handleSaveAndSyncClick();
+          } else {
+            handleSubmit();
+          }
+        }}
+      >
         {/* 预设选择（仅新建模式） */}
         {!isEditMode && (
           <div className="space-y-3">
@@ -513,7 +612,33 @@ requires_openai_auth = true`;
                 onCheckedChange={setGeminiEnabled}
               />
             </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="claude" name="Claude Desktop" size={20} />
+                <span className="font-medium">Claude Desktop</span>
+              </div>
+              <Switch
+                checked={claudeDesktopEnabled}
+                onCheckedChange={setClaudeDesktopEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="grok" name="Grok Build" size={20} />
+                <span className="font-medium">Grok Build</span>
+              </div>
+              <Switch
+                checked={grokbuildEnabled}
+                onCheckedChange={setGrokbuildEnabled}
+              />
+            </div>
           </div>
+          <p className="text-xs text-fg-2">
+            {t("universalProvider.enabledAppsHint", {
+              defaultValue:
+                "Claude Desktop 通过本地路由把三档角色模型映射到上游；Grok Build 按下面填写的模型与协议直连。",
+            })}
+          </p>
         </div>
 
         {/* 模型配置 */}
@@ -631,73 +756,250 @@ requires_openai_auth = true`;
               </div>
             </div>
           )}
+
+          {/* Claude Desktop 模型 */}
+          {claudeDesktopEnabled && (
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center gap-2 font-medium">
+                <ProviderIcon icon="claude" name="Claude Desktop" size={16} />
+                Claude Desktop
+              </div>
+              <p className="text-xs text-fg-2">
+                {t("universalProvider.claudeDesktopHint", {
+                  defaultValue:
+                    "Claude Desktop 只接受 Sonnet / Opus / Haiku 三档角色 ID，这里把每档映射到上游模型。",
+                })}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Sonnet</Label>
+                  <Input
+                    value={models.claudeDesktop?.sonnetModel || ""}
+                    onChange={(e) =>
+                      updateModel(
+                        "claudeDesktop",
+                        "sonnetModel",
+                        e.target.value,
+                      )
+                    }
+                    placeholder="claude-sonnet-4-5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Opus</Label>
+                  <Input
+                    value={models.claudeDesktop?.opusModel || ""}
+                    onChange={(e) =>
+                      updateModel("claudeDesktop", "opusModel", e.target.value)
+                    }
+                    placeholder="claude-opus-4-5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Haiku</Label>
+                  <Input
+                    value={models.claudeDesktop?.haikuModel || ""}
+                    onChange={(e) =>
+                      updateModel("claudeDesktop", "haikuModel", e.target.value)
+                    }
+                    placeholder="claude-haiku-4-5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.labelOverride", {
+                      defaultValue: "菜单显示名",
+                    })}
+                  </Label>
+                  <Input
+                    value={models.claudeDesktop?.labelOverride || ""}
+                    onChange={(e) =>
+                      updateModel(
+                        "claudeDesktop",
+                        "labelOverride",
+                        e.target.value,
+                      )
+                    }
+                    placeholder="NewAPI"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Grok Build 模型 */}
+          {grokbuildEnabled && (
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center gap-2 font-medium">
+                <ProviderIcon icon="grok" name="Grok Build" size={16} />
+                Grok Build
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.grokProfile", {
+                      defaultValue: "配置档位",
+                    })}
+                  </Label>
+                  <Input
+                    value={models.grokbuild?.model || ""}
+                    onChange={(e) =>
+                      updateModel("grokbuild", "model", e.target.value)
+                    }
+                    placeholder="grok-4.5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.grokUpstreamModel", {
+                      defaultValue: "上游模型",
+                    })}
+                  </Label>
+                  <Input
+                    value={models.grokbuild?.upstreamModel || ""}
+                    onChange={(e) =>
+                      updateModel("grokbuild", "upstreamModel", e.target.value)
+                    }
+                    placeholder="grok-4.5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.apiBackend", {
+                      defaultValue: "上游协议",
+                    })}
+                  </Label>
+                  <Select
+                    value={models.grokbuild?.apiBackend || "responses"}
+                    onValueChange={(value) =>
+                      updateModel("grokbuild", "apiBackend", value)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="responses">Responses</SelectItem>
+                      <SelectItem value="chat_completions">
+                        Chat Completions
+                      </SelectItem>
+                      <SelectItem value="anthropic_messages">
+                        Anthropic Messages
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 配置 JSON 预览 */}
-        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled) && (
-          <div className="space-y-4">
-            <Label>
-              {t("universalProvider.configJsonPreview", {
-                defaultValue: "配置 JSON 预览",
-              })}
-            </Label>
-            <p className="text-xs text-fg-2">
-              {t("universalProvider.configJsonPreviewHint", {
-                defaultValue:
-                  "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）",
-              })}
-            </p>
+        {isEditMode &&
+          (claudeEnabled ||
+            codexEnabled ||
+            geminiEnabled ||
+            claudeDesktopEnabled ||
+            grokbuildEnabled) && (
+            <div className="space-y-4">
+              <Label>
+                {t("universalProvider.configJsonPreview", {
+                  defaultValue: "配置 JSON 预览",
+                })}
+              </Label>
+              <p className="text-xs text-fg-2">
+                {t("universalProvider.configJsonPreviewHint", {
+                  defaultValue:
+                    "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）",
+                })}
+              </p>
 
-            {/* Claude JSON */}
-            {claudeConfigJson && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <ProviderIcon icon="claude" name="Claude" size={16} />
-                  Claude
+              {/* Claude JSON */}
+              {claudeConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="claude" name="Claude" size={16} />
+                    Claude
+                  </div>
+                  <JsonEditor
+                    value={JSON.stringify(claudeConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={180}
+                    darkMode={isDarkMode}
+                  />
                 </div>
-                <JsonEditor
-                  value={JSON.stringify(claudeConfigJson, null, 2)}
-                  onChange={() => {}}
-                  height={180}
-                  darkMode={isDarkMode}
-                />
-              </div>
-            )}
+              )}
 
-            {/* Codex JSON */}
-            {codexConfigJson && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <ProviderIcon icon="openai" name="Codex" size={16} />
-                  Codex
+              {/* Codex JSON */}
+              {codexConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="openai" name="Codex" size={16} />
+                    Codex
+                  </div>
+                  <JsonEditor
+                    value={JSON.stringify(codexConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={280}
+                    darkMode={isDarkMode}
+                  />
                 </div>
-                <JsonEditor
-                  value={JSON.stringify(codexConfigJson, null, 2)}
-                  onChange={() => {}}
-                  height={280}
-                  darkMode={isDarkMode}
-                />
-              </div>
-            )}
+              )}
 
-            {/* Gemini JSON */}
-            {geminiConfigJson && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <ProviderIcon icon="gemini" name="Gemini" size={16} />
-                  Gemini
+              {/* Gemini JSON */}
+              {geminiConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="gemini" name="Gemini" size={16} />
+                    Gemini
+                  </div>
+                  <JsonEditor
+                    value={JSON.stringify(geminiConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={140}
+                    darkMode={isDarkMode}
+                  />
                 </div>
-                <JsonEditor
-                  value={JSON.stringify(geminiConfigJson, null, 2)}
-                  onChange={() => {}}
-                  height={140}
-                  darkMode={isDarkMode}
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+              )}
+
+              {/* Claude Desktop JSON */}
+              {claudeDesktopConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon
+                      icon="claude"
+                      name="Claude Desktop"
+                      size={16}
+                    />
+                    Claude Desktop
+                  </div>
+                  <JsonEditor
+                    value={JSON.stringify(claudeDesktopConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={280}
+                    darkMode={isDarkMode}
+                  />
+                </div>
+              )}
+
+              {/* Grok Build TOML */}
+              {grokbuildConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="grok" name="Grok Build" size={16} />
+                    Grok Build
+                  </div>
+                  <JsonEditor
+                    value={grokbuildConfigJson.config}
+                    onChange={() => {}}
+                    height={280}
+                    darkMode={isDarkMode}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+      </form>
 
       {/* 保存并同步确认弹窗 */}
       <ConfirmDialog

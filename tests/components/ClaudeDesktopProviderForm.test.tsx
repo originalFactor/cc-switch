@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
@@ -128,22 +128,47 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(screen.queryByText("模型角色")).not.toBeInTheDocument();
   });
 
-  it("直连预设保留预设模型列表", async () => {
+  it("直连模式删掉一行后保留其余模型列表", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn();
-    renderForm(undefined, onSubmit);
-
-    await user.click(screen.getByRole("button", { name: /PackyCode/ }));
+    const { onSubmit } = renderForm({
+      name: "Direct Provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "direct",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "claude-sonnet-5" },
+          "claude-opus-5": { model: "claude-opus-5" },
+          "claude-haiku-4-5": { model: "claude-haiku-4-5" },
+        },
+      },
+    });
 
     expect(screen.getByDisplayValue("claude-sonnet-5")).toBeInTheDocument();
     expect(screen.getByDisplayValue("claude-opus-5")).toBeInTheDocument();
     expect(screen.getByDisplayValue("claude-haiku-4-5")).toBeInTheDocument();
 
-    await user.clear(screen.getByDisplayValue("claude-sonnet-5"));
-    await user.type(screen.getByLabelText("API Key"), "sk-test");
+    // 删掉 Sonnet 那一行（直接清空输入会留下非法 route，被直连校验挡下）
+    const sonnetRow = screen
+      .getByDisplayValue("claude-sonnet-5")
+      .closest("div.grid");
+    await user.click(
+      within(sonnetRow as HTMLElement).getByRole("button", {
+        name: "common.delete",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByDisplayValue("claude-sonnet-5")).toBeNull(),
+    );
+
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(toastMocks.error).not.toHaveBeenCalled();
     expect(
       onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes,
     ).toMatchObject({

@@ -65,10 +65,6 @@ import {
   stripClaudeOneMMarker,
   type ClaudeModelEnvField,
 } from "./hooks/useModelState";
-import {
-  providerPresets,
-  type TemplateValueConfig,
-} from "@/config/claudeProviderPresets";
 
 interface EndpointCandidate {
   url: string;
@@ -110,12 +106,6 @@ interface ClaudeFormFieldsProps {
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
-
-  // Template Values
-  templateValueEntries: Array<[string, TemplateValueConfig]>;
-  templateValues: Record<string, TemplateValueConfig>;
-  templatePresetName: string;
-  onTemplateValueChange: (key: string, value: string) => void;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -201,10 +191,6 @@ export function ClaudeFormFields({
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
-  templateValueEntries,
-  templateValues,
-  templatePresetName,
-  onTemplateValueChange,
   shouldShowSpeedTest,
   baseUrl,
   onBaseUrlChange,
@@ -315,20 +301,13 @@ export function ClaudeFormFields({
       });
       return;
     }
-    // 当 baseURL 仍是某预设的默认值时，优先使用预设上的 modelsUrl 覆写
-    // 避免多走一次失败的候选请求（如 DeepSeek 把 /models 挂在根，而不是 /anthropic 子路径下）
-    const matchedPreset = providerPresets.find((p) => {
-      const env = (p.settingsConfig as { env?: Record<string, string> })?.env;
-      return env?.ANTHROPIC_BASE_URL === baseUrl;
-    });
-    const modelsUrl = matchedPreset?.modelsUrl;
 
     setIsFetchingModels(true);
     fetchModelsForConfig(
       baseUrl,
       apiKey,
       isFullUrl,
-      modelsUrl,
+      undefined,
       customUserAgent,
       {
         requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
@@ -744,45 +723,6 @@ export function ClaudeFormFields({
     </>
   );
 
-  const templateSection = (
-    <>
-      {/* 模板变量输入 */}
-      {templateValueEntries.length > 0 && (
-        <div className="space-y-3">
-          <FormLabel>
-            {t("providerForm.parameterConfig", {
-              name: templatePresetName,
-              defaultValue: `${templatePresetName} 参数配置`,
-            })}
-          </FormLabel>
-          <div className="space-y-4">
-            {templateValueEntries.map(([key, config]) => (
-              <div key={key} className="space-y-2">
-                <FormLabel htmlFor={`template-${key}`}>
-                  {config.label}
-                </FormLabel>
-                <Input
-                  id={`template-${key}`}
-                  type="text"
-                  required
-                  value={
-                    templateValues[key]?.editorValue ??
-                    config.editorValue ??
-                    config.defaultValue ??
-                    ""
-                  }
-                  onChange={(e) => onTemplateValueChange(key, e.target.value)}
-                  placeholder={config.placeholder || config.label}
-                  autoComplete="off"
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
-  );
-
   const endpointSection = (
     <>
       {/* Base URL 输入框 */}
@@ -943,7 +883,6 @@ export function ClaudeFormFields({
         {apiFormatField}
         {apiKeySection}
         {showAuthField && authFieldSelect}
-        {templateSection}
         {endpointSection}
         {speedTestModal}
 
@@ -1008,7 +947,6 @@ export function ClaudeFormFields({
     <>
       {oauthSections}
       {apiKeySection}
-      {templateSection}
       {endpointSection}
       {speedTestModal}
 

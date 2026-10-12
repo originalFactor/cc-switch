@@ -41,7 +41,7 @@ describe("useDraftEditorProjection", () => {
     toastError.mockReset();
   });
 
-  it("连续切换预设时只认最后一次投影", async () => {
+  it("连续切换模板时只认最后一次投影", async () => {
     const first = deferred<{ settings: Record<string, unknown> }>();
     const second = deferred<{ settings: Record<string, unknown> }>();
     getEditorView
@@ -89,7 +89,7 @@ describe("useDraftEditorProjection", () => {
 
     expect(apply).toHaveBeenCalledTimes(1);
     expect(apply).toHaveBeenCalledWith({ config: "B" });
-    // 底和投影成它的草稿一起交出去，保存时后端按草稿分开预设带的字段。
+    // 底和投影成它的草稿一起交出去，保存时后端按草稿分开模板带的字段。
     expect(onBase).toHaveBeenLastCalledWith({ config: "B" }, { config: "b" });
   });
 

@@ -73,11 +73,22 @@ export function useSettingsForm(): UseSettingsFormResult {
   const { i18n } = useTranslation();
   const { data, isLoading } = useSettingsQuery();
 
+  // react-i18next 返回的 i18n 是按语言缓存的对象包装：包装上的 language 是创建时的快照，
+  // 之后改真实实例不会反映到包装上。读取当前语言时统一走 `__original` 回退到真实实例。
+  const currentLanguage = useCallback((): string => {
+    const raw = i18n as unknown as { __original?: { language?: string } };
+    return raw.__original?.language ?? i18n.language ?? "";
+  }, [i18n]);
+
   const [settingsState, setSettingsState] = useState<SettingsFormState | null>(
     null,
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  // 只在实际拿到新的服务端数据时初始化一次。react-i18next 在语言变化时会返回新的
+  // i18n 包装对象，使 readPersistedLanguage / syncLanguage 的引用每次都变；
+  // 若因此重跑初始化，用户在表单里的改动（含 resetSettings 的结果）会被旧数据覆盖。
+  const initializedDataRef = useRef<unknown>(undefined);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -86,22 +97,24 @@ export function useSettingsForm(): UseSettingsFormResult {
         return normalizeLanguage(stored);
       }
     }
-    return normalizeLanguage(i18n.language);
-  }, [i18n]);
+    return normalizeLanguage(currentLanguage());
+  }, [currentLanguage]);
 
   const syncLanguage = useCallback(
     (lang: Language) => {
-      const current = normalizeLanguage(i18n.language);
-      if (current !== lang) {
+      if (normalizeLanguage(currentLanguage()) !== lang) {
         void i18n.changeLanguage(lang);
       }
     },
-    [i18n],
+    [currentLanguage, i18n],
   );
 
   // 初始化设置数据
   useEffect(() => {
     if (!data) return;
+    // 同一份服务端数据只初始化一次，避免被 i18n 引用变化触发的重跑覆盖用户已修改的表单。
+    if (initializedDataRef.current === data) return;
+    initializedDataRef.current = data;
 
     const normalizedLanguage = normalizeLanguage(
       data.language ?? readPersistedLanguage(),

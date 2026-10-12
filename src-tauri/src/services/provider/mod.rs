@@ -6356,6 +6356,14 @@ impl ProviderService {
                 let gemini_id = format!("universal-gemini-{id}");
                 let _ = state.db.delete_provider("gemini", &gemini_id);
             }
+            if p.apps.claude_desktop {
+                let desktop_id = format!("universal-claude-desktop-{id}");
+                let _ = state.db.delete_provider("claude-desktop", &desktop_id);
+            }
+            if p.apps.grokbuild {
+                let grokbuild_id = format!("universal-grokbuild-{id}");
+                let _ = state.db.delete_provider("grokbuild", &grokbuild_id);
+            }
         }
 
         Ok(true)
@@ -6444,6 +6452,60 @@ impl ProviderService {
         } else {
             let gemini_id = format!("universal-gemini-{id}");
             let _ = state.db.delete_provider("gemini", &gemini_id);
+        }
+
+        // 同步到 Claude Desktop
+        if let Some(mut desktop_provider) = provider.to_claude_desktop_provider() {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&desktop_provider.id, "claude-desktop")?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &desktop_provider.settings_config);
+                desktop_provider.settings_config = merged;
+                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段。
+                desktop_provider.meta = existing.meta;
+                desktop_provider.created_at = existing.created_at;
+                desktop_provider.sort_index = existing.sort_index;
+            }
+            state
+                .db
+                .save_provider("claude-desktop", &desktop_provider)?;
+            Self::project_universal_child_to_live(
+                state,
+                AppType::ClaudeDesktop,
+                &desktop_provider.id,
+                &mut live_failures,
+            );
+        } else {
+            let desktop_id = format!("universal-claude-desktop-{id}");
+            let _ = state.db.delete_provider("claude-desktop", &desktop_id);
+        }
+
+        // 同步到 Grok Build
+        if let Some(mut grokbuild_provider) = provider.to_grokbuild_provider() {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&grokbuild_provider.id, "grokbuild")?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &grokbuild_provider.settings_config);
+                grokbuild_provider.settings_config = merged;
+                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段。
+                grokbuild_provider.meta = existing.meta;
+                grokbuild_provider.created_at = existing.created_at;
+                grokbuild_provider.sort_index = existing.sort_index;
+            }
+            state.db.save_provider("grokbuild", &grokbuild_provider)?;
+            Self::project_universal_child_to_live(
+                state,
+                AppType::GrokBuild,
+                &grokbuild_provider.id,
+                &mut live_failures,
+            );
+        } else {
+            let grokbuild_id = format!("universal-grokbuild-{id}");
+            let _ = state.db.delete_provider("grokbuild", &grokbuild_id);
         }
 
         if live_failures.is_empty() {

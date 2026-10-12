@@ -31,19 +31,7 @@ import type {
 import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexFormFields } from "./CodexFormFields";
-import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
-import {
-  grokBuildOfficialPreset,
-  grokBuildProviderPresets,
-  type GrokBuildProviderPreset,
-} from "@/config/grokBuildProviderPresets";
-import {
-  codexApiFormatFromWireApi,
-  extractCodexBaseUrl,
-  extractCodexModelName,
-  extractCodexWireApi,
-} from "@/utils/providerConfigUtils";
 import {
   buildGrokBuildConfig,
   GROK_BUILD_DEFAULT_API_BACKEND,
@@ -53,22 +41,8 @@ import {
 } from "@/utils/grokBuildConfig";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { useDraftEditorProjection } from "./hooks/useDraftEditorProjection";
-import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
-
-// 预设列表见 grokBuildProviderPresets.ts：独立维护（与 Codex 预设无联动），
-// 不含官方 / OAuth / 国产官方直连 / 纯开源托管站，默认模型为 Grok 系。
-const grokPresetEntries: Array<{
-  id: string;
-  preset: GrokBuildProviderPreset;
-}> = [
-  { id: GROKBUILD_OFFICIAL_PROVIDER_ID, preset: grokBuildOfficialPreset },
-  ...grokBuildProviderPresets.map((preset, index) => ({
-    id: `grokbuild-${index}`,
-    preset,
-  })),
-];
 
 export function GrokBuildProviderForm({
   providerId,
@@ -92,16 +66,9 @@ export function GrokBuildProviderForm({
     [initialConfigText, initialData?.name],
   );
 
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
-    initialData ? null : "custom",
-  );
-  const [category, setCategory] = useState<ProviderCategory | undefined>(
+  const [category] = useState<ProviderCategory | undefined>(
     initialData?.category ?? "custom",
   );
-  const [isPartner, setIsPartner] = useState(
-    initialData?.meta?.isPartner ?? false,
-  );
-  const [partnerPromotionKey, setPartnerPromotionKey] = useState<string>();
   const [profile, setProfile] = useState(initialConfig.model);
   const [upstreamModel, setUpstreamModel] = useState(
     initialConfig.upstreamModel ?? initialConfig.model,
@@ -115,19 +82,19 @@ export function GrokBuildProviderForm({
     initialConfigText ?? buildGrokBuildConfig(initialConfig),
   );
 
-  // 新增：预设或模板投影到当前 config.toml 上显示。每次重置显示内容都要重新投影（或作废
+  // 新增：模板投影到当前 config.toml 上显示。每次重置显示内容都要重新投影（或作废
   // 投影），否则保存时三方比较的底和显示内容对不上。
-  const { projectDraft, clearDraftProjection } = useDraftEditorProjection(
+  const { projectDraft } = useDraftEditorProjection(
     "grokbuild",
     onEditorBaseChange,
   );
-  const projectGrokDraft = (config: string, presetCategory?: string) =>
-    projectDraft({ config }, presetCategory, (shown) =>
+  const projectGrokDraft = (config: string) =>
+    projectDraft({ config }, category, (shown) =>
       setRawConfig(typeof shown.config === "string" ? shown.config : config),
     );
   useEffect(() => {
     if (!initialData) projectGrokDraft(rawConfig);
-    // 只在打开时投影一次：之后的投影跟着预设切换走。
+    // 只在打开时投影一次：之后的投影跟着编辑内容走。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [apiFormat, setApiFormat] = useState<CodexApiFormat>(
@@ -172,7 +139,6 @@ export function GrokBuildProviderForm({
     initialData?.meta?.endpointAutoSelect ?? true,
   );
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
-  const [presetEndpoints, setPresetEndpoints] = useState<string[]>([]);
   const [draftCustomEndpoints, setDraftCustomEndpoints] = useState<string[]>(
     [],
   );
@@ -196,28 +162,12 @@ export function GrokBuildProviderForm({
   });
   const { isSubmitting } = form.formState;
   const websiteUrl = form.watch("websiteUrl") ?? "";
-  // 「获取 API Key」优先用预设的 apiKeyUrl（带推广参数），与 useApiKeyLink 一致
-  const apiKeyLinkUrl =
-    grokPresetEntries.find((entry) => entry.id === selectedPresetId)?.preset
-      .apiKeyUrl || websiteUrl;
+  // 「获取 API Key」直接用表单里填的官网地址
+  const apiKeyLinkUrl = websiteUrl;
 
   useEffect(() => {
     onSubmittingChange?.(isSubmitting);
   }, [isSubmitting, onSubmittingChange]);
-
-  // Grok Build 预设已不含 cn_official（国产官方直连无法在 Grok CLI 使用）
-  const presetCategoryLabels = useMemo(
-    () => ({
-      official: t("providerForm.categoryOfficial", { defaultValue: "官方" }),
-      aggregator: t("providerForm.categoryAggregation", {
-        defaultValue: "聚合服务",
-      }),
-      third_party: t("providerForm.categoryThirdParty", {
-        defaultValue: "第三方",
-      }),
-    }),
-    [t],
-  );
 
   const speedTestEndpoints = useMemo(() => {
     const urls = new Set<string>();
@@ -226,10 +176,9 @@ export function GrokBuildProviderForm({
       if (normalized) urls.add(normalized);
     };
     add(baseUrl);
-    presetEndpoints.forEach(add);
     draftCustomEndpoints.forEach(add);
     return Array.from(urls).map((url) => ({ url }));
-  }, [baseUrl, draftCustomEndpoints, presetEndpoints]);
+  }, [baseUrl, draftCustomEndpoints]);
 
   const syncStructuredConfig = (
     overrides: Partial<ReturnType<typeof parseGrokBuildConfig>>,
@@ -245,72 +194,6 @@ export function GrokBuildProviderForm({
       apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
     };
     setRawConfig((current) => updateGrokBuildConfig(current, next));
-  };
-
-  const handlePresetChange = (presetId: string) => {
-    setSelectedPresetId(presetId);
-    if (presetId === "custom") {
-      setCategory("custom");
-      setIsPartner(false);
-      setPartnerPromotionKey(undefined);
-      setPresetEndpoints([]);
-      return;
-    }
-
-    if (presetId === GROKBUILD_OFFICIAL_PROVIDER_ID) {
-      // 官方登录：无 API Key / 地址 / 模型表可填，提交走 ensure seed 流程
-      form.setValue("name", grokBuildOfficialPreset.name);
-      form.setValue("websiteUrl", grokBuildOfficialPreset.websiteUrl);
-      form.setValue("icon", grokBuildOfficialPreset.icon ?? "");
-      form.setValue("iconColor", grokBuildOfficialPreset.iconColor ?? "");
-      setCategory("official");
-      setIsPartner(false);
-      setPartnerPromotionKey(undefined);
-      setPresetEndpoints([]);
-      setRawConfig("");
-      clearDraftProjection();
-      return;
-    }
-
-    const entry = grokPresetEntries.find(
-      (candidate) => candidate.id === presetId,
-    );
-    if (!entry) return;
-    const preset = entry.preset;
-    const presetName = preset.nameKey ? String(t(preset.nameKey)) : preset.name;
-    const presetBaseUrl = extractCodexBaseUrl(preset.config) ?? "";
-    const presetModel = extractCodexModelName(preset.config) ?? profile;
-    const presetApiFormat =
-      preset.apiFormat ??
-      codexApiFormatFromWireApi(extractCodexWireApi(preset.config)) ??
-      "openai_responses";
-    const presetApiKey =
-      "auth" in preset && typeof preset.auth?.OPENAI_API_KEY === "string"
-        ? preset.auth.OPENAI_API_KEY
-        : "";
-    form.setValue("name", presetName);
-    form.setValue("websiteUrl", preset.websiteUrl ?? "");
-    form.setValue("icon", preset.icon ?? "");
-    form.setValue("iconColor", preset.iconColor ?? "");
-    setCategory(preset.category ?? "custom");
-    setIsPartner(preset.isPartner ?? false);
-    setPartnerPromotionKey(preset.partnerPromotionKey);
-    setBaseUrl(presetBaseUrl);
-    setApiKey(presetApiKey);
-    setUpstreamModel(presetModel);
-    setApiFormat(presetApiFormat);
-    setPresetEndpoints(preset.endpointCandidates ?? []);
-    const presetConfig = buildGrokBuildConfig({
-      model: profile,
-      upstreamModel: presetModel,
-      baseUrl: presetBaseUrl,
-      name: presetName,
-      apiKey: presetApiKey,
-      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
-      contextWindow: Number.parseInt(contextWindow, 10),
-    });
-    setRawConfig(presetConfig);
-    projectGrokDraft(presetConfig, preset.category);
   };
 
   const handleRawConfigChange = (value: string) => {
@@ -337,9 +220,7 @@ export function GrokBuildProviderForm({
         websiteUrl: values.websiteUrl?.trim() ?? "",
         notes: values.notes?.trim() ?? "",
         settingsConfig: JSON.stringify({ config: rawConfig }),
-        presetId: selectedPresetId ?? undefined,
         presetCategory: "official",
-        isPartner: false,
         meta: initialData?.meta,
       });
       return;
@@ -413,8 +294,6 @@ export function GrokBuildProviderForm({
       apiKeyField: anthropicAuthField,
       isFullUrl,
       endpointAutoSelect,
-      isPartner,
-      partnerPromotionKey,
       impersonateClaudeCode,
       promptCacheRouting,
       codexChatReasoning,
@@ -434,9 +313,7 @@ export function GrokBuildProviderForm({
       websiteUrl: values.websiteUrl?.trim() ?? "",
       notes: values.notes?.trim() ?? "",
       settingsConfig: JSON.stringify({ config: finalConfig }),
-      presetId: selectedPresetId ?? undefined,
       presetCategory: category ?? "custom",
-      isPartner,
       meta,
     };
 
@@ -452,16 +329,6 @@ export function GrokBuildProviderForm({
         onSubmit={form.handleSubmit(handleSubmit)}
         className="space-y-6"
       >
-        {!initialData && (
-          <ProviderPresetSelector
-            selectedPresetId={selectedPresetId}
-            presetEntries={grokPresetEntries}
-            presetCategoryLabels={presetCategoryLabels}
-            onPresetChange={handlePresetChange}
-            category={category}
-          />
-        )}
-
         <BasicFormFields form={form} />
 
         {category !== "official" && (
@@ -477,8 +344,6 @@ export function GrokBuildProviderForm({
               category={category}
               shouldShowApiKeyLink={Boolean(apiKeyLinkUrl)}
               websiteUrl={apiKeyLinkUrl}
-              isPartner={isPartner}
-              partnerPromotionKey={partnerPromotionKey}
               shouldShowSpeedTest
               codexBaseUrl={baseUrl}
               onBaseUrlChange={(value) => {

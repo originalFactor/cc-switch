@@ -11,7 +11,6 @@ describe("useApiKeyState", () => {
       useApiKeyState({
         initialConfig,
         onConfigChange,
-        selectedPresetId: null,
         category: undefined,
         appType: "claude",
       }),
@@ -35,7 +34,6 @@ describe("useApiKeyState", () => {
       useApiKeyState({
         initialConfig,
         onConfigChange: officialConfigChange,
-        selectedPresetId: null,
         category: "official",
         appType: "claude",
       }),
@@ -51,7 +49,6 @@ describe("useApiKeyState", () => {
       useApiKeyState({
         initialConfig,
         onConfigChange: cloudProviderConfigChange,
-        selectedPresetId: null,
         category: "cloud_provider",
         appType: "claude",
       }),

@@ -22,8 +22,7 @@ vi.mock("@/components/JsonEditor", () => ({
 }));
 
 describe("GrokBuildProviderForm", () => {
-  it("offers curated Grok Build presets and applies one", async () => {
-    const user = userEvent.setup();
+  it("新增时没有预设可选，字段初始为空、由用户手填", () => {
     const { container } = render(
       <GrokBuildProviderForm
         submitLabel="Save"
@@ -32,40 +31,22 @@ describe("GrokBuildProviderForm", () => {
       />,
     );
 
-    // 国产官方直连（cn_official）不在 Grok Build 预设列表里
-    expect(screen.queryByRole("button", { name: /BytePlus/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Kimi/ })).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /PatewayAI/ }));
+    // 预设体系已移除：不再有预设按钮，也没有预设条
+    expect(screen.queryByRole("button", { name: /PatewayAI/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /88API/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /providerPreset\.custom/ }),
+    ).toBeNull();
 
     const baseUrlInput =
       container.querySelector<HTMLInputElement>("#codexBaseUrl");
-    const nameInput =
-      container.querySelector<HTMLInputElement>('input[name="name"]');
-    expect(baseUrlInput?.value).toBe("https://api.pateway.ai/v1");
-    expect(nameInput?.value).toBe("PatewayAI");
-  });
-
-  it("points the get-API-key link at the preset's apiKeyUrl", async () => {
-    const user = userEvent.setup();
-    const { container } = render(
-      <GrokBuildProviderForm
-        submitLabel="Save"
-        onSubmit={() => {}}
-        onCancel={() => {}}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: /88API/ }));
-
+    expect(baseUrlInput?.value).toBe("");
     const websiteInput = container.querySelector<HTMLInputElement>(
       'input[name="websiteUrl"]',
     );
-    expect(websiteInput?.value).toBe("https://88api.ai");
-    expect(screen.getByRole("link", { name: /API Key/ })).toHaveAttribute(
-      "href",
-      "https://88api.ai/sign-up?aff=HSGY",
-    );
+    expect(websiteInput?.value).toBe("");
+    // 「获取 API Key」链接跟着表单里填的官网地址走
+    expect(screen.queryByRole("link", { name: /API Key/ })).toBeNull();
   });
 
   it("submits a complete config.toml payload with Grok defaults", async () => {

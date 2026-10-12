@@ -31,7 +31,6 @@ import { XaiOAuthSection } from "./XaiOAuthSection";
 import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
-import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
@@ -40,12 +39,6 @@ import type {
   ProviderCategory,
   ProviderMeta,
 } from "@/types";
-import {
-  CLAUDE_DESKTOP_ROLE_ROUTE_IDS,
-  claudeDesktopProviderPresets,
-  type ClaudeDesktopProviderPreset,
-  type ClaudeDesktopRoleId,
-} from "@/config/claudeDesktopProviderPresets";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -61,20 +54,12 @@ import { useCopilotAuth, useCodexOauth, useXaiOauth } from "./hooks";
 import { isOAuthProviderType } from "@/config/constants";
 
 export type ClaudeDesktopProviderFormValues = ProviderFormData & {
-  presetId?: string;
   presetCategory?: ProviderCategory;
-  isPartner?: boolean;
-  partnerPromotionKey?: string;
   meta?: ProviderMeta;
   providerKey?: string;
 };
 
 type ApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
-
-type PresetEntry = {
-  id: string;
-  preset: ClaudeDesktopProviderPreset;
-};
 
 export interface ClaudeDesktopProviderFormProps {
   submitLabel: string;
@@ -104,12 +89,18 @@ type RouteRow = {
 };
 
 type RouteRowValues = Omit<RouteRow, "rowId">;
-type RouteRole = ClaudeDesktopRoleId;
+type RouteRole = "sonnet" | "opus" | "fable" | "haiku";
 
 const CLAUDE_ROUTE_PREFIX = "claude-";
 const ANTHROPIC_CLAUDE_ROUTE_PREFIX = "anthropic/claude-";
 const LEGACY_ONE_M_MARKER = "[1m]";
-const ROLE_ROUTE_IDS = CLAUDE_DESKTOP_ROLE_ROUTE_IDS;
+/** 四档角色在 Claude Desktop profile 里用的 route id（与后端 DEFAULT_PROXY_ROUTES 一致） */
+const ROLE_ROUTE_IDS: Record<RouteRole, string> = {
+  sonnet: "claude-sonnet-5",
+  opus: "claude-opus-5",
+  fable: "claude-fable-5",
+  haiku: "claude-haiku-4-5",
+};
 const ROLE_ORDER: RouteRole[] = ["sonnet", "opus", "fable", "haiku"];
 
 function envString(
@@ -262,7 +253,7 @@ export function ClaudeDesktopProviderForm({
     envString(initialData?.settingsConfig, "ANTHROPIC_AUTH_TOKEN") ||
       envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY"),
   );
-  const [apiKeyField, setApiKeyField] = useState<ApiKeyField>(() =>
+  const [apiKeyField] = useState<ApiKeyField>(() =>
     envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY")
       ? "ANTHROPIC_API_KEY"
       : "ANTHROPIC_AUTH_TOKEN",
@@ -279,17 +270,6 @@ export function ClaudeDesktopProviderForm({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
-    "custom",
-  );
-  const [activePreset, setActivePreset] = useState<{
-    id: string;
-    category?: ProviderCategory;
-    isPartner?: boolean;
-    partnerPromotionKey?: string;
-    providerType?: string;
-    requiresOAuth?: boolean;
-  } | null>(null);
   const [directRoutes, setDirectRoutes] = useState<RouteRow[]>(() => {
     const rows = initialRouteRows(initialData?.meta?.claudeDesktopModelRoutes);
     return initialMode === "direct" ? rows : [];
@@ -348,32 +328,7 @@ export function ClaudeDesktopProviderForm({
     onSubmittingChange?.(form.formState.isSubmitting || isFetchingModels);
   }, [form.formState.isSubmitting, isFetchingModels, onSubmittingChange]);
 
-  const presetEntries = useMemo<PresetEntry[]>(
-    () =>
-      claudeDesktopProviderPresets.map((preset, index) => ({
-        id: `claude-desktop-${index}`,
-        preset,
-      })),
-    [],
-  );
-
-  const presetCategoryLabels: Record<string, string> = useMemo(
-    () => ({
-      official: t("providerForm.categoryOfficial", { defaultValue: "官方" }),
-      cn_official: t("providerForm.categoryCnOfficial", {
-        defaultValue: "国内官方",
-      }),
-      aggregator: t("providerForm.categoryAggregation", {
-        defaultValue: "聚合服务",
-      }),
-      third_party: t("providerForm.categoryThirdParty", {
-        defaultValue: "第三方",
-      }),
-    }),
-    [t],
-  );
-  const activeProviderType =
-    activePreset?.providerType ?? initialData?.meta?.providerType;
+  const activeProviderType = initialData?.meta?.providerType;
   const { isAuthenticated: isCopilotAuthenticated, accounts: copilotAccounts } =
     useCopilotAuth();
   const {
@@ -385,111 +340,21 @@ export function ClaudeDesktopProviderForm({
     isAuthenticated: isXaiOauthAuthenticated,
     accounts: xaiOauthAccounts,
   } = useXaiOauth();
-  const isOfficial =
-    initialData?.category === "official" ||
-    activePreset?.category === "official";
-  const usesManagedOAuth =
-    activePreset?.requiresOAuth === true ||
-    isOAuthProviderType(activeProviderType);
+  const isOfficial = initialData?.category === "official";
+  const usesManagedOAuth = isOAuthProviderType(activeProviderType);
   const effectiveMode: "direct" | "proxy" = usesManagedOAuth ? "proxy" : mode;
   const needsModelMapping = effectiveMode === "proxy";
   const routes = needsModelMapping ? proxyRoutes : directRoutes;
   const setRoutes = needsModelMapping ? setProxyRoutes : setDirectRoutes;
 
   // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
-  const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
-  const {
-    shouldShowApiKeyLink,
-    websiteUrl: apiKeyLinkWebsiteUrl,
-    isPartner: apiKeyLinkIsPartner,
-    partnerPromotionKey: apiKeyLinkPromotionKey,
-  } = useApiKeyLink({
-    appId: "claude-desktop",
-    category: apiKeyLinkCategory,
-    selectedPresetId,
-    presetEntries,
-    formWebsiteUrl: form.watch("websiteUrl") || "",
-  });
-
-  const applyDesktopPreset = (preset: ClaudeDesktopProviderPreset) => {
-    form.setValue("name", preset.nameKey ? t(preset.nameKey) : preset.name);
-    form.setValue("websiteUrl", preset.websiteUrl);
-    form.setValue("notes", "");
-    form.setValue("icon", preset.icon ?? "");
-    form.setValue("iconColor", preset.iconColor ?? "");
-
-    setBaseUrl(preset.baseUrl);
-    setApiKey("");
-    setApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
-    setApiFormat(preset.apiFormat ?? "anthropic");
-
-    const presetMode =
-      preset.requiresOAuth === true || isOAuthProviderType(preset.providerType)
-        ? "proxy"
-        : preset.mode;
-    setMode(presetMode);
-    setDirectRoutes(
-      presetMode === "direct" && preset.modelRoutes
-        ? preset.modelRoutes.map((route) =>
-            createRouteRow({
-              route: route.upstreamModel,
-              model: "",
-              labelOverride: route.labelOverride ?? "",
-              supports1m: route.supports1m,
-            }),
-          )
-        : [],
-    );
-    if (presetMode === "proxy" && preset.modelRoutes) {
-      didSeedDefaultProxyRoutes.current = true;
-      setProxyRoutes(
-        normalizeProxyRows(
-          preset.modelRoutes.map((r) =>
-            createRouteRow({
-              route: r.routeId,
-              model: r.upstreamModel,
-              labelOverride: r.labelOverride ?? "",
-              supports1m: r.supports1m,
-            }),
-          ),
-        ),
-      );
-    } else {
-      didSeedDefaultProxyRoutes.current = false;
-      setProxyRoutes([]);
-    }
-  };
-
-  const handlePresetChange = (value: string) => {
-    setSelectedPresetId(value);
-
-    if (value === "custom") {
-      setActivePreset(null);
-      form.reset(defaultValues);
-      setBaseUrl("");
-      setApiKey("");
-      setApiKeyField("ANTHROPIC_AUTH_TOKEN");
-      setApiFormat("anthropic");
-      didSeedDefaultProxyRoutes.current = false;
-      setMode("direct");
-      setDirectRoutes([]);
-      setProxyRoutes([]);
-      return;
-    }
-
-    const entry = presetEntries.find((item) => item.id === value);
-    if (!entry) return;
-
-    setActivePreset({
-      id: value,
-      category: entry.preset.category,
-      isPartner: entry.preset.isPartner,
-      partnerPromotionKey: entry.preset.partnerPromotionKey,
-      providerType: entry.preset.providerType,
-      requiresOAuth: entry.preset.requiresOAuth,
+  const apiKeyLinkCategory = initialData?.category;
+  const { shouldShowApiKeyLink, websiteUrl: apiKeyLinkWebsiteUrl } =
+    useApiKeyLink({
+      appId: "claude-desktop",
+      category: apiKeyLinkCategory,
+      formWebsiteUrl: form.watch("websiteUrl") || "",
     });
-    applyDesktopPreset(entry.preset);
-  };
 
   const updateRoute = (index: number, patch: Partial<RouteRowValues>) => {
     setRoutes((current) =>
@@ -592,7 +457,6 @@ export function ClaudeDesktopProviderForm({
         notes: values.notes?.trim() ?? "",
         settingsConfig: JSON.stringify(settingsConfig, null, 2),
         meta,
-        presetId: activePreset?.id,
         presetCategory: "official",
       });
       return;
@@ -816,10 +680,7 @@ export function ClaudeDesktopProviderForm({
       notes: values.notes?.trim() ?? "",
       settingsConfig: JSON.stringify(settingsConfig, null, 2),
       meta,
-      presetId: activePreset?.id,
-      presetCategory: activePreset?.category,
-      isPartner: activePreset?.isPartner,
-      partnerPromotionKey: activePreset?.partnerPromotionKey,
+      presetCategory: initialData?.category,
     });
   };
 
@@ -862,16 +723,6 @@ export function ClaudeDesktopProviderForm({
         onSubmit={form.handleSubmit(handleSubmit)}
         className="space-y-6"
       >
-        {!initialData && (
-          <ProviderPresetSelector
-            selectedPresetId={selectedPresetId}
-            presetEntries={presetEntries}
-            presetCategoryLabels={presetCategoryLabels}
-            onPresetChange={handlePresetChange}
-            category={activePreset?.category}
-          />
-        )}
-
         <BasicFormFields form={form} />
 
         {isOfficial && (
@@ -926,8 +777,6 @@ export function ClaudeDesktopProviderForm({
                 required
                 shouldShowLink={shouldShowApiKeyLink}
                 websiteUrl={apiKeyLinkWebsiteUrl}
-                isPartner={apiKeyLinkIsPartner}
-                partnerPromotionKey={apiKeyLinkPromotionKey}
               />
             )}
 

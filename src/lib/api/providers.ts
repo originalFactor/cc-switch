@@ -47,7 +47,7 @@ export type EditorConflictPolicy = "refuse" | "keepMine" | "keepTheirs";
 /** 编辑器保存随供应商一起提交：打开时显示的完整配置，用来三方比较。 */
 export interface ProviderEditorSave {
   base: Record<string, unknown>;
-  /** 新增对话框：投影成 `base` 的那份草稿（预设或模板）。后端按它区分预设带的和从 live 带进来的字段。 */
+  /** 新增对话框：投影成 `base` 的那份草稿（自定义模板）。后端按它区分模板带的和从 live 带进来的字段。 */
   draft?: Record<string, unknown>;
   onConflict?: EditorConflictPolicy;
 }
@@ -109,7 +109,7 @@ export const providersApi = {
 
   /**
    * 切换式应用的编辑器显示内容。编辑已有供应商时传 `providerId`：后端按库里那一行认
-   * 官方卡。`meta` 保留 Codex Copilot 等供应商的认证和协议身份，新增时取当前预设。
+   * 官方卡。`meta` 保留 Codex Copilot 等供应商的认证和协议身份，新增时取表单里的身份。
    */
   async getEditorView(
     appId: AppId,

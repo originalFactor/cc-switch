@@ -1,7 +1,12 @@
 import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
-import type { McpServer, Provider, Settings } from "@/types";
+import type {
+  McpServer,
+  Provider,
+  Settings,
+  UniversalProvider,
+} from "@/types";
 import {
   addProvider,
   deleteProvider,
@@ -23,6 +28,11 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
+  deleteUniversalProvider,
+  getUniversalProvider,
+  listUniversalProviders,
+  saveUniversalProvider,
+  syncUniversalProviderToApps,
 } from "./state";
 
 const TAURI_ENDPOINT = "http://tauri.local";
@@ -121,6 +131,32 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/import_default_config`, async () => {
     resetProviderState();
     return success(true);
+  }),
+
+  // ─── 统一供应商 ────────────────────────────────────────────────────────────
+  http.post(`${TAURI_ENDPOINT}/get_universal_providers`, () =>
+    success(listUniversalProviders()),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_universal_provider`, async ({ request }) => {
+    const { id } = await withJson<{ id: string }>(request);
+    return success(getUniversalProvider(id));
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/upsert_universal_provider`, async ({ request }) => {
+    const { provider } = await withJson<{ provider: UniversalProvider }>(request);
+    saveUniversalProvider(provider);
+    return success(true);
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/delete_universal_provider`, async ({ request }) => {
+    const { id } = await withJson<{ id: string }>(request);
+    return success(deleteUniversalProvider(id));
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/sync_universal_provider`, async ({ request }) => {
+    const { id } = await withJson<{ id: string }>(request);
+    return success(syncUniversalProviderToApps(id));
   }),
 
   http.post(`${TAURI_ENDPOINT}/open_external`, () => success(true)),

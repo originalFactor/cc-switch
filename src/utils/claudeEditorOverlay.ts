@@ -9,7 +9,7 @@ export const CLAUDE_AUTO_MODE_SERVER_ENV = "CLAUDE_CODE_AUTO_MODE_SERVER";
 
 /**
  * 新增 Claude 供应商时补上网关默认值：除官方和云服务商（Bedrock、Vertex 直连，服务端
- * 检查随平台上线）外，默认关掉 auto mode 的服务端检查。预设自己写了的以预设为准。
+ * 检查随平台上线）外，默认关掉 auto mode 的服务端检查。字段自己已经写了的不覆盖。
  */
 export function withClaudeGatewayDefaults(
   fields: Record<string, unknown>,
@@ -26,9 +26,9 @@ export function withClaudeGatewayDefaults(
 }
 
 /**
- * 新增 Claude 供应商时，把预设的字段（只有关键字段和独有字段）套在当前 live 上显示，
- * 和切过去之后的结果一致：预设的顶层键、`env` 键覆盖 live 的同名键，其余保持 live 的
- * 内容和顺序。关键字段怎么认由后端决定，这里只做覆盖。
+ * 新增 Claude 供应商时，把供应商自己的字段（只有关键字段和独有字段）套在当前 live 上
+ * 显示，和切过去之后的结果一致：这些顶层键、`env` 键覆盖 live 的同名键，其余保持 live
+ * 的内容和顺序。关键字段怎么认由后端决定，这里只做覆盖。
  */
 export function overlayClaudeProviderFields(
   base: Record<string, unknown>,

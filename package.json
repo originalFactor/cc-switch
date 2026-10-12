@@ -18,7 +18,6 @@
   "keywords": [],
   "author": "Jason Young",
   "license": "MIT",
-  "packageManager": "pnpm@10.12.3",
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",
     "@testing-library/jest-dom": "^6.6.3",
