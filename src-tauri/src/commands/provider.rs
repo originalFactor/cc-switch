@@ -974,6 +974,35 @@ pub fn upsert_universal_provider(
     Ok(result)
 }
 
+/// 拉取可用模型列表（`/v1/models` + models.dev 补全）。
+///
+/// 传 `id` 用已存那家的地址与 Key 并写回它；不传时用 `baseUrl`/`apiKey` 现拉，
+/// 结果只返回给前端（新建时还没有 id）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn refresh_universal_models(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Option<String>,
+    base_url: Option<String>,
+    api_key: Option<String>,
+) -> Result<Vec<crate::provider::AvailableModel>, String> {
+    let models = ProviderService::refresh_universal_models(
+        state.inner(),
+        id.as_deref(),
+        base_url.as_deref(),
+        api_key.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 写回过的记录要让前端刷新；纯现拉（没有 id）不通知。
+    if let Some(id) = id.as_deref() {
+        emit_universal_provider_synced(&app, "models", id);
+    }
+
+    Ok(models)
+}
+
 #[tauri::command]
 pub fn delete_universal_provider(
     app: AppHandle,

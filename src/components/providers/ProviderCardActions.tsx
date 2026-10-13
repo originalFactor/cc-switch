@@ -60,9 +60,9 @@ const BUTTON_ICON: Record<string, LucideIcon> = {
 interface ProviderCardActionsProps {
   providerName: string;
   presentation: CardPresentation;
-  onEdit: () => void;
+  /** 打开这张卡背后的统一供应商表单；普通供应商没有这个入口。 */
+  onEdit?: () => void;
   onDelete: () => void;
-  onDuplicate?: () => void;
   onTest?: () => void;
   isTesting?: boolean;
   onConfigureUsage?: () => void;
@@ -70,8 +70,8 @@ interface ProviderCardActionsProps {
 }
 
 /**
- * 卡片右侧（v7）：主操作位（状态文字或按钮）→ 上移 / 下移（故障转移队列）→ 编辑 → ⋯。
- * 次要操作都在 ⋯ 里：跟当前模式有关的（聚合页的「设为默认」）在最前，然后是复制、检测连通、
+ * 卡片右侧（v7）：主操作位（状态文字或按钮）→ 上移 / 下移（故障转移队列）→ ⋯。
+ * 次要操作都在 ⋯ 里：跟当前模式有关的（聚合页的「设为默认」）在最前，然后是检测连通、
  * 配置用量查询、打开终端、删除。
  * 按钮一律纯图标 + HoverTip；有禁用原因时改由 DisabledReason 的说明卡报原因。
  */
@@ -80,7 +80,6 @@ export function ProviderCardActions({
   presentation,
   onEdit,
   onDelete,
-  onDuplicate,
   onTest,
   isTesting,
   onConfigureUsage,
@@ -141,20 +140,6 @@ export function ProviderCardActions({
         </div>
       )}
 
-      <IconAction
-        tip={t("common.edit")}
-        disabledReason={presentation.editDisabledReason}
-      >
-        <Button
-          variant="quiet"
-          size="icon-compact"
-          aria-label={t("providerCard.action.edit", { name: providerName })}
-          onClick={onEdit}
-        >
-          <Pencil className="h-4 w-4" strokeWidth={1.5} />
-        </Button>
-      </IconAction>
-
       <DropdownMenu>
         <HoverTip content={t("common.more")}>
           <DropdownMenuTrigger asChild>
@@ -186,9 +171,12 @@ export function ProviderCardActions({
             </DropdownMenuItem>
           ))}
           {menuItems.length > 0 && <DropdownMenuSeparator />}
-          {onDuplicate && (
-            <DropdownMenuItem onSelect={onDuplicate}>
-              {t("provider.duplicate")}
+          {onEdit && (
+            <DropdownMenuItem onSelect={onEdit}>
+              <Pencil className="h-3.5 w-3.5" />
+              {t("providerCard.action.editUniversal", {
+                defaultValue: "编辑统一供应商",
+              })}
             </DropdownMenuItem>
           )}
           {onTest && (
@@ -207,7 +195,7 @@ export function ProviderCardActions({
               {t("provider.openTerminal")}
             </DropdownMenuItem>
           )}
-          {(onDuplicate || onTest || onConfigureUsage || onOpenTerminal) && (
+          {(onEdit || onTest || onConfigureUsage || onOpenTerminal) && (
             <DropdownMenuSeparator />
           )}
           <DropdownMenuItem

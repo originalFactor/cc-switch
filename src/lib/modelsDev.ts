@@ -86,8 +86,14 @@ export const modelsDevQueryOptions = queryOptions({
 });
 
 /**
- * 去掉命名空间前缀（`vendor/`）、`:变体` 后缀和 `[1m]` 标记后小写，
- * 让同一个模型在不同供应商那里的写法落到同一个 ID 上。
+ * 定价键的归一化：去掉命名空间前缀（`vendor/`）、`:变体` 后缀和 `[1m]` 标记后小写。
+ *
+ * 用法统计运行时是按 `model_pricing.model_id = <用量里的模型名>` 精确匹配的，而
+ * models.dev 的键是带命名空间的（`anthropic/claude-opus-4-6`）、用量里记的是裸名
+ * （`claude-opus-4-6`）。所以定价键必须继续剥命名空间，否则已存的价格行会全部失配。
+ *
+ * 模糊匹配（可忽略任意前后缀、最长匹配）用 [`modelMatchScore`] / [`bestModelMatch`]，
+ * 不要拿这个函数当匹配器。
  */
 export function normalizeModelsDevModelId(modelId: string): string {
   const afterSlash = modelId.slice(modelId.lastIndexOf("/") + 1);
@@ -98,3 +104,77 @@ export function normalizeModelsDevModelId(modelId: string): string {
   }
   return normalized;
 }
+
+/** 模型 id 切成 token：按**任意**非字母数字分隔符切开，不限于 `/` 和 `-`。 */
+export function modelTokens(modelId: string): string[] {
+  const lowered = modelId.trim().toLowerCase();
+  const withoutMarker = lowered.endsWith("[1m]")
+    ? lowered.slice(0, -"[1m]".length).trimEnd()
+    : lowered;
+  return withoutMarker.split(/[^a-z0-9]+/).filter((token) => token.length > 0);
+}
+
+/** 两个 token 序列里最长的连续公共片段长度（即「核心段」）。 */
+function longestCommonTokenRun(
+  query: readonly string[],
+  candidate: readonly string[],
+): number {
+  let best = 0;
+  for (let i = 0; i < query.length; i += 1) {
+    for (let j = 0; j < candidate.length; j += 1) {
+      let run = 0;
+      while (
+        i + run < query.length &&
+        j + run < candidate.length &&
+        query[i + run] === candidate[j + run]
+      ) {
+        run += 1;
+      }
+      if (run > best) best = run;
+    }
+  }
+  return best;
+}
+
+/**
+ * 两个模型 id 的匹配分数 `[核心 token 数, 被忽略的 token 数]`；`null` 表示不匹配。
+ *
+ * 规则与后端 `model_catalog.rs` 的 `match_score` 一致：两边各自去掉**任意**开头与
+ * 结尾 token（分隔符不限，切分只按非字母数字）后核心段相等即命中；多条命中时核心
+ * token 最多优先，一样多时忽略 token 最少优先。核心只有一个 token 太弱，除非它就是
+ * 较短那一侧的全部。
+ */
+export function modelMatchScore(
+  query: string,
+  candidate: string,
+): [core: number, ignored: number] | null {
+  const a = modelTokens(query);
+  const b = modelTokens(candidate);
+  if (!a.length || !b.length) return null;
+  const core = longestCommonTokenRun(a, b);
+  const shorter = Math.min(a.length, b.length);
+  if (core === 0 || (core < 2 && core !== shorter)) return null;
+  return [core, a.length + b.length - 2 * core];
+}
+
+/** 在候选里给 query 找最合适的一条（核心最长 → 忽略最少 → 候选顺序）。 */
+export function bestModelMatch<T>(
+  query: string,
+  candidates: readonly T[],
+  idOf: (candidate: T) => string,
+): T | undefined {
+  let best: { item: T; score: [number, number] } | undefined;
+  for (const candidate of candidates) {
+    const score = modelMatchScore(query, idOf(candidate));
+    if (!score) continue;
+    if (
+      !best ||
+      score[0] > best.score[0] ||
+      (score[0] === best.score[0] && score[1] < best.score[1])
+    ) {
+      best = { item: candidate, score };
+    }
+  }
+  return best?.item;
+}
+

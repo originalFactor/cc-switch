@@ -1,7 +1,7 @@
 use http::header::{HeaderValue, InvalidHeaderValue};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 // SSOT 模式：不再写供应商副本文件
@@ -672,7 +672,26 @@ pub struct UniversalProviderApps {
     pub grokbuild: bool,
 }
 
-/// Claude 模型配置
+impl UniversalProviderApps {
+    /// 全部应用都启用。统一供应商没有 per-app 开关了，一律同步到五个应用；
+    /// 这个字段保留只是为了跟旧数据往返和让子卡 id 生成逻辑照旧工作。
+    pub fn all() -> Self {
+        Self {
+            claude: true,
+            codex: true,
+            gemini: true,
+            claude_desktop: true,
+            grokbuild: true,
+        }
+    }
+
+    /// 是否五个应用全开。
+    pub fn is_all(&self) -> bool {
+        self.claude && self.codex && self.gemini && self.claude_desktop && self.grokbuild
+    }
+}
+
+/// Claude 模型配置：模型名 + 各档显示名 + 1M 声明 + 上游协议 / 认证字段
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClaudeModelConfig {
     /// 主模型
@@ -690,9 +709,73 @@ pub struct ClaudeModelConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "opusModel")]
     pub opus_model: Option<String>,
+    /// Fable 默认模型
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "fableModel")]
+    pub fable_model: Option<String>,
+    /// 主模型声明支持 1M（写 `model[1M]`）
+    #[serde(rename = "modelOneM", skip_serializing_if = "Option::is_none")]
+    pub model_one_m: Option<bool>,
+    #[serde(rename = "haikuModelOneM", skip_serializing_if = "Option::is_none")]
+    pub haiku_model_one_m: Option<bool>,
+    #[serde(rename = "sonnetModelOneM", skip_serializing_if = "Option::is_none")]
+    pub sonnet_model_one_m: Option<bool>,
+    #[serde(rename = "opusModelOneM", skip_serializing_if = "Option::is_none")]
+    pub opus_model_one_m: Option<bool>,
+    #[serde(rename = "fableModelOneM", skip_serializing_if = "Option::is_none")]
+    pub fable_model_one_m: Option<bool>,
+    /// /model 菜单里的显示名
+    #[serde(rename = "modelName", skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+    #[serde(rename = "haikuModelName", skip_serializing_if = "Option::is_none")]
+    pub haiku_model_name: Option<String>,
+    #[serde(rename = "sonnetModelName", skip_serializing_if = "Option::is_none")]
+    pub sonnet_model_name: Option<String>,
+    #[serde(rename = "opusModelName", skip_serializing_if = "Option::is_none")]
+    pub opus_model_name: Option<String>,
+    #[serde(rename = "fableModelName", skip_serializing_if = "Option::is_none")]
+    pub fable_model_name: Option<String>,
+    /// subagent 模型（`CLAUDE_CODE_SUBAGENT_MODEL`）
+    #[serde(rename = "subagentModel", skip_serializing_if = "Option::is_none")]
+    pub subagent_model: Option<String>,
+    #[serde(rename = "subagentModelOneM", skip_serializing_if = "Option::is_none")]
+    pub subagent_model_one_m: Option<bool>,
+    /// 上游协议：anthropic / openai_chat / openai_responses / gemini_native
+    #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
+    /// 写入配置的认证环境变量名
+    #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
+    pub api_key_field: Option<String>,
+    /// 地址是完整 API 端点
+    #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
+    pub is_full_url: Option<bool>,
+    /// 本地路由时替换的 User-Agent
+    #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
+    pub custom_user_agent: Option<String>,
+    /// 本地路由请求覆盖
+    #[serde(rename = "requestOverrides", skip_serializing_if = "Option::is_none")]
+    pub request_overrides: Option<LocalProxyRequestOverrides>,
+    /// 按需加载工具定义（`ENABLE_TOOL_SEARCH`）：上游支持 tool_reference 才能开
+    #[serde(rename = "enableToolSearch", skip_serializing_if = "Option::is_none")]
+    pub enable_tool_search: Option<bool>,
+    /// 不把 Artifact 工具发给模型（`CLAUDE_CODE_DISABLE_ARTIFACT`）
+    #[serde(rename = "disableArtifact", skip_serializing_if = "Option::is_none")]
+    pub disable_artifact: Option<bool>,
+    /// 关掉服务端 auto mode 检查（`CLAUDE_CODE_AUTO_MODE_SERVER=0`）
+    #[serde(
+        rename = "disableAutoModeServer",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disable_auto_mode_server: Option<bool>,
+    /// 全局：隐藏 AI 署名（顶层 `attribution`）。不属于单个供应商，只用于编辑器往返。
+    #[serde(rename = "hideAttribution", skip_serializing_if = "Option::is_none")]
+    pub hide_attribution: Option<bool>,
+    /// 全局：禁用自动升级（`DISABLE_AUTOUPDATER`）。同上。
+    #[serde(rename = "disableAutoUpgrade", skip_serializing_if = "Option::is_none")]
+    pub disable_auto_upgrade: Option<bool>,
 }
 
-/// Codex 模型配置
+/// Codex 模型配置：模型 + 推理档位 + 上游协议 + 上下文窗口
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CodexModelConfig {
     /// 模型名称
@@ -702,6 +785,60 @@ pub struct CodexModelConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "reasoningEffort")]
     pub reasoning_effort: Option<String>,
+    /// 上游格式：openai_responses / openai_chat / anthropic
+    #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
+    /// 走 Anthropic 路径时的认证字段名
+    #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
+    pub api_key_field: Option<String>,
+    /// 地址是完整 API 端点
+    #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
+    pub is_full_url: Option<bool>,
+    /// 顶层 `model_context_window` 声明 1M
+    #[serde(rename = "contextWindow1M", skip_serializing_if = "Option::is_none")]
+    pub context_window_one_m: Option<bool>,
+    /// 顶层 `model_auto_compact_token_limit`
+    #[serde(rename = "autoCompactLimit", skip_serializing_if = "Option::is_none")]
+    pub auto_compact_limit: Option<u32>,
+    /// 远程压缩：`[model_providers.<id>].name = "OpenAI"`
+    #[serde(rename = "remoteCompaction", skip_serializing_if = "Option::is_none")]
+    pub remote_compaction: Option<bool>,
+    /// Chat Completions 路径的思考能力声明
+    #[serde(rename = "chatReasoning", skip_serializing_if = "Option::is_none")]
+    pub chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// 会话级提示词缓存路由
+    #[serde(rename = "promptCacheRouting", skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_routing: Option<String>,
+    /// 走 Anthropic 路径时模拟 Claude Code 客户端
+    #[serde(
+        rename = "impersonateClaudeCode",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub impersonate_claude_code: Option<bool>,
+    /// 走 Anthropic 路径时的 max_tokens 覆盖
+    #[serde(rename = "maxOutputTokens", skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    /// 模型目录：写进 `settings_config.modelCatalog`
+    #[serde(
+        rename = "catalogModels",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
+    pub catalog_models: Vec<serde_json::Value>,
+    /// 子代理模型：写进 `config.toml` 的 `[agents].default_subagent_model`
+    #[serde(rename = "subagentModel", skip_serializing_if = "Option::is_none")]
+    pub subagent_model: Option<String>,
+    /// 子代理的推理档位：`[agents].default_subagent_reasoning_effort`
+    #[serde(
+        rename = "subagentReasoningEffort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subagent_reasoning_effort: Option<String>,
+    /// 本地路由时的 User-Agent 与请求覆盖
+    #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
+    pub custom_user_agent: Option<String>,
+    #[serde(rename = "requestOverrides", skip_serializing_if = "Option::is_none")]
+    pub request_overrides: Option<LocalProxyRequestOverrides>,
 }
 
 /// Gemini 模型配置
@@ -710,23 +847,128 @@ pub struct GeminiModelConfig {
     /// 模型名称
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// 任意 `.env` 键（写进 `settingsConfig.env`）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<std::collections::HashMap<String, String>>,
+    /// 任意 `settings.json` 键（写进 `settingsConfig.config`）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
 }
 
-/// Claude Desktop 模型配置：映射到 Desktop 三档角色 ID 的上游模型
+/// Claude Desktop 模型配置：接入方式 + 角色路由表
+///
+/// 形状与 `meta.claudeDesktopMode` / `meta.claudeDesktopModelRoutes` 一一对应：
+/// 直连把角色 ID 原样写进 Desktop profile，模型映射经本地路由把角色 ID 转成上游模型。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClaudeDesktopModelConfig {
-    /// Sonnet 档实际上游模型
-    #[serde(rename = "sonnetModel", skip_serializing_if = "Option::is_none")]
-    pub sonnet_model: Option<String>,
-    /// Opus 档实际上游模型
-    #[serde(rename = "opusModel", skip_serializing_if = "Option::is_none")]
-    pub opus_model: Option<String>,
-    /// Haiku 档实际上游模型
-    #[serde(rename = "haikuModel", skip_serializing_if = "Option::is_none")]
-    pub haiku_model: Option<String>,
-    /// 菜单显示名（三档共用）
-    #[serde(rename = "labelOverride", skip_serializing_if = "Option::is_none")]
-    pub label_override: Option<String>,
+    /// 接入方式：direct 直连 / proxy 模型映射；缺省按 proxy
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ClaudeDesktopMode>,
+    /// 模型映射模式下的上游格式：anthropic / openai_chat / openai_responses / gemini_native
+    #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
+    /// 角色路由表，key 是 Desktop 认得的角色 ID；留空时用默认四档
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub routes: HashMap<String, ClaudeDesktopModelRoute>,
+
+    // ── 旧版扁平字段（4.0.8 及更早）──
+    // 只读不写：老用户存的三个档位和共用的菜单显示名在这里读出来迁移成 routes，
+    // 保存一次后就从记录里消失（前端只写 routes）。
+    /// 旧版 Sonnet 档上游模型
+    #[serde(rename = "sonnetModel", default, skip_serializing)]
+    pub legacy_sonnet_model: Option<String>,
+    /// 旧版 Opus 档上游模型
+    #[serde(rename = "opusModel", default, skip_serializing)]
+    pub legacy_opus_model: Option<String>,
+    /// 旧版 Haiku 档上游模型
+    #[serde(rename = "haikuModel", default, skip_serializing)]
+    pub legacy_haiku_model: Option<String>,
+    /// 旧版菜单显示名（三档共用）
+    #[serde(rename = "labelOverride", default, skip_serializing)]
+    pub legacy_label_override: Option<String>,
+    /// 旧版各档 1M 声明
+    #[serde(rename = "sonnetOneM", default, skip_serializing)]
+    pub legacy_sonnet_one_m: Option<bool>,
+    #[serde(rename = "opusOneM", default, skip_serializing)]
+    pub legacy_opus_one_m: Option<bool>,
+    #[serde(rename = "haikuOneM", default, skip_serializing)]
+    pub legacy_haiku_one_m: Option<bool>,
+}
+
+impl ClaudeDesktopModelConfig {
+    /// 路由表：新形状优先；否则把旧版扁平字段迁移成三档角色路由；都没有时返回空。
+    fn effective_routes(&self) -> HashMap<String, ClaudeDesktopModelRoute> {
+        if !self.routes.is_empty() {
+            return self.routes.clone();
+        }
+        let label = self
+            .legacy_label_override
+            .clone()
+            .filter(|value| !value.trim().is_empty());
+        [
+            (
+                "claude-sonnet-5",
+                self.legacy_sonnet_model.clone(),
+                self.legacy_sonnet_one_m,
+            ),
+            (
+                "claude-opus-5",
+                self.legacy_opus_model.clone(),
+                self.legacy_opus_one_m,
+            ),
+            (
+                "claude-haiku-4-5",
+                self.legacy_haiku_model.clone(),
+                self.legacy_haiku_one_m,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(route_id, model, supports_1m)| {
+            let model = model.filter(|value| !value.trim().is_empty())?;
+            Some((
+                route_id.to_string(),
+                ClaudeDesktopModelRoute {
+                    model,
+                    label_override: label.clone(),
+                    supports_1m: supports_1m.filter(|value| *value),
+                },
+            ))
+        })
+        .collect()
+    }
+}
+
+/// Desktop 默认角色路由（与 `claude_desktop_config::DEFAULT_PROXY_ROUTES` 同序同 id）。
+const DEFAULT_DESKTOP_ROUTES: &[&str] = &[
+    "claude-sonnet-5",
+    "claude-opus-5",
+    "claude-haiku-4-5",
+    "claude-fable-5",
+];
+
+/// 统一供应商没填路由表时用的默认四档；直连模式下 model 与 route id 同名，
+/// 映射模式下模型取 Claude 主模型兜底（和单应用表单的默认路由一致）。
+fn default_desktop_routes(
+    fallback_model: &str,
+    direct: bool,
+) -> HashMap<String, ClaudeDesktopModelRoute> {
+    DEFAULT_DESKTOP_ROUTES
+        .iter()
+        .map(|route_id| {
+            (
+                (*route_id).to_string(),
+                ClaudeDesktopModelRoute {
+                    model: if direct {
+                        (*route_id).to_string()
+                    } else {
+                        fallback_model.to_string()
+                    },
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            )
+        })
+        .collect()
 }
 
 /// Grok Build 模型配置
@@ -741,6 +983,9 @@ pub struct GrokBuildModelConfig {
     /// 上游协议：responses / chat_completions / anthropic_messages
     #[serde(rename = "apiBackend", skip_serializing_if = "Option::is_none")]
     pub api_backend: Option<String>,
+    /// 写入 TOML 的上下文窗口
+    #[serde(rename = "contextWindow", skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 /// 各应用的模型配置
@@ -758,6 +1003,21 @@ pub struct UniversalProviderModels {
     pub grokbuild: Option<GrokBuildModelConfig>,
 }
 
+/// 供应商可用模型的一条：`/v1/models` 的 id 配上 models.dev 的名称和上下文窗口。
+///
+/// 统一供应商所有应用共用这一份列表，表单里的模型字段只从这里选。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AvailableModel {
+    /// 模型 id，直接拿去填各应用的模型字段。
+    pub id: String,
+    /// 显示名：models.dev 的 `name`，取不到时回退成 id。
+    #[serde(rename = "displayName", skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// 上下文窗口：models.dev 的 `limit.context`，取不到就不写。
+    #[serde(rename = "contextWindow", skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+}
+
 /// 统一供应商（跨应用共享配置）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniversalProvider {
@@ -765,9 +1025,6 @@ pub struct UniversalProvider {
     pub id: String,
     /// 供应商名称
     pub name: String,
-    /// 供应商类型（如 "newapi", "custom"）
-    #[serde(rename = "providerType")]
-    pub provider_type: String,
     /// 应用启用状态
     pub apps: UniversalProviderApps,
     /// API 基础地址
@@ -779,6 +1036,13 @@ pub struct UniversalProvider {
     /// 各应用的模型配置
     #[serde(default)]
     pub models: UniversalProviderModels,
+    /// 从 `/v1/models` 拉取、再用 models.dev 补全的可用模型列表。所有应用共用。
+    #[serde(
+        rename = "availableModels",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub available_models: Vec<AvailableModel>,
     /// 网站链接
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "websiteUrl")]
@@ -808,17 +1072,10 @@ pub struct UniversalProvider {
 
 impl UniversalProvider {
     /// 创建新的统一供应商
-    pub fn new(
-        id: String,
-        name: String,
-        provider_type: String,
-        base_url: String,
-        api_key: String,
-    ) -> Self {
+    pub fn new(id: String, name: String, base_url: String, api_key: String) -> Self {
         Self {
             id,
             name,
-            provider_type,
             apps: UniversalProviderApps::default(),
             base_url,
             api_key,
@@ -830,6 +1087,7 @@ impl UniversalProvider {
             meta: None,
             created_at: Some(chrono::Utc::now().timestamp_millis()),
             sort_index: None,
+            available_models: Vec::new(),
         }
     }
 
@@ -852,17 +1110,132 @@ impl UniversalProvider {
         let opus = models
             .and_then(|m| m.opus_model.clone())
             .unwrap_or_else(|| model.clone());
+        let fable = models
+            .and_then(|m| m.fable_model.clone())
+            .unwrap_or_else(|| model.clone());
 
-        let settings_config = serde_json::json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": self.base_url,
-                "ANTHROPIC_AUTH_TOKEN": self.api_key,
-                "ANTHROPIC_MODEL": model,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": opus,
+        // 1M 声明和单应用表单同一个标记：模型名末尾的 `[1M]`。
+        let one_m = |value: &str, flag: Option<bool>| -> String {
+            if flag == Some(true) && !value.trim().is_empty() {
+                format!("{}[1M]", value.trim_end())
+            } else {
+                value.to_string()
             }
-        });
+        };
+        let flag = |pick: fn(&ClaudeModelConfig) -> Option<bool>| -> Option<bool> {
+            models.and_then(pick)
+        };
+
+        let mut env = serde_json::Map::new();
+        let auth_field = models
+            .and_then(|m| m.api_key_field.clone())
+            .filter(|f| f == "ANTHROPIC_API_KEY")
+            .unwrap_or_else(|| "ANTHROPIC_AUTH_TOKEN".to_string());
+        env.insert("ANTHROPIC_BASE_URL".into(), json!(self.base_url));
+        env.insert(auth_field, json!(self.api_key));
+        env.insert(
+            "ANTHROPIC_MODEL".into(),
+            json!(one_m(&model, flag(|m| m.model_one_m))),
+        );
+        env.insert(
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL".into(),
+            json!(one_m(&haiku, flag(|m| m.haiku_model_one_m))),
+        );
+        env.insert(
+            "ANTHROPIC_DEFAULT_SONNET_MODEL".into(),
+            json!(one_m(&sonnet, flag(|m| m.sonnet_model_one_m))),
+        );
+        env.insert(
+            "ANTHROPIC_DEFAULT_OPUS_MODEL".into(),
+            json!(one_m(&opus, flag(|m| m.opus_model_one_m))),
+        );
+        env.insert(
+            "ANTHROPIC_DEFAULT_FABLE_MODEL".into(),
+            json!(one_m(&fable, flag(|m| m.fable_model_one_m))),
+        );
+        // 显示名只影响 /model 菜单，没填就不写。
+        for (key, pick) in [
+            ("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", 0usize),
+            ("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", 1),
+            ("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", 2),
+            ("ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", 3),
+        ] {
+            let name = models.and_then(|m| {
+                [
+                    m.haiku_model_name.clone(),
+                    m.sonnet_model_name.clone(),
+                    m.opus_model_name.clone(),
+                    m.fable_model_name.clone(),
+                ][pick]
+                    .clone()
+            });
+            if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
+                env.insert(key.into(), json!(name));
+            }
+        }
+        if let Some(name) = models
+            .and_then(|m| m.model_name.clone())
+            .filter(|n| !n.trim().is_empty())
+        {
+            env.insert("ANTHROPIC_MODEL_NAME".into(), json!(name));
+        }
+        if let Some(subagent) = models
+            .and_then(|m| m.subagent_model.clone())
+            .filter(|s| !s.trim().is_empty())
+        {
+            env.insert(
+                "CLAUDE_CODE_SUBAGENT_MODEL".into(),
+                json!(one_m(&subagent, flag(|m| m.subagent_model_one_m))),
+            );
+        }
+        // 上游兼容开关：都是供应商独有字段，切入时写、切走时删（floor.rs 的
+        // CLAUDE_EXCLUSIVE_ENV 已列出这三个键）。
+        for (key, value) in [
+            (
+                "ENABLE_TOOL_SEARCH",
+                models.and_then(|m| m.enable_tool_search),
+            ),
+            (
+                "CLAUDE_CODE_DISABLE_ARTIFACT",
+                models.and_then(|m| m.disable_artifact),
+            ),
+            (
+                "CLAUDE_CODE_AUTO_MODE_SERVER",
+                models.and_then(|m| m.disable_auto_mode_server),
+            ),
+        ] {
+            match value {
+                // 取值和单应用表单的开关一致：tool search 写 "true"，auto mode 的
+                // 服务端检查是「关掉」语义写 "0"，其余写 "1"。
+                Some(true) if key == "ENABLE_TOOL_SEARCH" => {
+                    env.insert(key.into(), json!("true"));
+                }
+                Some(true) if key == "CLAUDE_CODE_AUTO_MODE_SERVER" => {
+                    env.insert(key.into(), json!("0"));
+                }
+                Some(true) => {
+                    env.insert(key.into(), json!("1"));
+                }
+                _ => {}
+            }
+        }
+
+        let settings_config = serde_json::json!({ "env": env });
+
+        // 上游协议、完整 URL、User-Agent、请求覆盖都是这个应用的专属设置，存在 meta 里。
+        // 以 per-app 配置为准（包括清空）：用户把某个选项去掉后，子卡不能留着旧值。
+        let mut meta = self.meta.clone().unwrap_or_default();
+        meta.api_format = models.and_then(|m| m.api_format.clone());
+        meta.api_key_field = models
+            .and_then(|m| m.api_key_field.clone())
+            .filter(|f| f == "ANTHROPIC_API_KEY");
+        meta.is_full_url = models.and_then(|m| m.is_full_url).filter(|v| *v);
+        meta.custom_user_agent = models
+            .and_then(|m| m.custom_user_agent.clone())
+            .filter(|ua| !ua.trim().is_empty());
+        meta.local_proxy_request_overrides = models
+            .and_then(|m| m.request_overrides.clone())
+            .filter(|overrides| !overrides.is_empty());
 
         Some(Provider {
             id: format!("universal-claude-{}", self.id),
@@ -873,7 +1246,7 @@ impl UniversalProvider {
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: Some(meta),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -908,26 +1281,114 @@ impl UniversalProvider {
             base_trimmed.to_string()
         };
 
+        // 远程压缩靠把供应商表的名字写成 OpenAI 触发（和单应用表单同一个开关）。
+        let provider_table_name = if models.and_then(|m| m.remote_compaction) == Some(true) {
+            "OpenAI"
+        } else {
+            "NewAPI"
+        };
+
         // 生成 Codex 的 config.toml 内容
-        let config_toml = format!(
+        //
+        // 顶层字段必须先写、再写 `[model_providers.custom]`：TOML 里表头之后的键属于
+        // 那张表，写在后面会被解析成 `model_providers.custom.model_context_window`。
+        let mut config_toml = format!(
             r#"model_provider = "custom"
 model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
-disable_response_storage = true
+disable_response_storage = true"#
+        );
+        // 1M 上下文窗口和压缩阈值是顶层字段，勾了才写。
+        if models.and_then(|m| m.context_window_one_m) == Some(true) {
+            config_toml.push_str("\nmodel_context_window = 1000000");
+            let limit = models.and_then(|m| m.auto_compact_limit).unwrap_or(900_000);
+            config_toml.push_str(&format!("\nmodel_auto_compact_token_limit = {limit}"));
+        } else if let Some(limit) = models.and_then(|m| m.auto_compact_limit) {
+            config_toml.push_str(&format!("\nmodel_auto_compact_token_limit = {limit}"));
+        }
+        config_toml.push_str(&format!(
+            r#"
 
 [model_providers.custom]
-name = "NewAPI"
+name = "{provider_table_name}"
 base_url = "{codex_base_url}"
 wire_api = "responses"
 requires_openai_auth = true"#
-        );
+        ));
+        // 子代理模型是嵌套关键字段（`floor.rs` 的 CODEX_FLOOR_NESTED）：整张表放在最后，
+        // 免得后面的表头把它的键收进别的表。
+        if let Some(subagent) = models
+            .and_then(|m| m.subagent_model.as_ref())
+            .filter(|s| !s.trim().is_empty())
+        {
+            config_toml.push_str(&format!(
+                "\n\n[agents]\ndefault_subagent_model = \"{}\"",
+                subagent.trim()
+            ));
+            if let Some(effort) = models
+                .and_then(|m| m.subagent_reasoning_effort.as_ref())
+                .filter(|s| !s.trim().is_empty())
+            {
+                config_toml.push_str(&format!(
+                    "\ndefault_subagent_reasoning_effort = \"{}\"",
+                    effort.trim()
+                ));
+            }
+        }
 
-        let settings_config = serde_json::json!({
+        let mut settings_config = serde_json::json!({
             "auth": {
                 "OPENAI_API_KEY": self.api_key
             },
             "config": config_toml
         });
+        // 模型目录：用户填了行就用它；没填时用统一供应商的可用模型列表自动生成，
+        // 名称与上下文窗口来自拉取时 models.dev 的补全值。两者都没有就不写目录
+        // （和没配区分开）。
+        let catalog = models
+            .map(|m| m.catalog_models.clone())
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| {
+                self.available_models
+                    .iter()
+                    // 手加的空行（id 还没填）不进目录。
+                    .filter(|model| !model.id.trim().is_empty())
+                    .map(|model| {
+                        let mut row = serde_json::json!({ "model": model.id });
+                        if let Some(name) = model.display_name.as_ref() {
+                            row["displayName"] = serde_json::json!(name);
+                        }
+                        if let Some(window) = model.context_window {
+                            row["contextWindow"] = serde_json::json!(window);
+                        }
+                        row
+                    })
+                    .collect()
+            });
+        if !catalog.is_empty() {
+            settings_config["modelCatalog"] = serde_json::json!({ "models": catalog });
+        }
+
+        let mut meta = self.meta.clone().unwrap_or_default();
+        meta.api_format = models.and_then(|m| m.api_format.clone());
+        meta.api_key_field = models
+            .and_then(|m| m.api_key_field.clone())
+            .filter(|f| f == "ANTHROPIC_API_KEY");
+        meta.is_full_url = models.and_then(|m| m.is_full_url).filter(|v| *v);
+        meta.custom_user_agent = models
+            .and_then(|m| m.custom_user_agent.clone())
+            .filter(|ua| !ua.trim().is_empty());
+        meta.local_proxy_request_overrides = models
+            .and_then(|m| m.request_overrides.clone())
+            .filter(|overrides| !overrides.is_empty());
+        meta.codex_chat_reasoning = models.and_then(|m| m.chat_reasoning.clone());
+        meta.prompt_cache_routing = models
+            .and_then(|m| m.prompt_cache_routing.clone())
+            .filter(|r| r != "auto");
+        meta.impersonate_claude_code = models
+            .and_then(|m| m.impersonate_claude_code)
+            .filter(|v| *v);
+        meta.max_output_tokens = models.and_then(|m| m.max_output_tokens).filter(|t| *t > 0);
 
         Some(Provider {
             id: format!("universal-codex-{}", self.id),
@@ -938,7 +1399,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: Some(meta),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -956,13 +1417,24 @@ requires_openai_auth = true"#
             .and_then(|m| m.model.clone())
             .unwrap_or_else(|| "gemini-2.5-pro".to_string());
 
-        let settings_config = serde_json::json!({
-            "env": {
-                "GOOGLE_GEMINI_BASE_URL": self.base_url,
-                "GEMINI_API_KEY": self.api_key,
-                "GEMINI_MODEL": model,
+        let mut env = serde_json::Map::new();
+        env.insert("GOOGLE_GEMINI_BASE_URL".into(), json!(self.base_url));
+        env.insert("GEMINI_API_KEY".into(), json!(self.api_key));
+        env.insert("GEMINI_MODEL".into(), json!(model));
+        // 用户在 .env 编辑器里加的键跟着这个应用一起切换。
+        if let Some(extra) = models.and_then(|m| m.env.clone()) {
+            for (key, value) in extra {
+                env.insert(key, json!(value));
             }
-        });
+        }
+
+        let mut settings_config = serde_json::json!({ "env": env });
+        // settings.json 块同理；`model.name` 是关键字段，但用户显式填的优先。
+        if let Some(config) = models.and_then(|m| m.config.clone()) {
+            if config.as_object().is_some_and(|o| !o.is_empty()) {
+                settings_config["config"] = config;
+            }
+        }
 
         Some(Provider {
             id: format!("universal-gemini-{}", self.id),
@@ -982,57 +1454,46 @@ requires_openai_auth = true"#
 
     /// 生成 Claude Desktop 供应商配置
     ///
-    /// Claude Desktop 只接受三档角色 ID，统一供应商在这里始终走「模型映射」模式：
-    /// 三个角色各映射一个上游模型，全部留空时共用主模型。
+    /// 接入方式由 per-app 配置决定：直连把角色 ID 原样交给 Desktop（供应商自己认
+    /// claude-* 角色），模型映射经本地路由把角色 ID 转成上游模型。路由表留空时用
+    /// 默认四档（Sonnet / Opus / Haiku / Fable），与单应用表单一致。
     pub fn to_claude_desktop_provider(&self) -> Option<Provider> {
         if !self.apps.claude_desktop {
             return None;
         }
 
         let models = self.models.claude_desktop.as_ref();
+        let mode = models
+            .and_then(|m| m.mode.clone())
+            .unwrap_or(ClaudeDesktopMode::Proxy);
+        let direct = matches!(mode, ClaudeDesktopMode::Direct);
         let fallback = self
             .models
             .claude
             .as_ref()
             .and_then(|m| m.model.clone())
             .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
-        let sonnet = models
-            .and_then(|m| m.sonnet_model.clone())
-            .unwrap_or_else(|| fallback.clone());
-        let opus = models
-            .and_then(|m| m.opus_model.clone())
-            .unwrap_or_else(|| sonnet.clone());
-        let haiku = models
-            .and_then(|m| m.haiku_model.clone())
-            .unwrap_or_else(|| sonnet.clone());
-        let label_override = models.and_then(|m| m.label_override.clone());
 
-        let route = |route_id: &str, model: &str| {
-            let mut route = ClaudeDesktopModelRoute {
-                model: model.to_string(),
-                label_override: None,
-                supports_1m: None,
-            };
-            if let Some(label) = label_override.clone() {
-                if !label.trim().is_empty() {
-                    route.label_override = Some(label);
-                }
+        // 路由表：新形状优先，旧版扁平字段自动迁移；都没有时用默认四档。
+        let mut routes = models
+            .map(ClaudeDesktopModelConfig::effective_routes)
+            .filter(|routes| !routes.is_empty())
+            .unwrap_or_else(|| default_desktop_routes(&fallback, direct));
+        // 直连模式不能映射模型：model 必须与角色 ID 同名，否则 Desktop 会拒收整组。
+        if direct {
+            for (route_id, route) in routes.iter_mut() {
+                route.model = route_id.clone();
             }
-            (route_id.to_string(), route)
-        };
-
-        let routes: HashMap<String, ClaudeDesktopModelRoute> = [
-            // route id 与后端 DEFAULT_PROXY_ROUTES / 前端 ROLE_ROUTE_IDS 一致
-            route("claude-sonnet-5", &sonnet),
-            route("claude-opus-5", &opus),
-            route("claude-haiku-4-5", &haiku),
-        ]
-        .into_iter()
-        .collect();
+        }
 
         let mut meta = self.meta.clone().unwrap_or_default();
-        meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
+        meta.claude_desktop_mode = Some(mode);
         meta.claude_desktop_model_routes = routes;
+        meta.api_format = if direct {
+            None
+        } else {
+            models.and_then(|m| m.api_format.clone())
+        };
         // 统一供应商的子卡不走端点自动选择，地址由统一供应商驱动。
         meta.endpoint_auto_select = None;
         meta.is_full_url = None;
@@ -1080,7 +1541,10 @@ requires_openai_auth = true"#
             .filter(|m| !m.trim().is_empty())
             .unwrap_or_else(|| "responses".to_string());
 
-        let context_window = 500_000;
+        let context_window = models
+            .and_then(|m| m.context_window)
+            .filter(|w| *w > 0)
+            .unwrap_or(500_000);
         let config = format!(
             r#"[models]
 default = "{profile}"
@@ -1126,10 +1590,10 @@ context_window = {context_window}
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeDesktopModelConfig, ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig,
-        GeminiModelConfig, GrokBuildModelConfig, LocalProxyRequestOverrides, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider, UniversalProviderApps,
-        UniversalProviderModels,
+        AvailableModel, ClaudeDesktopMode, ClaudeDesktopModelConfig, ClaudeDesktopModelRoute,
+        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
+        GrokBuildModelConfig, LocalProxyRequestOverrides, Provider, ProviderManager, ProviderMeta,
+        UniversalProvider, UniversalProviderApps, UniversalProviderModels,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1387,7 +1851,6 @@ mod tests {
         let mut universal = UniversalProvider::new(
             "u1".to_string(),
             "Universal".to_string(),
-            "newapi".to_string(),
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
@@ -1397,6 +1860,10 @@ mod tests {
             haiku_model: Some("claude-haiku".to_string()),
             sonnet_model: Some("claude-sonnet".to_string()),
             opus_model: Some("claude-opus".to_string()),
+            fable_model: Some("claude-fable".to_string()),
+            fable_model_one_m: Some(true),
+            fable_model_name: Some("Fable Display".to_string()),
+            ..Default::default()
         });
 
         let provider = universal.to_claude_provider().expect("claude provider");
@@ -1432,6 +1899,21 @@ mod tests {
                 .and_then(|item| item.as_str()),
             Some("claude-opus")
         );
+        // Fable 档和 Sonnet/Opus/Haiku 一样是第一类角色，1M 标记与显示名都要写出来
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("claude-fable[1M]")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
+                .and_then(|item| item.as_str()),
+            Some("Fable Display")
+        );
     }
 
     #[test]
@@ -1439,7 +1921,6 @@ mod tests {
         let universal = UniversalProvider::new(
             "u1".to_string(),
             "Universal".to_string(),
-            "newapi".to_string(),
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
@@ -1452,7 +1933,6 @@ mod tests {
         let mut universal = UniversalProvider::new(
             "u1".to_string(),
             "Universal".to_string(),
-            "newapi".to_string(),
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
@@ -1460,6 +1940,7 @@ mod tests {
         universal.models.codex = Some(CodexModelConfig {
             model: Some("gpt-4o-mini".to_string()),
             reasoning_effort: Some("low".to_string()),
+            ..Default::default()
         });
 
         let provider = universal.to_codex_provider().expect("codex provider");
@@ -1484,7 +1965,6 @@ mod tests {
         let mut universal = UniversalProvider::new(
             "u1".to_string(),
             "Universal".to_string(),
-            "newapi".to_string(),
             "https://api.example.com/v1".to_string(),
             "api-key".to_string(),
         );
@@ -1505,7 +1985,6 @@ mod tests {
         let universal = UniversalProvider::new(
             "u1".to_string(),
             "Universal".to_string(),
-            "newapi".to_string(),
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
@@ -1518,7 +1997,6 @@ mod tests {
         let mut universal = UniversalProvider::new(
             "u1".to_string(),
             "Universal".to_string(),
-            "newapi".to_string(),
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
@@ -1540,13 +2018,13 @@ mod tests {
         let mut universal = UniversalProvider::new(
             "u1".to_string(),
             "Universal".to_string(),
-            "newapi".to_string(),
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
         universal.apps.gemini = true;
         universal.models.gemini = Some(GeminiModelConfig {
             model: Some("gemini-custom".to_string()),
+            ..Default::default()
         });
 
         let provider = universal.to_gemini_provider().expect("gemini provider");
@@ -1565,7 +2043,6 @@ mod tests {
         let mut p = UniversalProvider::new(
             "id".to_string(),
             "Test".to_string(),
-            "custom".to_string(),
             "https://api.openai.com".to_string(),
             "sk-test".to_string(),
         );
@@ -1586,7 +2063,6 @@ mod tests {
         let mut p = UniversalProvider::new(
             "id".to_string(),
             "Test".to_string(),
-            "custom".to_string(),
             "https://example.com/openai".to_string(),
             "sk-test".to_string(),
         );
@@ -1752,7 +2228,6 @@ mod tests {
         let mut universal = UniversalProvider::new(
             id.to_string(),
             "Universal".to_string(),
-            "newapi".to_string(),
             "https://api.example.com/".to_string(),
             "api-key".to_string(),
         );
@@ -1762,16 +2237,33 @@ mod tests {
     }
 
     #[test]
-    fn universal_provider_to_claude_desktop_provider_maps_three_roles() {
+    fn universal_provider_to_claude_desktop_provider_maps_roles() {
         let universal = universal_with_apps(
             "u1",
             |apps| apps.claude_desktop = true,
             |models| {
                 models.claude_desktop = Some(ClaudeDesktopModelConfig {
-                    sonnet_model: Some("up-sonnet".to_string()),
-                    opus_model: Some("up-opus".to_string()),
-                    haiku_model: Some("up-haiku".to_string()),
-                    label_override: Some("Gateway".to_string()),
+                    mode: Some(ClaudeDesktopMode::Proxy),
+                    api_format: Some("openai_chat".to_string()),
+                    routes: HashMap::from([
+                        (
+                            "claude-sonnet-5".to_string(),
+                            ClaudeDesktopModelRoute {
+                                model: "up-sonnet".to_string(),
+                                label_override: Some("Gateway".to_string()),
+                                supports_1m: Some(true),
+                            },
+                        ),
+                        (
+                            "claude-opus-5".to_string(),
+                            ClaudeDesktopModelRoute {
+                                model: "up-opus".to_string(),
+                                label_override: None,
+                                supports_1m: None,
+                            },
+                        ),
+                    ]),
+                    ..Default::default()
                 })
             },
         );
@@ -1790,25 +2282,58 @@ mod tests {
             Some("https://api.example.com")
         );
         let meta = provider.meta.expect("meta");
-        assert_eq!(
-            meta.claude_desktop_mode,
-            Some(crate::provider::ClaudeDesktopMode::Proxy)
-        );
+        assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
+        // 映射模式把上游格式透给代理
+        assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
         let routes = &meta.claude_desktop_model_routes;
-        assert_eq!(routes.len(), 3, "{routes:?}");
-        for (route, expected) in [
-            ("claude-sonnet-5", "up-sonnet"),
-            ("claude-opus-5", "up-opus"),
-            ("claude-haiku-4-5", "up-haiku"),
-        ] {
-            let entry = routes.get(route).unwrap_or_else(|| panic!("{route}"));
-            assert_eq!(entry.model, expected);
-            assert_eq!(entry.label_override.as_deref(), Some("Gateway"));
-        }
+        // 用户填了几档就只写几档，不再被补齐成固定三档
+        assert_eq!(routes.len(), 2, "{routes:?}");
+        let sonnet = routes.get("claude-sonnet-5").expect("sonnet");
+        assert_eq!(sonnet.model, "up-sonnet");
+        assert_eq!(sonnet.label_override.as_deref(), Some("Gateway"));
+        assert_eq!(sonnet.supports_1m, Some(true));
+        assert_eq!(routes["claude-opus-5"].model, "up-opus");
     }
 
     #[test]
-    fn universal_provider_to_claude_desktop_provider_falls_back_to_claude_model() {
+    fn universal_provider_to_claude_desktop_provider_direct_forces_role_ids() {
+        let universal = universal_with_apps(
+            "u1",
+            |apps| apps.claude_desktop = true,
+            |models| {
+                models.claude_desktop = Some(ClaudeDesktopModelConfig {
+                    mode: Some(ClaudeDesktopMode::Direct),
+                    // 直连不允许映射，填了上游模型也要被角色 ID 顶掉
+                    api_format: Some("openai_chat".to_string()),
+                    routes: HashMap::from([(
+                        "claude-sonnet-5".to_string(),
+                        ClaudeDesktopModelRoute {
+                            model: "up-sonnet".to_string(),
+                            label_override: None,
+                            supports_1m: None,
+                        },
+                    )]),
+                    ..Default::default()
+                })
+            },
+        );
+
+        let meta = universal
+            .to_claude_desktop_provider()
+            .expect("provider")
+            .meta
+            .expect("meta");
+        assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Direct));
+        // 直连不能带 apiFormat：Desktop 只接受原生 Anthropic
+        assert_eq!(meta.api_format, None);
+        assert_eq!(
+            meta.claude_desktop_model_routes["claude-sonnet-5"].model,
+            "claude-sonnet-5"
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_claude_desktop_provider_defaults_to_four_proxy_routes() {
         let universal = universal_with_apps(
             "u1",
             |apps| apps.claude_desktop = true,
@@ -1820,22 +2345,109 @@ mod tests {
             },
         );
 
-        let provider = universal.to_claude_desktop_provider().expect("provider");
-        let meta = provider.meta.expect("meta");
-        for route in ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"] {
+        let meta = universal
+            .to_claude_desktop_provider()
+            .expect("provider")
+            .meta
+            .expect("meta");
+        // 没填路由表时用默认四档（含 Fable），全部映射到 Claude 主模型
+        assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
+        let routes = &meta.claude_desktop_model_routes;
+        assert_eq!(routes.len(), 4, "{routes:?}");
+        for route in [
+            "claude-sonnet-5",
+            "claude-opus-5",
+            "claude-haiku-4-5",
+            "claude-fable-5",
+        ] {
             assert_eq!(
-                meta.claude_desktop_model_routes
-                    .get(route)
-                    .map(|entry| entry.model.as_str()),
+                routes.get(route).map(|entry| entry.model.as_str()),
                 Some("claude-main"),
                 "{route}"
             );
         }
-        // 没有单独写菜单显示名时不塞空 label
-        assert!(meta
-            .claude_desktop_model_routes
-            .values()
-            .all(|entry| entry.label_override.is_none()));
+        // 默认档不带菜单显示名
+        assert!(routes.values().all(|entry| entry.label_override.is_none()));
+    }
+
+    #[test]
+    fn universal_desktop_provider_migrates_legacy_flat_models() {
+        // 4.0.8 及更早存的是扁平的三档 + 共用菜单显示名，投影时要迁移成角色路由
+        let universal = universal_with_apps(
+            "legacy",
+            |apps| apps.claude_desktop = true,
+            |models| {
+                models.claude_desktop = Some(ClaudeDesktopModelConfig {
+                    legacy_sonnet_model: Some("old-sonnet".into()),
+                    legacy_opus_model: Some("old-opus".into()),
+                    legacy_haiku_model: Some("old-haiku".into()),
+                    legacy_label_override: Some("OldGateway".into()),
+                    legacy_sonnet_one_m: Some(true),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let routes = universal
+            .to_claude_desktop_provider()
+            .unwrap()
+            .meta
+            .unwrap()
+            .claude_desktop_model_routes;
+        assert_eq!(routes["claude-sonnet-5"].model, "old-sonnet");
+        assert_eq!(routes["claude-opus-5"].model, "old-opus");
+        assert_eq!(routes["claude-haiku-4-5"].model, "old-haiku");
+        // 共用的显示名和 1M 声明一起迁移
+        assert_eq!(
+            routes["claude-sonnet-5"].label_override.as_deref(),
+            Some("OldGateway")
+        );
+        assert_eq!(routes["claude-sonnet-5"].supports_1m, Some(true));
+        // 没填的档位不凭空生成
+        assert!(!routes.contains_key("claude-fable-5"));
+    }
+
+    #[test]
+    fn universal_desktop_provider_new_routes_win_over_legacy() {
+        let universal = universal_with_apps(
+            "both",
+            |apps| apps.claude_desktop = true,
+            |models| {
+                models.claude_desktop = Some(ClaudeDesktopModelConfig {
+                    routes: HashMap::from([(
+                        "claude-sonnet-5".to_string(),
+                        ClaudeDesktopModelRoute {
+                            model: "new-sonnet".to_string(),
+                            label_override: None,
+                            supports_1m: None,
+                        },
+                    )]),
+                    legacy_sonnet_model: Some("old-sonnet".into()),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let routes = universal
+            .to_claude_desktop_provider()
+            .unwrap()
+            .meta
+            .unwrap()
+            .claude_desktop_model_routes;
+        assert_eq!(routes["claude-sonnet-5"].model, "new-sonnet");
+    }
+
+    #[test]
+    fn universal_desktop_provider_legacy_fields_are_not_written_back() {
+        // 旧字段只读：序列化出去的记录里不能带 legacy 键
+        let config = ClaudeDesktopModelConfig {
+            legacy_sonnet_model: Some("old-sonnet".into()),
+            legacy_label_override: Some("Old".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert!(json.get("sonnetModel").is_none(), "{json}");
+        assert!(json.get("labelOverride").is_none(), "{json}");
     }
 
     #[test]
@@ -1854,6 +2466,7 @@ mod tests {
                     model: Some("grok-profile".to_string()),
                     upstream_model: Some("grok-upstream".to_string()),
                     api_backend: Some("chat_completions".to_string()),
+                    ..Default::default()
                 })
             },
         );
@@ -1913,5 +2526,425 @@ mod tests {
         assert!(apps.claude && apps.codex && apps.gemini);
         assert!(!apps.claude_desktop);
         assert!(!apps.grokbuild);
+    }
+
+    #[test]
+    fn universal_claude_provider_emits_advanced_fields() {
+        let universal = universal_with_apps(
+            "adv",
+            |apps| apps.claude = true,
+            |models| {
+                models.claude = Some(ClaudeModelConfig {
+                    model: Some("claude-opus-5".into()),
+                    sonnet_model: Some("claude-sonnet-5".into()),
+                    sonnet_model_one_m: Some(true),
+                    sonnet_model_name: Some("Sonnet 5".into()),
+                    subagent_model: Some("claude-haiku-4-5".into()),
+                    api_format: Some("openai_responses".into()),
+                    api_key_field: Some("ANTHROPIC_API_KEY".into()),
+                    is_full_url: Some(true),
+                    custom_user_agent: Some("relay/1.0".into()),
+                    request_overrides: Some(LocalProxyRequestOverrides {
+                        headers: HashMap::from([("X-Provider".to_string(), "cc".to_string())]),
+                        body: None,
+                    }),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let provider = universal.to_claude_provider().expect("claude provider");
+        let env = &provider.settings_config["env"];
+        // 认证字段名跟着选项走，不再是写死的 ANTHROPIC_AUTH_TOKEN
+        assert_eq!(env["ANTHROPIC_API_KEY"], json!("api-key"));
+        assert!(env.get("ANTHROPIC_AUTH_TOKEN").is_none());
+        // 1M 用模型名末尾的标记表达
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            json!("claude-sonnet-5[1M]")
+        );
+        assert_eq!(env["ANTHROPIC_MODEL"], json!("claude-opus-5"));
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"],
+            json!("Sonnet 5")
+        );
+        assert_eq!(env["CLAUDE_CODE_SUBAGENT_MODEL"], json!("claude-haiku-4-5"));
+
+        let meta = provider.meta.expect("meta");
+        assert_eq!(meta.api_format.as_deref(), Some("openai_responses"));
+        assert_eq!(meta.api_key_field.as_deref(), Some("ANTHROPIC_API_KEY"));
+        assert_eq!(meta.is_full_url, Some(true));
+        assert_eq!(meta.custom_user_agent.as_deref(), Some("relay/1.0"));
+        assert_eq!(
+            meta.local_proxy_request_overrides
+                .expect("overrides")
+                .headers["X-Provider"],
+            "cc"
+        );
+    }
+
+    #[test]
+    fn universal_claude_provider_emits_upstream_compat_switches() {
+        // 三个随供应商切换的兼容开关，取值和单应用表单一致
+        let universal = universal_with_apps(
+            "compat",
+            |apps| apps.claude = true,
+            |models| {
+                models.claude = Some(ClaudeModelConfig {
+                    model: Some("claude-opus-5".into()),
+                    enable_tool_search: Some(true),
+                    disable_artifact: Some(true),
+                    disable_auto_mode_server: Some(true),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let env = &universal.to_claude_provider().unwrap().settings_config["env"];
+        assert_eq!(env["ENABLE_TOOL_SEARCH"], json!("true"));
+        assert_eq!(env["CLAUDE_CODE_DISABLE_ARTIFACT"], json!("1"));
+        // auto mode 的服务端检查是「关掉」语义
+        assert_eq!(env["CLAUDE_CODE_AUTO_MODE_SERVER"], json!("0"));
+    }
+
+    #[test]
+    fn universal_claude_provider_omits_upstream_compat_switches_when_off() {
+        let universal = universal_with_apps(
+            "compat-off",
+            |apps| apps.claude = true,
+            |models| {
+                models.claude = Some(ClaudeModelConfig {
+                    model: Some("claude-opus-5".into()),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let env = &universal.to_claude_provider().unwrap().settings_config["env"];
+        for key in [
+            "ENABLE_TOOL_SEARCH",
+            "CLAUDE_CODE_DISABLE_ARTIFACT",
+            "CLAUDE_CODE_AUTO_MODE_SERVER",
+        ] {
+            assert!(env.get(key).is_none(), "{key} must not be written when off");
+        }
+    }
+
+    #[test]
+    fn universal_claude_provider_clears_advanced_meta_when_options_removed() {
+        // 用户把选项去掉后，子卡不能留着上一版的 meta。
+        let mut universal = universal_with_apps(
+            "adv-clear",
+            |apps| apps.claude = true,
+            |models| {
+                models.claude = Some(ClaudeModelConfig {
+                    model: Some("claude-opus-5".into()),
+                    ..Default::default()
+                });
+            },
+        );
+        universal.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".into()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+
+        let meta = universal.to_claude_provider().unwrap().meta.unwrap();
+        assert_eq!(meta.api_format, None);
+        assert_eq!(meta.is_full_url, None);
+        assert_eq!(meta.api_key_field, None);
+    }
+
+    #[test]
+    fn universal_codex_provider_generates_catalog_from_available_models() {
+        // 表单不再手填目录：没给 catalog_models 时，用可用模型列表自动生成。
+        let mut universal = universal_with_apps(
+            "codex-auto",
+            |apps| apps.codex = true,
+            |models| {
+                models.codex = Some(CodexModelConfig {
+                    model: Some("gpt-5.6-sol".into()),
+                    ..Default::default()
+                });
+            },
+        );
+        universal.available_models = vec![
+            AvailableModel {
+                id: "gpt-5.6-sol".into(),
+                display_name: Some("GPT-5.6 Sol".into()),
+                context_window: Some(1_050_000),
+            },
+            AvailableModel {
+                id: "plain-id".into(),
+                display_name: None,
+                context_window: None,
+            },
+        ];
+
+        let catalog = universal.to_codex_provider().unwrap().settings_config["modelCatalog"]
+            ["models"]
+            .clone();
+        let rows = catalog.as_array().expect("catalog rows");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["model"], json!("gpt-5.6-sol"));
+        assert_eq!(rows[0]["displayName"], json!("GPT-5.6 Sol"));
+        assert_eq!(rows[0]["contextWindow"], json!(1_050_000));
+        // models.dev 没补到的字段就不写，交给后端默认值
+        assert_eq!(rows[1]["model"], json!("plain-id"));
+        assert!(rows[1].get("displayName").is_none());
+        assert!(rows[1].get("contextWindow").is_none());
+    }
+
+    #[test]
+    fn universal_codex_provider_skips_blank_model_ids_in_the_generated_catalog() {
+        // 表单里手加的草稿行 id 还是空的：不能进 /model 目录。
+        let mut universal = universal_with_apps(
+            "codex-blank",
+            |apps| apps.codex = true,
+            |models| {
+                models.codex = Some(CodexModelConfig {
+                    model: Some("gpt-5.6-sol".into()),
+                    ..Default::default()
+                });
+            },
+        );
+        universal.available_models = vec![
+            AvailableModel {
+                id: "  ".into(),
+                display_name: None,
+                context_window: None,
+            },
+            AvailableModel {
+                id: "real-model".into(),
+                display_name: None,
+                context_window: None,
+            },
+        ];
+
+        let rows = universal.to_codex_provider().unwrap().settings_config["modelCatalog"]["models"]
+            .clone();
+        let rows = rows.as_array().expect("catalog rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["model"], json!("real-model"));
+    }
+
+    #[test]
+    fn universal_codex_provider_prefers_explicit_catalog_over_the_model_list() {
+        // 显式给的目录优先，不被可用模型列表盖掉。
+        let mut universal = universal_with_apps(
+            "codex-explicit",
+            |apps| apps.codex = true,
+            |models| {
+                models.codex = Some(CodexModelConfig {
+                    catalog_models: vec![json!({"model": "explicit-only"})],
+                    ..Default::default()
+                });
+            },
+        );
+        universal.available_models = vec![AvailableModel {
+            id: "from-list".into(),
+            display_name: None,
+            context_window: None,
+        }];
+
+        let rows = universal.to_codex_provider().unwrap().settings_config["modelCatalog"]["models"]
+            .clone();
+        assert_eq!(rows.as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["model"], json!("explicit-only"));
+    }
+
+    #[test]
+    fn universal_codex_provider_omits_catalog_when_nothing_is_configured() {
+        // 既没手填也没拉取过：不写目录（和「配了空目录」区分开）。
+        let universal = universal_with_apps("codex-nocatalog", |apps| apps.codex = true, |_| {});
+        let settings = universal.to_codex_provider().unwrap().settings_config;
+        assert!(settings.get("modelCatalog").is_none());
+    }
+
+    #[test]
+    fn universal_codex_provider_emits_config_switches_and_catalog() {
+        let universal = universal_with_apps(
+            "codex-adv",
+            |apps| apps.codex = true,
+            |models| {
+                models.codex = Some(CodexModelConfig {
+                    model: Some("gpt-5.6-sol".into()),
+                    context_window_one_m: Some(true),
+                    remote_compaction: Some(true),
+                    impersonate_claude_code: Some(true),
+                    max_output_tokens: Some(32000),
+                    prompt_cache_routing: Some("enabled".into()),
+                    api_format: Some("anthropic".into()),
+                    subagent_model: Some("gpt-5.6-mini".into()),
+                    subagent_reasoning_effort: Some("low".into()),
+                    catalog_models: vec![json!({"model": "gpt-5.6-sol", "displayName": "Sol"})],
+                    ..Default::default()
+                });
+            },
+        );
+
+        let provider = universal.to_codex_provider().expect("codex provider");
+        let toml = provider.settings_config["config"]
+            .as_str()
+            .expect("toml string");
+        // 远程压缩把供应商表名写成 OpenAI；1M 写顶层窗口和压缩阈值
+        assert!(toml.contains(r#"name = "OpenAI""#), "{toml}");
+        assert!(toml.contains("model_context_window = 1000000"), "{toml}");
+        assert!(
+            toml.contains("model_auto_compact_token_limit = 900000"),
+            "{toml}"
+        );
+        // 子代理模型写在 `[agents]` 表里
+        assert!(
+            toml.contains("[agents]\ndefault_subagent_model = \"gpt-5.6-mini\""),
+            "{toml}"
+        );
+        assert!(
+            toml.contains("default_subagent_reasoning_effort = \"low\""),
+            "{toml}"
+        );
+        // TOML 的表头会吃掉后面的键：窗口字段必须是顶层，不能在 `[model_providers.custom]` 里
+        let doc: toml::Value = toml.parse().expect("valid toml");
+        assert_eq!(
+            doc.get("model_context_window")
+                .and_then(toml::Value::as_integer),
+            Some(1000000),
+            "model_context_window must be top-level, got: {toml}"
+        );
+        assert!(
+            doc.get("model_providers")
+                .and_then(|tables| tables.get("custom"))
+                .and_then(|custom| custom.get("model_context_window"))
+                .is_none(),
+            "model_context_window must not land inside the provider table: {toml}"
+        );
+        assert_eq!(
+            doc.get("agents")
+                .and_then(|agents| agents.get("default_subagent_model"))
+                .and_then(toml::Value::as_str),
+            Some("gpt-5.6-mini")
+        );
+        assert_eq!(
+            provider.settings_config["modelCatalog"]["models"][0]["displayName"],
+            json!("Sol")
+        );
+
+        let meta = provider.meta.expect("meta");
+        assert_eq!(meta.api_format.as_deref(), Some("anthropic"));
+        assert_eq!(meta.impersonate_claude_code, Some(true));
+        assert_eq!(meta.max_output_tokens, Some(32000));
+        assert_eq!(meta.prompt_cache_routing.as_deref(), Some("enabled"));
+    }
+
+    #[test]
+    fn universal_codex_provider_omits_config_switches_when_off() {
+        let universal = universal_with_apps(
+            "codex-off",
+            |apps| apps.codex = true,
+            |models| {
+                models.codex = Some(CodexModelConfig {
+                    model: Some("gpt-5.6-sol".into()),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let provider = universal.to_codex_provider().unwrap();
+        let toml = provider.settings_config["config"].as_str().unwrap();
+        assert!(toml.contains(r#"name = "NewAPI""#), "{toml}");
+        assert!(!toml.contains("model_context_window"), "{toml}");
+        assert!(provider.settings_config.get("modelCatalog").is_none());
+        // promptCacheRouting 的 auto 是默认值，不写进 meta
+        assert_eq!(provider.meta.unwrap().prompt_cache_routing, None);
+    }
+
+    #[test]
+    fn universal_desktop_provider_keeps_per_route_1m() {
+        let universal = universal_with_apps(
+            "desktop-1m",
+            |apps| apps.claude_desktop = true,
+            |models| {
+                models.claude_desktop = Some(ClaudeDesktopModelConfig {
+                    routes: HashMap::from([
+                        (
+                            "claude-sonnet-5".to_string(),
+                            ClaudeDesktopModelRoute {
+                                model: "up-sonnet".to_string(),
+                                label_override: None,
+                                supports_1m: None,
+                            },
+                        ),
+                        (
+                            "claude-opus-5".to_string(),
+                            ClaudeDesktopModelRoute {
+                                model: "up-opus".to_string(),
+                                label_override: None,
+                                supports_1m: Some(true),
+                            },
+                        ),
+                    ]),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let routes = universal
+            .to_claude_desktop_provider()
+            .unwrap()
+            .meta
+            .unwrap()
+            .claude_desktop_model_routes;
+        assert_eq!(routes["claude-opus-5"].supports_1m, Some(true));
+        assert_eq!(routes["claude-sonnet-5"].supports_1m, None);
+    }
+
+    #[test]
+    fn universal_gemini_provider_carries_extra_env_and_settings() {
+        let universal = universal_with_apps(
+            "gemini-extra",
+            |apps| apps.gemini = true,
+            |models| {
+                models.gemini = Some(GeminiModelConfig {
+                    model: Some("gemini-3.6-flash".into()),
+                    env: Some(HashMap::from([(
+                        "GEMINI_CLI_CUSTOM_HEADERS".to_string(),
+                        "X-Test: 1".to_string(),
+                    )])),
+                    config: Some(json!({"telemetry": {"enabled": false}})),
+                });
+            },
+        );
+
+        let provider = universal.to_gemini_provider().unwrap();
+        assert_eq!(
+            provider.settings_config["env"]["GEMINI_CLI_CUSTOM_HEADERS"],
+            json!("X-Test: 1")
+        );
+        assert_eq!(
+            provider.settings_config["config"]["telemetry"]["enabled"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn universal_grokbuild_provider_uses_configured_context_window() {
+        let universal = universal_with_apps(
+            "grok-cw",
+            |apps| apps.grokbuild = true,
+            |models| {
+                models.grokbuild = Some(GrokBuildModelConfig {
+                    model: Some("grok-4.5".into()),
+                    context_window: Some(1_000_000),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let config = universal.to_grokbuild_provider().unwrap().settings_config["config"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(config.contains("context_window = 1000000"), "{config}");
     }
 }

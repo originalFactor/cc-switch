@@ -17,6 +17,7 @@ mod gemini_editor;
 pub(crate) mod grok_direct;
 mod grok_editor;
 mod live;
+pub mod universal_migration;
 mod usage;
 
 use indexmap::IndexMap;
@@ -2200,10 +2201,91 @@ impl ProviderService {
         state: &AppState,
         provider: UniversalProvider,
     ) -> Result<bool, AppError> {
+        // 统一供应商没有 per-app 开关：任何来源（旧版本前端、导入的数据）都归一成
+        // 「五个应用全开」，免得留一份只同步到部分应用、却又没有界面能改回来的记录。
+        let mut provider = provider;
+        if !provider.apps.is_all() {
+            provider.apps = crate::provider::UniversalProviderApps::all();
+        }
         // 保存统一供应商
         state.db.save_universal_provider(&provider)?;
 
         Ok(true)
+    }
+
+    /// 拉取可用模型列表：`/v1/models` 出 id，models.dev 补名称与上下文窗口。
+    ///
+    /// 传 `id` 时用已存的那家供应商的地址/Key 并写回它自己；不传时用传入的地址与 Key
+    /// 现拉（新建场景：记录还没落库，没有 id 可用）。
+    pub async fn refresh_universal_models(
+        state: &AppState,
+        id: Option<&str>,
+        base_url: Option<&str>,
+        api_key: Option<&str>,
+    ) -> Result<Vec<crate::provider::AvailableModel>, AppError> {
+        let stored = match id {
+            Some(id) => Some(
+                state
+                    .db
+                    .get_universal_provider(id)?
+                    .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?,
+            ),
+            None => None,
+        };
+
+        let base_url = stored
+            .as_ref()
+            .map(|provider| provider.base_url.clone())
+            .or_else(|| base_url.map(str::to_string))
+            .ok_or_else(|| AppError::Message("缺少 API 地址，无法获取模型列表".to_string()))?;
+        let api_key = stored
+            .as_ref()
+            .map(|provider| provider.api_key.clone())
+            .or_else(|| api_key.map(str::to_string))
+            .unwrap_or_default();
+
+        // 与单应用表单一致：协议、完整 URL、UA、请求头都取 Claude 那一份配置。
+        let claude = stored
+            .as_ref()
+            .and_then(|provider| provider.models.claude.clone())
+            .unwrap_or_default();
+        let ua = crate::provider::parse_custom_user_agent(claude.custom_user_agent.as_deref())
+            .ok()
+            .flatten();
+        let headers: Option<std::collections::BTreeMap<String, String>> = claude
+            .request_overrides
+            .as_ref()
+            .map(|overrides| overrides.headers.clone())
+            .filter(|headers| !headers.is_empty())
+            .map(|headers| headers.into_iter().collect());
+
+        let fetched = crate::services::model_fetch::fetch_models(
+            &base_url,
+            &api_key,
+            claude.is_full_url.unwrap_or(false),
+            None,
+            ua,
+            claude.api_format.as_deref(),
+            headers.as_ref(),
+        )
+        .await
+        .map_err(|e| AppError::Message(format!("获取模型列表失败: {e}")))?;
+
+        // 去重保序：聚合站常有重复 id。
+        let mut ids: Vec<String> = Vec::with_capacity(fetched.len());
+        for model in fetched {
+            if !ids.iter().any(|existing| existing == &model.id) {
+                ids.push(model.id);
+            }
+        }
+
+        let models = crate::services::model_catalog::build_available_models(ids).await;
+        // 只有已存的那家才写回；新建时列表留在表单里，保存时随供应商一起提交。
+        if let Some(mut provider) = stored {
+            provider.available_models = models.clone();
+            state.db.save_universal_provider(&provider)?;
+        }
+        Ok(models)
     }
 
     /// 删除统一供应商
@@ -2241,6 +2323,53 @@ impl ProviderService {
         Ok(true)
     }
 
+    /// 统一供应商在子卡 meta 上拥有的键：这些由 per-app 配置驱动，同步时以生成的值为准
+    /// （用户清空某个选项后，子卡不能留着旧值）。其余键属于子卡自己（用量脚本、排序、
+    /// 通用配置退出、端点列表等），必须原样保留。
+    const UNIVERSAL_OWNED_META_KEYS: &'static [&'static str] = &[
+        "apiFormat",
+        "apiKeyField",
+        "isFullUrl",
+        "customUserAgent",
+        "localProxyRequestOverrides",
+        "codexChatReasoning",
+        "promptCacheRouting",
+        "impersonateClaudeCode",
+        "maxOutputTokens",
+        "claudeDesktopMode",
+        "claudeDesktopModelRoutes",
+    ];
+
+    /// 把生成的子卡 meta 合进已有的那份。
+    ///
+    /// 统一供应商驱动的键以生成的值为准（用户清空某个选项后，子卡不能留着旧值）；其余
+    /// 键属于子卡自己（用量脚本、排序、通用配置退出、端点列表等），已有值必须原样保留。
+    /// 父级 meta 里的其他键只在子卡还没有时作为初值。
+    fn merge_child_meta(
+        existing: Option<ProviderMeta>,
+        generated: Option<ProviderMeta>,
+    ) -> Option<ProviderMeta> {
+        let Some(existing) = existing else {
+            return generated;
+        };
+        let mut merged = serde_json::to_value(&existing).unwrap_or_default();
+        let generated = serde_json::to_value(generated.unwrap_or_default()).unwrap_or_default();
+        if let (Some(base), Some(patch)) = (merged.as_object_mut(), generated.as_object()) {
+            for (key, value) in patch {
+                // 父级 meta 是默认值（统一供应商通常不带 meta）时不能抹掉子卡自己的设置。
+                if value.is_null() {
+                    continue;
+                }
+                if Self::UNIVERSAL_OWNED_META_KEYS.contains(&key.as_str()) {
+                    base.insert(key.clone(), value.clone());
+                } else {
+                    base.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
+        serde_json::from_value(merged).ok()
+    }
+
     /// 同步统一供应商到各应用
     pub fn sync_universal_to_apps(state: &AppState, id: &str) -> Result<bool, AppError> {
         let provider = state
@@ -2260,12 +2389,30 @@ impl ProviderService {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &claude_provider.settings_config);
                 claude_provider.settings_config = merged;
-                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段。
-                claude_provider.meta = existing.meta;
+                // 子卡自己的设置（用量脚本、排序等）保留，统一供应商拥有的键以生成的为准。
+                claude_provider.meta = Self::merge_child_meta(existing.meta, claude_provider.meta);
                 claude_provider.created_at = existing.created_at;
                 claude_provider.sort_index = existing.sort_index;
             }
             state.db.save_provider("claude", &claude_provider)?;
+            // 全局开关（隐藏 AI 署名、禁用自动升级）不属于任何一家：写进 live 而不是
+            // 供应商行，所以单独应用一次。两个都没填时不动 live。
+            let claude_globals = provider
+                .models
+                .claude
+                .as_ref()
+                .map(|m| (m.hide_attribution, m.disable_auto_upgrade))
+                .filter(|(attribution, updater)| attribution.is_some() || updater.is_some());
+            if let Some((hide_attribution, disable_auto_upgrade)) = claude_globals {
+                if let Err(err) = crate::services::provider::claude_direct::write_globals(
+                    state.db.as_ref(),
+                    hide_attribution,
+                    disable_auto_upgrade,
+                ) {
+                    log::warn!("统一供应商同步后写 Claude 全局开关失败: {err}");
+                    live_failures.push("claude(globals)".to_string());
+                }
+            }
             Self::project_universal_child_to_live(
                 state,
                 AppType::Claude,
@@ -2285,8 +2432,8 @@ impl ProviderService {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &codex_provider.settings_config);
                 codex_provider.settings_config = merged;
-                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段。
-                codex_provider.meta = existing.meta;
+                // 子卡自己的设置（用量脚本、排序等）保留，统一供应商拥有的键以生成的为准。
+                codex_provider.meta = Self::merge_child_meta(existing.meta, codex_provider.meta);
                 codex_provider.created_at = existing.created_at;
                 codex_provider.sort_index = existing.sort_index;
             }
@@ -2309,8 +2456,8 @@ impl ProviderService {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &gemini_provider.settings_config);
                 gemini_provider.settings_config = merged;
-                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段。
-                gemini_provider.meta = existing.meta;
+                // 子卡自己的设置（用量脚本、排序等）保留，统一供应商拥有的键以生成的为准。
+                gemini_provider.meta = Self::merge_child_meta(existing.meta, gemini_provider.meta);
                 gemini_provider.created_at = existing.created_at;
                 gemini_provider.sort_index = existing.sort_index;
             }
@@ -2335,8 +2482,9 @@ impl ProviderService {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &desktop_provider.settings_config);
                 desktop_provider.settings_config = merged;
-                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段。
-                desktop_provider.meta = existing.meta;
+                // 子卡自己的设置（用量脚本、排序等）保留，统一供应商拥有的键以生成的为准。
+                desktop_provider.meta =
+                    Self::merge_child_meta(existing.meta, desktop_provider.meta);
                 desktop_provider.created_at = existing.created_at;
                 desktop_provider.sort_index = existing.sort_index;
             }
@@ -2363,8 +2511,9 @@ impl ProviderService {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &grokbuild_provider.settings_config);
                 grokbuild_provider.settings_config = merged;
-                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段。
-                grokbuild_provider.meta = existing.meta;
+                // 子卡自己的设置（用量脚本、排序等）保留，统一供应商拥有的键以生成的为准。
+                grokbuild_provider.meta =
+                    Self::merge_child_meta(existing.meta, grokbuild_provider.meta);
                 grokbuild_provider.created_at = existing.created_at;
                 grokbuild_provider.sort_index = existing.sort_index;
             }
@@ -5920,7 +6069,6 @@ wire_api = "responses"
             let mut universal = UniversalProvider::new(
                 "metadata".into(),
                 "Original".into(),
-                "custom".into(),
                 "https://old.example".into(),
                 "old-key".into(),
             );
@@ -6025,7 +6173,6 @@ wire_api = "responses"
             let mut universal = UniversalProvider::new(
                 "shared".to_string(),
                 "Shared Relay".to_string(),
-                "custom".to_string(),
                 "https://api.new.example".to_string(),
                 "new-key".to_string(),
             );
@@ -6070,6 +6217,135 @@ wire_api = "responses"
                 live["env"]["ANTHROPIC_AUTH_TOKEN"].as_str(),
                 Some("new-key")
             );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn sync_universal_to_apps_writes_claude_global_switches_to_live() {
+        // 隐藏 AI 署名和禁用自动升级对所有供应商生效，不属于任何一家：写进 live，
+        // 不写供应商行（floor.rs 里两者都不在关键字段/独有字段里）。
+        with_test_home(|state, _home| {
+            let mut universal = UniversalProvider::new(
+                "globals".to_string(),
+                "Globals".to_string(),
+                "https://api.globals.example".to_string(),
+                "globals-key".to_string(),
+            );
+            universal.apps.claude = true;
+            universal.models.claude = Some(ClaudeModelConfig {
+                model: Some("claude-sonnet-4".to_string()),
+                hide_attribution: Some(true),
+                disable_auto_upgrade: Some(true),
+                ..Default::default()
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("save universal provider");
+
+            ProviderService::sync_universal_to_apps(state, "globals").expect("sync");
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            assert_eq!(
+                live["attribution"],
+                json!({ "commit": "", "pr": "", "sessionUrl": false })
+            );
+            assert_eq!(live["env"]["DISABLE_AUTOUPDATER"].as_str(), Some("1"));
+
+            // 全局键不进供应商行：它们是 live 的设置，不属于这一家
+            let child = state
+                .db
+                .get_provider_by_id("universal-claude-globals", "claude")
+                .expect("read child")
+                .expect("child exists");
+            assert!(child.settings_config.get("attribution").is_none());
+            assert!(child.settings_config["env"]
+                .get("DISABLE_AUTOUPDATER")
+                .is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn sync_universal_to_apps_removes_claude_global_switches_when_unchecked() {
+        with_test_home(|state, _home| {
+            // live 里已经有这两个键，用户显式取消勾选后要清掉
+            write_json_file(
+                &get_claude_settings_path(),
+                &json!({
+                    "attribution": { "commit": "", "pr": "", "sessionUrl": false },
+                    "env": { "DISABLE_AUTOUPDATER": "1" }
+                }),
+            )
+            .expect("seed live");
+
+            let mut universal = UniversalProvider::new(
+                "globals-off".to_string(),
+                "Globals Off".to_string(),
+                "https://api.example.com".to_string(),
+                "key".to_string(),
+            );
+            universal.apps.claude = true;
+            // `Some(false)` 是「用户取消勾选」；`None`（缺省）表示没动过，不动 live
+            universal.models.claude = Some(ClaudeModelConfig {
+                model: Some("claude-sonnet-4".to_string()),
+                hide_attribution: Some(false),
+                disable_auto_upgrade: Some(false),
+                ..Default::default()
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("save universal provider");
+
+            ProviderService::sync_universal_to_apps(state, "globals-off").expect("sync");
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            assert!(live.get("attribution").is_none(), "{live}");
+            assert!(live["env"].get("DISABLE_AUTOUPDATER").is_none(), "{live}");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn sync_universal_to_apps_leaves_untouched_claude_globals_alone() {
+        // 没动过的全局开关不能写也不能删：打开编辑器再保存不应该碰 live 里别人设的值
+        with_test_home(|state, _home| {
+            write_json_file(
+                &get_claude_settings_path(),
+                &json!({
+                    "attribution": { "commit": "", "pr": "", "sessionUrl": false },
+                    "env": { "DISABLE_AUTOUPDATER": "1" }
+                }),
+            )
+            .expect("seed live");
+
+            let mut universal = UniversalProvider::new(
+                "globals-none".to_string(),
+                "Globals None".to_string(),
+                "https://api.example.com".to_string(),
+                "key".to_string(),
+            );
+            universal.apps.claude = true;
+            universal.models.claude = Some(ClaudeModelConfig {
+                model: Some("claude-sonnet-4".to_string()),
+                ..Default::default()
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("save universal provider");
+
+            ProviderService::sync_universal_to_apps(state, "globals-none").expect("sync");
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            assert_eq!(
+                live["attribution"],
+                json!({ "commit": "", "pr": "", "sessionUrl": false }),
+                "untouched globals must survive: {live}"
+            );
+            assert_eq!(live["env"]["DISABLE_AUTOUPDATER"].as_str(), Some("1"));
         });
     }
 

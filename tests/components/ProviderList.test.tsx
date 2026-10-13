@@ -34,7 +34,7 @@ vi.mock("@/hooks/useDragSort", () => ({
 vi.mock("@/components/providers/ProviderCard", () => ({
   ProviderCard: (props: any) => {
     providerCardRenderSpy(props);
-    const { provider, presentation, onEdit, onDelete, onDuplicate } = props;
+    const { provider, presentation, onDelete } = props;
 
     return (
       <div data-testid={`provider-card-${provider.id}`}>
@@ -53,18 +53,6 @@ vi.mock("@/components/providers/ProviderCard", () => ({
             {button.label}
           </button>
         ))}
-        <button
-          data-testid={`edit-${provider.id}`}
-          onClick={() => onEdit(provider)}
-        >
-          edit
-        </button>
-        <button
-          data-testid={`duplicate-${provider.id}`}
-          onClick={() => onDuplicate(provider)}
-        >
-          duplicate
-        </button>
         <button
           data-testid={`delete-${provider.id}`}
           onClick={() => onDelete(provider)}
@@ -148,9 +136,7 @@ describe("ProviderList Component", () => {
   const baseProps = {
     currentProviderId: "",
     onSwitch: vi.fn(),
-    onEdit: vi.fn(),
     onDelete: vi.fn(),
-    onDuplicate: vi.fn(),
     onOpenWebsite: vi.fn(),
   };
 
@@ -225,9 +211,7 @@ describe("ProviderList Component", () => {
   it("renders in the order returned by useDragSort and wires the mode actions", () => {
     const providerA = createProvider({ id: "a", name: "A" });
     const providerB = createProvider({ id: "b", name: "B" });
-    const handleEdit = vi.fn();
     const handleDelete = vi.fn();
-    const handleDuplicate = vi.fn();
     const mode = switchMode({ directId: "b" });
 
     useDragSortMock.mockReturnValue({
@@ -242,9 +226,7 @@ describe("ProviderList Component", () => {
         providers={{ a: providerA, b: providerB }}
         currentProviderId="b"
         appId="claude"
-        onEdit={handleEdit}
         onDelete={handleDelete}
-        onDuplicate={handleDuplicate}
         switchMode={mode}
       />,
     );
@@ -263,11 +245,7 @@ describe("ProviderList Component", () => {
     fireEvent.click(screen.getByTestId("switch-a"));
     expect(mode.actions.switchDirect).toHaveBeenCalledWith(providerA);
 
-    fireEvent.click(screen.getByTestId("edit-b"));
-    fireEvent.click(screen.getByTestId("duplicate-b"));
     fireEvent.click(screen.getByTestId("delete-a"));
-    expect(handleEdit).toHaveBeenCalledWith(providerB);
-    expect(handleDuplicate).toHaveBeenCalledWith(providerB);
     expect(handleDelete).toHaveBeenCalledWith(providerA);
     expect(useDragSortMock).toHaveBeenCalledWith(
       { a: providerA, b: providerB },
@@ -306,7 +284,6 @@ describe("ProviderList Component", () => {
     expect(screen.getByTestId("queueAdd-a")).toBeInTheDocument();
   });
 
-
   it("filters providers with the search input", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
@@ -323,9 +300,7 @@ describe("ProviderList Component", () => {
         currentProviderId=""
         appId="claude"
         onSwitch={vi.fn()}
-        onEdit={vi.fn()}
         onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
         onOpenWebsite={vi.fn()}
       />,
     );
@@ -371,9 +346,7 @@ describe("ProviderList Component", () => {
       currentProviderId: "",
       appId: "claude" as const,
       onSwitch: vi.fn(),
-      onEdit: vi.fn(),
       onDelete: vi.fn(),
-      onDuplicate: vi.fn(),
       onOpenWebsite: vi.fn(),
     };
     const onSearchOpenChange = vi.fn();
@@ -405,4 +378,3 @@ describe("ProviderList Component", () => {
     expect(screen.getByTestId("provider-card-other")).toBeInTheDocument();
   });
 });
-

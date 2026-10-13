@@ -10,14 +10,8 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 const codexQuotaFooterProps = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/providers/ProviderCardActions", () => ({
-  ProviderCardActions: (props: {
-    onDuplicate?: () => void;
-    onConfigureUsage?: () => void;
-  }) => (
+  ProviderCardActions: (props: { onConfigureUsage?: () => void }) => (
     <>
-      {props.onDuplicate ? (
-        <button onClick={props.onDuplicate}>duplicate-provider</button>
-      ) : null}
       {props.onConfigureUsage ? (
         <button onClick={props.onConfigureUsage}>configure-usage</button>
       ) : null}
@@ -92,7 +86,6 @@ function renderCard(
   options: {
     status?: ManagedAuthStatus;
     isCurrent?: boolean;
-    onEdit?: (provider: Provider) => void;
     onConfigureUsage?: (provider: Provider) => void;
   } = {},
 ) {
@@ -111,31 +104,23 @@ function renderCard(
         appId="codex"
         isCurrent={options.isCurrent ?? false}
         presentation={{ chips: [], buttons: [] }}
-        onEdit={options.onEdit ?? vi.fn()}
         onDelete={vi.fn()}
         onConfigureUsage={options.onConfigureUsage ?? vi.fn()}
         onOpenWebsite={vi.fn()}
-        onDuplicate={vi.fn()}
       />
     </QueryClientProvider>,
   );
 }
 
 describe("ProviderCard Codex Official account identity", () => {
-  it("lets the current provider open account selection after its account is deleted", async () => {
-    const user = userEvent.setup();
-    const onEdit = vi.fn();
+  it("flags a bound account that is no longer available", () => {
     const provider = managedProvider("OpenAI Official", "deleted-account");
     renderCard(provider, {
       status: authStatus("replacement@example.com"),
       isCurrent: true,
-      onEdit,
     });
 
     expect(screen.getByText("绑定的账号不可用")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "选择账号" }));
-    expect(onEdit).toHaveBeenCalledOnce();
-    expect(onEdit).toHaveBeenCalledWith(provider);
   });
 
   it("keeps existing managed OAuth quota enabled and exposes its configuration", async () => {
@@ -226,11 +211,9 @@ describe("ProviderCard Codex Official account identity", () => {
           appId="codex"
           isCurrent={false}
           presentation={{ chips: [], buttons: [] }}
-          onEdit={vi.fn()}
           onDelete={vi.fn()}
           onConfigureUsage={vi.fn()}
           onOpenWebsite={vi.fn()}
-          onDuplicate={vi.fn()}
         />
       </QueryClientProvider>,
     );
@@ -307,9 +290,6 @@ describe("ProviderCard Codex Official account identity", () => {
     expect(
       screen.queryByRole("button", { name: "选择账号" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "duplicate-provider" }),
-    ).toBeInTheDocument();
     expect(screen.queryByText("codex-oauth-quota")).not.toBeInTheDocument();
     expect(codexQuotaFooterProps).not.toHaveBeenCalled();
   });

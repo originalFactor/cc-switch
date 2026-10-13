@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { universalProvidersApi } from "@/lib/api";
+import type { useUnsavedChangesTracker as useUnsavedChangesTrackerType } from "@/lib/unsavedChanges";
 import { resetProviderState } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 
@@ -30,8 +31,6 @@ vi.mock("@/components/providers/ProviderList", () => ({
     providers,
     currentProviderId,
     onSwitch,
-    onEdit,
-    onDuplicate,
     onConfigureUsage,
     onOpenWebsite,
     onCreate,
@@ -42,10 +41,6 @@ vi.mock("@/components/providers/ProviderList", () => ({
       <div data-testid="current-provider">{currentProviderId}</div>
       <button onClick={() => onSwitch(providers[currentProviderId])}>
         switch
-      </button>
-      <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
-      <button onClick={() => onDuplicate(providers[currentProviderId])}>
-        duplicate
       </button>
       <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
         usage
@@ -61,25 +56,24 @@ vi.mock("@/components/providers/ProviderList", () => ({
   ),
 }));
 
-// 添加入口只走统一供应商：这里替身直接回一个统一供应商，
+// 添加/编辑现在都用统一供应商表单。这里替身直接回一个统一供应商，
 // 然后 upsert + sync，并按后端的行为发出 universal-provider-synced
 // （App 靠这个事件刷新供应商列表）。
-vi.mock("@/components/providers/AddProviderDialog", () => ({
-  AddProviderDialog: ({ open, onOpenChange }: any) =>
-    open ? (
+vi.mock("@/components/universal/UniversalProviderFormModal", () => ({
+  UniversalProviderFormModal: ({ isOpen, onSave, onClose }: any) =>
+    isOpen ? (
       <div data-testid="add-provider-dialog">
         <button
           onClick={() => {
             const provider = {
               id: "u-new",
               name: "New codex Provider",
-              providerType: "newapi",
               apps: {
                 claude: true,
                 codex: true,
                 gemini: true,
-                claudeDesktop: false,
-                grokbuild: false,
+                claudeDesktop: true,
+                grokbuild: true,
               },
               baseUrl: "https://api.example.com",
               apiKey: "sk-new",
@@ -89,60 +83,64 @@ vi.mock("@/components/providers/AddProviderDialog", () => ({
             void (async () => {
               await universalProvidersApi.upsert(provider);
               await universalProvidersApi.sync(provider.id);
-              emitTauriEvent("universal-provider-synced", {
-                action: "upsert",
-                id: provider.id,
-              });
+              emitTauriEvent("universal-provider-synced", { id: provider.id });
             })();
           }}
         >
           confirm-add
         </button>
-        <button onClick={() => onOpenChange(false)}>close-add</button>
+        <button onClick={() => onClose?.()}>close-add</button>
+        <button
+          onClick={() =>
+            onSave?.({
+              id: "u-new",
+              name: "New codex Provider",
+              apps: {},
+              baseUrl: "",
+              apiKey: "",
+              models: {},
+            })
+          }
+        >
+          save-direct
+        </button>
       </div>
     ) : null,
 }));
 
-vi.mock("@/components/providers/EditProviderDialog", async () => {
-  const { useUnsavedChangesTracker } = await vi.importActual<
-    typeof import("@/lib/unsavedChanges")
-  >("@/lib/unsavedChanges");
-  // 和真的编辑页一样登记改动（真的由 FullScreenPanel 的 trackUnsavedChanges 负责）
-  const Body = ({ provider, onSubmit, onOpenChange }: any) => (
-    <div data-testid="edit-provider-dialog" {...useUnsavedChangesTracker()}>
-      <input aria-label="edit-field" />
-      <button
-        onClick={() =>
-          onSubmit({
-            provider: {
-              ...provider,
-              name: `${provider.name}-edited`,
-            },
-            originalId: provider.id,
-          })
-        }
-      >
-        confirm-edit
-      </button>
-      <button onClick={() => onOpenChange(false)}>close-edit</button>
+// 添加入口只走统一供应商：这里替身直接回一个统一供应商，
+// 然后 upsert + sync，并按后端的行为发出 universal-provider-synced
+// （App 靠这个事件刷新供应商列表）。
+
+// 和真的用量面板一样登记改动（真的由 FullScreenPanel 的 trackUnsavedChanges 负责）
+vi.mock("@/components/UsageScriptModal", async () => {
+  const { useUnsavedChangesTracker } = await vi.importActual<{
+    useUnsavedChangesTracker: typeof useUnsavedChangesTrackerType;
+  }>("@/lib/unsavedChanges");
+  const Body = ({
+    provider,
+    onSave,
+    onClose,
+  }: {
+    provider?: { id?: string };
+    onSave: (script: string) => void;
+    onClose: () => void;
+  }) => (
+    <div data-testid="usage-modal" {...useUnsavedChangesTracker()}>
+      <span data-testid="usage-provider">{provider?.id}</span>
+      <input aria-label="usage-field" />
+      <button onClick={() => onSave("script-code")}>save-script</button>
+      <button onClick={() => onClose()}>close-usage</button>
     </div>
   );
   return {
-    EditProviderDialog: (props: any) =>
-      props.open ? <Body {...props} /> : null,
+    default: ({
+      isOpen,
+      ...props
+    }: { isOpen?: boolean } & Parameters<typeof Body>[0]) =>
+      isOpen ? <Body {...props} /> : null,
   };
 });
-
-vi.mock("@/components/UsageScriptModal", () => ({
-  default: ({ isOpen, provider, onSave, onClose }: any) =>
-    isOpen ? (
-      <div data-testid="usage-modal">
-        <span data-testid="usage-provider">{provider?.id}</span>
-        <button onClick={() => onSave("script-code")}>save-script</button>
-        <button onClick={() => onClose()}>close-usage</button>
-      </div>
-    ) : null,
-}));
 
 vi.mock("@/components/ConfirmDialog", () => ({
   ConfirmDialog: ({ isOpen, message, onConfirm, onCancel }: any) =>
@@ -243,21 +241,7 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    fireEvent.click(screen.getByText("edit"));
-    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("confirm-edit"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
-        /-edited/,
-      ),
-    );
-
     fireEvent.click(screen.getByText("switch"));
-    fireEvent.click(screen.getByText("duplicate"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(/copy/),
-    );
-
     fireEvent.click(screen.getByText("open-website"));
 
     emitTauriEvent("provider-switched", {
@@ -316,20 +300,8 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    // 面板只盖住内容区，侧栏还能点：切应用时编辑面板必须关掉，否则 Claude 的
-    // 供应商会以 appId=codex 保存进 Codex
-    fireEvent.click(screen.getByText("edit"));
-    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
-    fireEvent.click(sidebarApp("Codex"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
-      ),
-    );
-    expect(
-      screen.queryByTestId("edit-provider-dialog"),
-    ).not.toBeInTheDocument();
-
+    // 面板只盖住内容区，侧栏还能点：切应用时添加面板必须关掉，否则 Claude 的
+    // 供应商会以 appId=codex 写进 Codex
     fireEvent.click(screen.getByText("usage"));
     expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
     fireEvent.click(sidebarApp("nav.usage"));
@@ -360,7 +332,7 @@ describe("App integration with MSW", () => {
     );
 
     // 没改过：照常离开，不问
-    fireEvent.click(screen.getByText("edit"));
+    fireEvent.click(screen.getByText("usage"));
     fireEvent.click(sidebarApp("Codex"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -369,10 +341,10 @@ describe("App integration with MSW", () => {
     );
     expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
 
-    // 改过：先问；继续编辑就留在原页
+    // 改过：先问；取消就留在原页
     // （ConfirmDialog 在这个文件里是 mock：只渲染消息和 confirm-delete / cancel-delete）
-    fireEvent.click(screen.getByText("edit"));
-    fireEvent.input(screen.getByLabelText("edit-field"), {
+    fireEvent.click(screen.getByText("usage"));
+    fireEvent.input(screen.getByLabelText("usage-field"), {
       target: { value: "draft" },
     });
     fireEvent.click(sidebarApp("Claude Code"));
@@ -380,7 +352,7 @@ describe("App integration with MSW", () => {
       "common.unsavedLeaveMessage",
     );
     fireEvent.click(screen.getByText("cancel-delete"));
-    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
     expect(screen.getByTestId("provider-list").textContent).toContain(
       "codex-1",
     );
@@ -392,9 +364,7 @@ describe("App integration with MSW", () => {
     );
     fireEvent.click(screen.getByText("confirm-delete"));
     expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("edit-provider-dialog"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("usage-modal")).not.toBeInTheDocument();
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {

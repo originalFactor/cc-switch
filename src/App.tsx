@@ -1,18 +1,11 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound, MoreHorizontal, Plus, Search } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, UniversalProvider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import {
@@ -24,12 +17,13 @@ import {
 import {
   providersApi,
   settingsApi,
+  universalProvidersApi,
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
+import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
-import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import {
@@ -40,7 +34,6 @@ import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
-import { deepClone } from "@/utils/deepClone";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
@@ -64,8 +57,6 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
-import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
-import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { discardUnsavedChanges, hasUnsavedChanges } from "@/lib/unsavedChanges";
 import { SettingsPage } from "@/components/settings/SettingsPage";
@@ -80,7 +71,7 @@ import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { DesktopAccessBar } from "@/components/providers/mode/DesktopAccessBar";
 import { proxyApi } from "@/lib/api/proxy";
-import type { AppMode, StartupAttachFailure } from "@/types/proxy";
+import type { StartupAttachFailure } from "@/types/proxy";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
@@ -138,22 +129,21 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  /**
+   * 从任意应用页打开的统一供应商：值是父级 id。卡片都是它同步出来的子卡，编辑要改的是
+   * 父级那一份配置。
+   */
+  const [editingUniversalId, setEditingUniversalId] = useState<string | null>(
+    null,
+  );
+  /** 待确认删除的统一供应商。 */
+  const [pendingUniversalDelete, setPendingUniversalDelete] =
+    useState<UniversalProvider | null>(null);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
   useEffect(() => {
     setProviderSearchOpen(false);
   }, [activeApp, currentView]);
-  // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
-  // 编辑时记下当时那格，表单按它选布局：在聚合那格打开就是聚合的简化表单。
-  const [providerModeView, setProviderModeView] = useState<{
-    app: AppId;
-    view: AppMode;
-  } | null>(null);
-  const [formModeView, setFormModeView] = useState<AppMode>();
-  const handleProviderModeViewChange = useCallback(
-    (app: AppId, view: AppMode) => setProviderModeView({ app, view }),
-    [],
-  );
   // 托盘里点了直连下需要路由的那家：打开应用页后弹「需要路由」对话框
   const [trayNeedsRoute, setTrayNeedsRoute] = useState<{
     app: AppId;
@@ -233,13 +223,11 @@ function App() {
     }
   }, [activeApp, currentView]);
 
-  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<Provider | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
-  const effectiveEditingProvider = useLastValidValue(editingProvider);
   const effectiveUsageProvider = useLastValidValue(usageProvider);
   const mainScrollRef = useRef<HTMLElement>(null);
   const providerScrollContainerRef = useRef<HTMLDivElement>(null);
@@ -262,11 +250,7 @@ function App() {
 
   const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
   const proxyAppId = isProxyAppId(activeApp) ? activeApp : null;
-  // 换了应用、新面板还没报上来时为 undefined：表单按应用实际生效的模式
-  const currentModeView =
-    providerModeView?.app === activeApp ? providerModeView.view : undefined;
-  const openAddProvider = (modeView: AppMode | undefined) => {
-    setFormModeView(modeView);
+  const openAddProvider = () => {
     setIsAddOpen(true);
   };
   const currentAppUsesProxy =
@@ -280,16 +264,8 @@ function App() {
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
-  const {
-    addProvider,
-    updateProvider,
-    switchProvider,
-    deleteProvider,
-    saveUsageScript,
-  } = useProviderActions(
-    activeApp,
-    isProxyRunning && isCurrentAppTakeoverActive,
-  );
+  const { switchProvider, deleteProvider, saveUsageScript } =
+    useProviderActions(activeApp, isProxyRunning && isCurrentAppTakeoverActive);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -519,11 +495,10 @@ function App() {
   // ─── 导航 ───────────────────────────────────────────────────────────────
   // MCP / Skills / 提示词在进行中的操作会锁住导航（卸载面板会丢掉进行中的状态）
 
-  // 添加 / 编辑 / 用量脚本面板只盖住内容区，侧栏还能点。离开当前页就把它们关掉：
-  // 面板的 appId 跟着 activeApp 走，开着切应用会把 A 应用的供应商保存进 B 应用
+  // 添加 / 用量脚本面板只盖住内容区，侧栏还能点。离开当前页就把它们关掉：
+  // 面板的 appId 跟着 activeApp 走，开着切应用会把 A 应用的供应商写进 B 应用
   const closeProviderPanels = () => {
     setIsAddOpen(false);
-    setEditingProvider(null);
     setUsageProvider(null);
   };
 
@@ -590,7 +565,7 @@ function App() {
       if (!navigation.app) return;
       selectApp(navigation.app);
       // 托盘先换应用：新应用那格还没报上来，按它实际生效的模式
-      if (navigation.intent === "add") openAddProvider(undefined);
+      if (navigation.intent === "add") openAddProvider();
       if (navigation.intent === "needsRoute" && navigation.providerId) {
         setTrayNeedsRoute({
           app: navigation.app,
@@ -660,19 +635,6 @@ function App() {
     }
   };
 
-  const handleEditProvider = async ({
-    provider,
-    originalId,
-    editorSave,
-  }: {
-    provider: Provider;
-    originalId?: string;
-    editorSave?: ProviderEditorSave;
-  }) => {
-    await updateProvider(provider, originalId, editorSave);
-    setEditingProvider(null);
-  };
-
   const handleConfirmAction = async () => {
     if (!confirmAction) return;
 
@@ -684,50 +646,72 @@ function App() {
     setConfirmAction(null);
   };
 
-  const handleDuplicateProvider = async (provider: Provider) => {
-    const newSortIndex =
-      provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
-
-    const duplicatedProvider: Omit<Provider, "id" | "createdAt"> = {
-      name: `${provider.name} copy`,
-      settingsConfig: deepClone(provider.settingsConfig),
-      websiteUrl: provider.websiteUrl,
-      category: provider.category,
-      sortIndex: newSortIndex, // 复制原 sortIndex + 1
-      meta: provider.meta ? deepClone(provider.meta) : undefined,
-      icon: provider.icon,
-      iconColor: provider.iconColor,
-    };
-
-    if (provider.sortIndex !== undefined) {
-      const updates = Object.values(providers)
-        .filter(
-          (p) =>
-            p.sortIndex !== undefined &&
-            p.sortIndex >= newSortIndex! &&
-            p.id !== provider.id,
-        )
-        .map((p) => ({
-          id: p.id,
-          sortIndex: p.sortIndex! + 1,
-        }));
-
-      if (updates.length > 0) {
-        try {
-          await providersApi.updateSortOrder(updates, activeApp);
-        } catch (error) {
-          console.error("[App] Failed to update sort order", error);
-          toast.error(
-            t("provider.sortUpdateFailed", {
-              defaultValue: "排序更新失败",
-            }),
-          );
-          return; // 如果排序更新失败，不继续添加
-        }
-      }
+  // 从卡片打开的统一供应商：按 id 直接取那一份配置。
+  // 不用缓存列表：列表在别处（添加页、管理页）改动后未必已失效，取到 null 会让表单
+  // 静默不弹。这里每次打开都读一次，状态一定是新的。
+  const [editingUniversal, setEditingUniversal] =
+    useState<UniversalProvider | null>(null);
+  useEffect(() => {
+    if (!editingUniversalId) {
+      setEditingUniversal(null);
+      return;
     }
+    let cancelled = false;
+    void universalProvidersApi
+      .get(editingUniversalId)
+      .then((provider) => {
+        if (!cancelled) setEditingUniversal(provider ?? null);
+      })
+      .catch((error) => {
+        console.error("[App] Failed to load universal provider", error);
+        if (!cancelled) setEditingUniversal(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editingUniversalId]);
 
-    await addProvider(duplicatedProvider);
+  const handleUniversalDelete = async () => {
+    const target = pendingUniversalDelete;
+    setPendingUniversalDelete(null);
+    if (!target) return;
+    try {
+      await universalProvidersApi.delete(target.id);
+      toast.success(
+        t("universalProvider.deleted", { defaultValue: "统一供应商已删除" }),
+      );
+      setEditingUniversalId(null);
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+    } catch (error) {
+      console.error("[App] Failed to delete universal provider", error);
+      toast.error(
+        t("universalProvider.deleteError", {
+          defaultValue: "删除统一供应商失败",
+        }),
+      );
+    }
+  };
+
+  const handleUniversalSave = async (provider: UniversalProvider) => {
+    try {
+      await universalProvidersApi.upsert(provider);
+      // 卡片是子卡，改完父级必须同步过去；否则应用列表里还是旧配置。
+      await universalProvidersApi.sync(provider.id);
+      toast.success(
+        t("universalProvider.savedAndSynced", {
+          defaultValue: "已保存并同步到所有应用",
+        }),
+      );
+      setEditingUniversalId(null);
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+    } catch (error) {
+      console.error("[App] Failed to save universal provider", error);
+      toast.error(
+        t("universalProvider.saveError", {
+          defaultValue: "保存统一供应商失败",
+        }),
+      );
+    }
   };
 
   const confirmActionMessage = useMemo(() => {
@@ -896,7 +880,7 @@ function App() {
             <Button
               variant="solid"
               size="regular"
-              onClick={() => openAddProvider(currentModeView)}
+              onClick={() => openAddProvider()}
             >
               <Plus className="h-4 w-4" />
               {t("provider.addProvider")}
@@ -909,18 +893,14 @@ function App() {
   );
 
   const listCallbacks = {
-    onEdit: (provider: Provider) => {
-      setFormModeView(currentModeView);
-      setEditingProvider(provider);
-    },
     onDelete: (provider: Provider) => setConfirmAction(provider),
-    onDuplicate: handleDuplicateProvider,
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal: activeApp === "claude" ? handleOpenTerminal : undefined,
-    onCreate: () => openAddProvider(currentModeView),
+    onCreate: () => openAddProvider(),
     searchOpen: providerSearchOpen,
     onSearchOpenChange: setProviderSearchOpen,
+    onEditUniversal: (parentId: string) => setEditingUniversalId(parentId),
   };
 
   const renderProviderList = () => {
@@ -942,7 +922,6 @@ function App() {
             trayNeedsRoute?.app === proxyAppId ? trayNeedsRoute : undefined
           }
           onNeedsRouteHandled={() => setTrayNeedsRoute(null)}
-          onViewChange={handleProviderModeViewChange}
           startupFailure={startupFailure}
           onDismissStartupFailure={() =>
             setStartupFailures((list) =>
@@ -1156,25 +1135,46 @@ function App() {
         </main>
       </div>
 
-      <AddProviderDialog
-        open={isAddOpen}
-        onOpenChange={setIsAddOpen}
-        appId={activeApp}
-      />
-
-      <EditProviderDialog
-        open={Boolean(editingProvider)}
-        provider={effectiveEditingProvider}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditingProvider(null);
+      {/* 添加 / 编辑统一供应商：应用页与卡片共用一个表单。统一供应商会同步到全部
+          五个应用，所以任意应用页打开都在改同一份配置，不再有单独的添加页或管理页。 */}
+      {(isAddOpen || editingUniversal) && (
+        <UniversalProviderFormModal
+          key={editingUniversal?.id ?? "new"}
+          isOpen
+          editingProvider={editingUniversal}
+          subtitle={
+            editingUniversal
+              ? undefined
+              : `${APP_DISPLAY_NAME[activeApp]} · ${t("universalProvider.add", {
+                  defaultValue: "添加统一供应商",
+                })}`
           }
-        }}
-        onSubmit={handleEditProvider}
-        appId={activeApp}
-        isProxyTakeover={isCurrentAppTakeoverActive}
-        isCurrent={effectiveEditingProvider?.id === currentProviderId}
-        modeView={formModeView}
+          onClose={() => {
+            setEditingUniversalId(null);
+            setIsAddOpen(false);
+          }}
+          onSave={(provider) => void handleUniversalSave(provider)}
+          onSaveAndSync={(provider) => void handleUniversalSave(provider)}
+          onDelete={() =>
+            editingUniversal && setPendingUniversalDelete(editingUniversal)
+          }
+        />
+      )}
+
+      {/* 删除统一供应商：会连带删掉它在各应用里的子卡，所以要确认一次。 */}
+      <ConfirmDialog
+        isOpen={Boolean(pendingUniversalDelete)}
+        title={t("universalProvider.deleteConfirmTitle", {
+          defaultValue: "删除统一供应商",
+        })}
+        message={t("universalProvider.deleteConfirmDescription", {
+          defaultValue: `确定要删除 "${pendingUniversalDelete?.name ?? ""}" 吗？这将同时删除它在各应用中生成的供应商配置。`,
+          name: pendingUniversalDelete?.name ?? "",
+        })}
+        confirmText={t("common.delete", { defaultValue: "删除" })}
+        variant="destructive"
+        onConfirm={() => void handleUniversalDelete()}
+        onCancel={() => setPendingUniversalDelete(null)}
       />
 
       {effectiveUsageProvider && (

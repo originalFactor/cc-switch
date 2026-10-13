@@ -7,6 +7,7 @@ pub mod config;
 pub mod env_checker;
 pub mod env_manager;
 pub mod mcp;
+pub mod model_catalog;
 pub mod model_fetch;
 pub mod model_pricing;
 pub mod profile;

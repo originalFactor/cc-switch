@@ -33,6 +33,10 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import {
+  isUniversalChildId,
+  universalParentIdOf,
+} from "@/utils/universalProvider";
+import {
   buildDesktopSections,
   buildSwitchSections,
   type CardPresentation,
@@ -49,12 +53,12 @@ interface ProviderListProps {
   appId: AppId;
   /** 直连切换 / Claude Desktop 的切换 */
   onSwitch: (provider: Provider) => void;
-  onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
+  /** 打开统一供应商表单：只对由它同步出来的子卡给出入口。 */
+  onEditUniversal?: (parentId: string) => void;
   onCreate?: () => void;
   /** 切换式应用必传：按模式 tab 算卡片 */
   switchMode?: SwitchModeProps;
@@ -69,12 +73,11 @@ export function ProviderList({
   currentProviderId,
   appId,
   onSwitch,
-  onEdit,
   onDelete,
-  onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
   onOpenTerminal,
+  onEditUniversal,
   onCreate,
   switchMode,
   isLoading = false,
@@ -251,14 +254,20 @@ export function ProviderList({
       appId={appId}
       presentation={presentation}
       isCurrent={provider.id === currentProviderId}
-      onEdit={onEdit}
       onDelete={onDelete}
-      onDuplicate={onDuplicate}
       onConfigureUsage={
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
       onOpenTerminal={onOpenTerminal}
+      onEditUniversal={
+        onEditUniversal && isUniversalChildId(provider.id, appId)
+          ? (item) => {
+              const parentId = universalParentIdOf(item.id, appId);
+              if (parentId) onEditUniversal(parentId);
+            }
+          : undefined
+      }
       onTest={handleTest}
       isTesting={isChecking(provider.id)}
     />
@@ -391,12 +400,11 @@ interface SortableProviderCardProps {
   appId: AppId;
   presentation: CardPresentation;
   isCurrent: boolean;
-  onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  onDuplicate: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
+  onEditUniversal?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   isTesting: boolean;
 }

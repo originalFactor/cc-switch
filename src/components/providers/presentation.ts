@@ -16,13 +16,7 @@ import {
 export type CardTone = "direct" | "route" | "stack" | "neutral";
 
 export type ChipTone =
-  | "outline"
-  | "direct"
-  | "route"
-  | "stack"
-  | "success"
-  | "warning"
-  | "danger";
+  "outline" | "direct" | "route" | "stack" | "success" | "warning" | "danger";
 
 export interface CardChip {
   key: string;
@@ -72,8 +66,7 @@ export interface CardPresentation {
   move?: { onUp?: () => void; onDown?: () => void };
   /** 在队列里且路由服务在跑时显示健康状态 */
   showHealth?: boolean;
-  /** 编辑 / 删除不可用的原因（当前那家不能删…） */
-  editDisabledReason?: string;
+  /** 删除不可用的原因（当前那家不能删…） */
   deleteDisabledReason?: string;
 }
 

@@ -4,7 +4,11 @@ import {
   flattenModels,
   formatPrice,
 } from "@/components/usage/ModelsDevPickerDialog";
-import { normalizeModelsDevModelId } from "@/lib/modelsDev";
+import {
+  modelMatchScore,
+  modelTokens,
+  normalizeModelsDevModelId,
+} from "@/lib/modelsDev";
 import {
   getCommonModelKeys,
   resolveModelsDevSelection,
@@ -53,6 +57,76 @@ describe("normalizeModelsDevModelId", () => {
     expect(normalizeModelsDevModelId("Vendor/Claude-Sonnet-4@2025:free")).toBe(
       "claude-sonnet-4-2025",
     );
+  });
+});
+
+describe("modelTokens", () => {
+  it("splits on any non-alphanumeric delimiter, not just / and -", () => {
+    expect(modelTokens("openai/gpt-5.6-luna")).toEqual([
+      "openai",
+      "gpt",
+      "5",
+      "6",
+      "luna",
+    ]);
+    expect(modelTokens("claude_opus.4@20250514")).toEqual([
+      "claude",
+      "opus",
+      "4",
+      "20250514",
+    ]);
+  });
+
+  it("drops the [1m] marker and lowercases", () => {
+    expect(modelTokens("Claude-Sonnet-4-5[1M]")).toEqual([
+      "claude",
+      "sonnet",
+      "4",
+      "5",
+    ]);
+  });
+});
+
+describe("modelMatchScore", () => {
+  it("matches with arbitrary affixes ignored", () => {
+    for (const probe of [
+      "Model-X",
+      "model-x",
+      "vendor/Model-X:free",
+      "VENDOR/MODEL.X-FREE-PREVIEW",
+      "someprefix-model-x-somesuffix",
+    ]) {
+      expect(modelMatchScore(probe, "vendor/Model-X:free")).not.toBeNull();
+    }
+  });
+
+  it("prefers the longest core (in tokens)", () => {
+    const longer = modelMatchScore("claude-opus-4-6", "anthropic/claude-opus-4-6")!;
+    const shorter = modelMatchScore("claude-opus-4-6", "anthropic/claude-opus-4")!;
+    expect(longer[0]).toBeGreaterThan(shorter[0]);
+    expect(longer).not.toBeNull();
+  });
+
+  it("prefers the fewest ignored tokens when cores tie", () => {
+    const exact = modelMatchScore("glm-5", "zhipuai/glm-5")!;
+    const looser = modelMatchScore("glm-5", "zhipuai/glm-5.3")!;
+    expect(exact[0]).toBe(looser[0]);
+    expect(exact[1]).toBeLessThan(looser[1]);
+  });
+
+  it("does not match on a single shared token", () => {
+    // 只共有一个 token 太弱：gpt-reserve 不该匹配到 gpt-realtime-2.1
+    expect(modelMatchScore("gpt-reserve", "openai/gpt-realtime-2.1")).toBeNull();
+    // review 只是尾部一个 token，也不该匹配到 hy3-preview
+    expect(modelMatchScore("codex-auto-review", "tencent/hy3-preview")).toBeNull();
+  });
+
+  it("still matches a whole short id that is a single token", () => {
+    expect(modelMatchScore("o1", "openai/o1")).not.toBeNull();
+  });
+
+  it("returns null when nothing overlaps", () => {
+    expect(modelMatchScore("completely-different", "openai/o1")).toBeNull();
   });
 });
 

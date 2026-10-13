@@ -59,7 +59,7 @@
 
 | 文件 | 内容 |
 |------|------|
-| [2.1-add.md](./2-providers/2.1-add.md) | 使用预设、自定义配置、统一供应商 |
+| [2.1-add.md](./2-providers/2.1-add.md) | 添加统一供应商、应用专属配置、自定义配置 |
 | [2.2-switch.md](./2-providers/2.2-switch.md) | 直连/路由/聚合、托盘切换、生效方式 |
 | [2.3-edit.md](./2-providers/2.3-edit.md) | 编辑配置、修改 API Key、全局设置与编辑冲突 |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | 拖拽排序、复制供应商、删除 |

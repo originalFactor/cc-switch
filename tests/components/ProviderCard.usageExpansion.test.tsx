@@ -60,11 +60,9 @@ function renderCard({
         appId="claude"
         isCurrent={true}
         presentation={{ chips: [], buttons: [] }}
-        onEdit={vi.fn()}
         onDelete={vi.fn()}
         onConfigureUsage={vi.fn()}
         onOpenWebsite={vi.fn()}
-        onDuplicate={vi.fn()}
       />
     </QueryClientProvider>,
   );

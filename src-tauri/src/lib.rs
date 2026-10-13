@@ -786,6 +786,42 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
+            // 统一供应商取代 per-app 供应商：把历史库里按应用分开的行合并成统一供应商。
+            // 排在官方种子之后（种子要原样保留、不当成第三方配置），并在下面的异步启动
+            // 流程之前完成，让模式判定与 live 投影看到的是迁移后的列表。
+            {
+                if let Err(e) =
+                    crate::services::provider::universal_migration::save_providers_snapshot(
+                        &app_state,
+                    )
+                {
+                    log::warn!("✗ 保存 per-app 迁移快照失败: {e}");
+                }
+                match crate::services::provider::universal_migration::migrate_per_app_to_universal(
+                    &app_state,
+                ) {
+                    Ok(outcome) if outcome.rows_removed > 0 => log::info!(
+                        "✓ per-app → 统一供应商迁移: {} 个统一供应商, {} 行已合并, {} 条用量已迁移",
+                        outcome.universal_created,
+                        outcome.rows_removed,
+                        outcome.usage_rows_remapped
+                    ),
+                    Ok(_) => log::debug!("○ 没有需要迁移的 per-app 供应商"),
+                    Err(e) => log::warn!("✗ per-app → 统一供应商迁移失败: {e}"),
+                }
+
+                // 去掉 per-app 开关后，旧记录可能只开了部分应用：补齐为全开并同步一次。
+                match crate::services::provider::universal_migration::enable_all_apps_for_existing(
+                    &app_state,
+                ) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ 统一供应商补齐为全应用: {count} 个")
+                    }
+                    Ok(_) => {}
+                    Err(e) => log::warn!("✗ 统一供应商补齐全应用失败: {e}"),
+                }
+            }
+
             {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -1555,6 +1591,7 @@ pub fn run() {
             commands::open_provider_terminal,
             // Universal Provider management
             commands::get_universal_providers,
+            commands::refresh_universal_models,
             commands::get_universal_provider,
             commands::upsert_universal_provider,
             commands::delete_universal_provider,

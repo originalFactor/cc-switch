@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AvailableModel,
   Provider,
   ProviderMeta,
   UniversalProvider,
@@ -296,5 +297,19 @@ export const universalProvidersApi = {
    */
   async sync(id: string): Promise<boolean> {
     return await invoke("sync_universal_provider", { id });
+  },
+
+  /**
+   * 拉取可用模型列表（`/v1/models` + models.dev 补全）。
+   *
+   * 传 `id` 时用已存那家的地址与 Key，并把结果写回它；新建时还没有 id，改传
+   * `baseUrl`/`apiKey` 现拉，结果只返回给表单。
+   */
+  async refreshModels(target: {
+    id?: string;
+    baseUrl?: string;
+    apiKey?: string;
+  }): Promise<AvailableModel[]> {
+    return await invoke("refresh_universal_models", target);
   },
 };

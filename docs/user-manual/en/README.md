@@ -59,7 +59,7 @@
 
 | File | Description |
 |------|-------------|
-| [2.1-add.md](./2-providers/2.1-add.md) | Adding universal providers, custom configuration |
+| [2.1-add.md](./2-providers/2.1-add.md) | Adding universal providers, per-app settings, custom configuration |
 | [2.2-switch.md](./2-providers/2.2-switch.md) | Direct / Routing / Aggregation, tray switching, activation methods |
 | [2.3-edit.md](./2-providers/2.3-edit.md) | Edit configuration, modify API Key, global settings and edit conflicts |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | Drag-to-reorder, duplicate provider, delete |

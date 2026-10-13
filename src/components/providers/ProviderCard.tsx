@@ -48,13 +48,13 @@ interface ProviderCardProps {
   /** 卡片怎么画：模式色、状态 / 按钮、徽标（由列表按模式算好） */
   presentation: CardPresentation;
   isCurrent: boolean;
-  onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
-  onDuplicate?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
+  /** 打开这张卡背后的统一供应商表单；列表自己判断是不是统一供应商的子卡。 */
+  onEditUniversal?: (provider: Provider) => void;
   isTesting?: boolean;
   dragHandleProps?: DragHandleProps;
 }
@@ -161,13 +161,12 @@ export function ProviderCard({
   appId,
   presentation,
   isCurrent,
-  onEdit,
   onDelete,
   onConfigureUsage,
   onOpenWebsite,
-  onDuplicate,
   onTest,
   onOpenTerminal,
+  onEditUniversal,
   isTesting,
   dragHandleProps,
 }: ProviderCardProps) {
@@ -195,9 +194,9 @@ export function ProviderCard({
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
     managedCodexAccount?.login &&
-      (provider.name.trim() === managedCodexAccount.login ||
-        provider.name.trim() ===
-          `OpenAI Official (${managedCodexAccount.login})`),
+    (provider.name.trim() === managedCodexAccount.login ||
+      provider.name.trim() ===
+        `OpenAI Official (${managedCodexAccount.login})`),
   );
 
   const { data: health } = useProviderHealth(
@@ -389,25 +388,14 @@ export function ProviderCard({
                   </span>
                 </span>
               ) : isCodexAuthStatusSuccess ? (
-                <>
-                  <span className="inline-flex min-w-0 items-center gap-1 text-sm text-warning-text">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">
-                      {t("codex.boundAccountUnavailable", {
-                        defaultValue: "绑定的账号不可用",
-                      })}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="shrink-0 text-body font-medium text-action-text hover:underline"
-                    onClick={() => onEdit(provider)}
-                  >
-                    {t("codex.chooseAccount", {
-                      defaultValue: "选择账号",
+                <span className="inline-flex min-w-0 items-center gap-1 text-sm text-warning-text">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t("codex.boundAccountUnavailable", {
+                      defaultValue: "绑定的账号不可用",
                     })}
-                  </button>
-                </>
+                  </span>
+                </span>
               ) : (
                 <span className="min-w-0 truncate">
                   {t("codex.accountLoading", {
@@ -515,9 +503,7 @@ export function ProviderCard({
           <ProviderCardActions
             providerName={provider.name}
             presentation={presentation}
-            onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
-            onDuplicate={onDuplicate ? () => onDuplicate(provider) : undefined}
             onTest={
               // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放。官方供应商一律不给：
               // 它们 base_url 故意留空、走客户端默认/OAuth 端点，没有可靠的探测目标。
@@ -536,6 +522,9 @@ export function ProviderCard({
             }
             onOpenTerminal={
               onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+            }
+            onEdit={
+              onEditUniversal ? () => onEditUniversal(provider) : undefined
             }
           />
         </div>

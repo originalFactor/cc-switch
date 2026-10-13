@@ -123,11 +123,11 @@ export interface ClaudeDesktopModelRoute {
   supports1m?: boolean;
 }
 
+/** Claude Desktop 3P 写入模式：直连 / 本地路由模型映射 */
+export type ClaudeDesktopMode = "direct" | "proxy";
+
 export type CodexChatThinkingParam =
-  | "none"
-  | "thinking"
-  | "enable_thinking"
-  | "reasoning_split";
+  "none" | "thinking" | "enable_thinking" | "reasoning_split";
 
 export type CodexChatEffortParam =
   | "none"
@@ -176,7 +176,7 @@ export interface ProviderMeta {
   // 是否在切换/同步到 live 时应用通用配置片段
   commonConfigEnabled?: boolean;
   // Claude Desktop 3P 配置写入模式
-  claudeDesktopMode?: "direct" | "proxy";
+  claudeDesktopMode?: ClaudeDesktopMode;
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
   claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
   // 用量查询脚本配置
@@ -193,10 +193,7 @@ export interface ProviderMeta {
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
   // - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
   apiFormat?:
-    | "anthropic"
-    | "openai_chat"
-    | "openai_responses"
-    | "gemini_native";
+    "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
   // Managed Codex Copilot uses this instead of apiFormat. Missing/unknown means auto.
   // Keep the raw string so selections from newer versions survive an edit/save.
   codexCopilotApiFormat?: string;
@@ -257,10 +254,7 @@ export type SkillStorageLocation = "cc_switch" | "unified";
 // - "openai_responses": OpenAI Responses API 格式，需要格式转换
 // - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
 export type ClaudeApiFormat =
-  | "anthropic"
-  | "openai_chat"
-  | "openai_responses"
-  | "gemini_native";
+  "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
 
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
@@ -509,11 +503,7 @@ export type ToolKind =
   | "other";
 
 export type ToolStatus =
-  | "success"
-  | "error"
-  | "interrupted"
-  | "pending"
-  | "unknown";
+  "success" | "error" | "interrupted" | "pending" | "unknown";
 
 export type EventKind =
   | "aborted"
@@ -753,32 +743,119 @@ export interface UniversalProviderApps {
   grokbuild: boolean;
 }
 
-// Claude 模型配置
+// Claude 模型配置：模型名 + 各档显示名 + 1M 声明
 export interface ClaudeModelConfig {
   model?: string;
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  fableModel?: string;
+  /** 上游为 1M 窗口时，主模型写 `model[1M]`（和单应用表单同一个标记） */
+  modelOneM?: boolean;
+  haikuModelOneM?: boolean;
+  sonnetModelOneM?: boolean;
+  opusModelOneM?: boolean;
+  fableModelOneM?: boolean;
+  /** /model 菜单里的显示名（可选） */
+  modelName?: string;
+  haikuModelName?: string;
+  sonnetModelName?: string;
+  opusModelName?: string;
+  fableModelName?: string;
+  /** Claude Code 的 subagent 模型（`CLAUDE_CODE_SUBAGENT_MODEL`） */
+  subagentModel?: string;
+  subagentModelOneM?: boolean;
+  /** 上游协议：anthropic（原生）/ openai_chat / openai_responses / gemini_native */
+  apiFormat?: ClaudeApiFormat;
+  /** 写入配置的认证环境变量名 */
+  apiKeyField?: ClaudeApiKeyField;
+  /** 地址是完整 API 端点（代理直接用，不拼路径） */
+  isFullUrl?: boolean;
+  /** 本地路由时替换发往上游的 User-Agent */
+  customUserAgent?: string;
+  /** 本地路由时对上游请求的 Header / Body 覆盖 */
+  requestOverrides?: LocalProxyRequestOverrides;
+  /** 上游支持 tool_reference 时打开按需加载工具定义（`ENABLE_TOOL_SEARCH`） */
+  enableToolSearch?: boolean;
+  /** 上游严格校验工具 schema 时不让 Artifact 进 tools（`CLAUDE_CODE_DISABLE_ARTIFACT`） */
+  disableArtifact?: boolean;
+  /** 上游不支持服务端 auto mode 检查时关掉（`CLAUDE_CODE_AUTO_MODE_SERVER=0`） */
+  disableAutoModeServer?: boolean;
+  /** 全局：隐藏 AI 署名（顶层 `attribution`），不属于单个供应商 */
+  hideAttribution?: boolean;
+  /** 全局：禁用自动升级（`DISABLE_AUTOUPDATER`），不属于单个供应商 */
+  disableAutoUpgrade?: boolean;
 }
 
-// Claude Desktop 模型配置：三档角色各自的上游模型
+// Claude Desktop 模型配置：接入方式 + 角色路由表
+//
+// 形状和后端 `meta.claudeDesktopMode` / `meta.claudeDesktopModelRoutes` 一一对应：
+// 直连写进 Desktop profile 的 inferenceModels，模型映射经本地路由把三/四档角色
+// 转成上游模型。`routes` 的 key 是 Desktop 认得的角色 ID（claude-sonnet-5 等），
+// 直连时 model 与 key 同名，映射时 model 是实际请求的上游模型。
 export interface ClaudeDesktopModelConfig {
+  /** 接入方式：direct 直连（供应商自己就认 Claude 角色 ID）/ proxy 模型映射 */
+  mode?: ClaudeDesktopMode;
+  /** 模型映射模式下的上游格式 */
+  apiFormat?: ClaudeApiFormat;
+  /** 角色路由表；留空时用后端默认四档 */
+  routes?: Record<string, ClaudeDesktopModelRoute>;
+  /**
+   * 旧版扁平字段（4.0.8 及更早的版本写过）。只读：编辑老供应商时迁移成 `routes`，
+   * 保存一次后就不再有这些键。
+   */
   sonnetModel?: string;
   opusModel?: string;
   haikuModel?: string;
-  /** 菜单显示名（三档共用） */
+  /** 旧版菜单显示名（三档共用） */
   labelOverride?: string;
+  sonnetOneM?: boolean;
+  opusOneM?: boolean;
+  haikuOneM?: boolean;
 }
 
-// Codex 模型配置
+// Codex 模型配置：模型 + 推理档位 + 上游协议 + 上下文窗口
 export interface CodexModelConfig {
   model?: string;
   reasoningEffort?: string;
+  /** 上游格式：openai_responses / openai_chat / anthropic */
+  apiFormat?: CodexApiFormat;
+  /** 走 Anthropic 路径时的认证字段名 */
+  apiKeyField?: ClaudeApiKeyField;
+  /** 地址是完整 API 端点 */
+  isFullUrl?: boolean;
+  /** 顶层 `model_context_window`：勾选 1M 时为 1000000 */
+  contextWindow1M?: boolean;
+  /** 顶层 `model_auto_compact_token_limit`（压缩阈值） */
+  autoCompactLimit?: number;
+  /** 远程压缩：把 `[model_providers.<id>].name` 写成 OpenAI */
+  remoteCompaction?: boolean;
+  /** 走 Chat Completions 时的思考能力声明 */
+  chatReasoning?: CodexChatReasoning;
+  /** 会话级提示词缓存路由（auto / enabled / disabled） */
+  promptCacheRouting?: PromptCacheRoutingMode;
+  /** 走 Anthropic 路径时模拟 Claude Code 客户端 */
+  impersonateClaudeCode?: boolean;
+  /** 走 Anthropic 路径时的 max_tokens 覆盖（>0） */
+  maxOutputTokens?: number;
+  /** 模型目录（/model 菜单里发布的模型） */
+  catalogModels?: CodexCatalogModel[];
+  /** 子代理模型：`config.toml` 的 `[agents].default_subagent_model` */
+  subagentModel?: string;
+  /** 子代理推理档位：`[agents].default_subagent_reasoning_effort` */
+  subagentReasoningEffort?: string;
+  /** 本地路由时的 User-Agent 与请求覆盖 */
+  customUserAgent?: string;
+  requestOverrides?: LocalProxyRequestOverrides;
 }
 
 // Gemini 模型配置
 export interface GeminiModelConfig {
   model?: string;
+  /** 任意 `settingsConfig.env` 键（.env 文件） */
+  env?: Record<string, string>;
+  /** 任意 `settingsConfig.config` 键（settings.json） */
+  config?: Record<string, unknown>;
 }
 
 // Grok Build 模型配置
@@ -789,6 +866,8 @@ export interface GrokBuildModelConfig {
   upstreamModel?: string;
   /** 上游协议：responses / chat_completions / anthropic_messages */
   apiBackend?: string;
+  /** 写入 TOML 的上下文窗口 */
+  contextWindow?: number;
 }
 
 // 各应用的模型配置
@@ -800,15 +879,23 @@ export interface UniversalProviderModels {
   grokbuild?: GrokBuildModelConfig;
 }
 
+/** 统一供应商的一条可用模型：`/v1/models` 的 id + models.dev 的名称与上下文窗口。 */
+export interface AvailableModel {
+  id: string;
+  displayName?: string;
+  contextWindow?: number;
+}
+
 // 统一供应商（跨应用共享配置）
 export interface UniversalProvider {
   id: string;
   name: string;
-  providerType: string; // "newapi" | "custom" 等
   apps: UniversalProviderApps;
   baseUrl: string;
   apiKey: string;
   models: UniversalProviderModels;
+  /** 从 `/v1/models` 拉取、models.dev 补全的可用模型列表；所有应用共用。 */
+  availableModels?: AvailableModel[];
   websiteUrl?: string;
   notes?: string;
   icon?: string;
