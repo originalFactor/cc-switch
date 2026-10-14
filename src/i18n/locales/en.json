@@ -80,7 +80,6 @@
     "disableArtifactHelp": "Leaves the Artifact tool out of requests. Some third-party gateways reject its schema and return 400 on every request. Switches with the provider.",
     "disableAutoModeServer": "Disable Auto Mode Server Checks",
     "disableAutoModeServerHelp": "Gateways can't run the server-side check, so auto mode pauses once per session with a \"not eligible\" notice, then falls back to the local check after you press Enter. Checked, it uses the local check right away with no notice. Leave it unchecked on official endpoints.",
-    "keyFieldsHint": "Endpoint, key, models, context window and compatibility switches follow the provider; everything else is a global Claude Code setting and applies to every provider once saved.",
     "inactiveFieldsHint": "This provider still stores {{count}} field(s) that do not take effect when switching. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
     "addToGlobalSettings": "Add to global settings"
   },
@@ -254,13 +253,8 @@
     "routeRoleHaiku": "Haiku",
     "labelOverrideLabel": "Menu display name",
     "upstreamModelLabel": "Requested model",
-    "supports1mLabel": "Declare 1M",
-    "supports1mShort": "1M",
-    "directModelListTitle": "Model List",
     "directModelListCollapsedHint": "Native Claude model providers usually do not need this. Claude Desktop will fetch /v1/models automatically.",
-    "directModelListHint": "Configure the Sonnet, Opus, and Haiku models available to Claude Desktop. Leave this empty to let Claude Desktop fetch /v1/models automatically. Checking 1M declares 1M context support.",
     "directModelInvalid": "Direct models must use Claude Desktop-recognized Sonnet / Opus / Haiku model IDs",
-    "addModel": "Add model",
     "addRoute": "Add model",
     "routeInvalid": "Choose a model role and enter the requested model",
     "routesRequired": "At least one model mapping is required",
@@ -1462,7 +1456,6 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
-    "modelDisplayNameLabel": "Display name",
     "modelDisplayNamePlaceholder": "e.g. DeepSeek V4 Pro",
     "modelNoDisplayName": "Not shown in /model",
     "requestModelLabel": "Requested model",
@@ -1675,7 +1668,6 @@
     "anthropicAuthFieldHint": "Choose which header carries the API key to the gateway: ANTHROPIC_AUTH_TOKEN sends Authorization: Bearer; ANTHROPIC_API_KEY sends x-api-key. Only one is sent.",
     "impersonateClaudeCodeLabel": "Emulate Claude Code client",
     "impersonateClaudeCodeHint": "Enable when the gateway (or its upstream) restricts usage to Claude Code: spoofs the User-Agent, anthropic-beta and x-app headers, and injects the Claude Code identity as the first system prompt line.",
-    "maxOutputTokensLabel": "Max output tokens",
     "maxOutputTokensPlaceholder": "Leave empty to use the default 8192",
     "maxOutputTokensHint": "Codex does not forward model_max_output_tokens in the request body, so the default 8192 ceiling can truncate long or thinking-heavy responses (stop_reason=max_tokens). This value overrides the request's max_tokens on the Anthropic path. Do not exceed the real output ceiling of the model/gateway or it may 400. Leave empty to use the default 8192.",
     "promptCacheRoutingLabel": "Prompt cache routing",
@@ -1686,7 +1678,6 @@
     "upstreamModelName": "Upstream Model Name",
     "upstreamModelNameHint": "For Chat format, enter the real upstream model here; routing converts Codex Responses requests to Chat Completions while keeping this model.",
     "modelNamePlaceholder": "e.g., gpt-5-codex",
-    "contextWindow1M": "1M Context Window",
     "contextWindow": "Context Window",
     "contextWindowPlaceholder": "e.g., 128000",
     "autoCompactLimit": "Auto Compact Limit",
@@ -1733,7 +1724,8 @@
     "inactiveFieldsHint": "This provider still stores {{count}} settings that are not applied when switching. Click one to copy its TOML and paste it above if you need it; the stored values are kept.",
     "inactiveFieldCopied": "Copied",
     "subagentModelLabel": "Subagent model",
-    "subagentReasoningEffortLabel": "Subagent reasoning effort"
+    "subagentReasoningEffortLabel": "Subagent reasoning effort",
+    "reasoningEffortLabel": "Reasoning Effort"
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -1744,7 +1736,6 @@
     "inactiveFieldsHint": "This provider still stores {{count}} settings that do not follow the provider. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
     "addToGlobalSettings": "Add to global settings"
   },
-
   "usage": {
     "title": "Usage Statistics",
     "subtitle": "View AI model usage and cost statistics",
@@ -3156,6 +3147,7 @@
   },
   "universalProvider": {
     "availableModels": "Available models",
+    "availableModelsCount": "{{count}} models",
     "availableModelsHint": "Shared by every app — the dropdowns and each app's model catalog come from this list.",
     "availableModelsEmpty": "No models yet. Fetch the model list, or add one by hand.",
     "modelId": "Model ID",
@@ -3188,7 +3180,6 @@
     "notesPlaceholder": "Optional: Add notes",
     "grokProfile": "Profile",
     "grokUpstreamModel": "Upstream model",
-    "grokContextWindow": "Context window",
     "apiBackend": "Upstream protocol",
     "model": "Model",
     "added": "Universal provider added",
@@ -3213,9 +3204,10 @@
     "mainModel": "Main model",
     "apiFormat": "Upstream format",
     "apiKeyField": "Auth field",
-    "modelOneM": "Declare 1M support",
-    "mainModelOneM": "Main model",
-    "subagentModel": "Subagent model"
+    "subagentModel": "Subagent model",
+    "effortLevelsLabel": "Effort levels",
+    "effortLevelsFollowModel": "Follow model metadata",
+    "effortLevelsFollowModelHelp": "Build catalog levels from the selected model on models.dev"
   },
   "subscription": {
     "title": "Subscription Quota",

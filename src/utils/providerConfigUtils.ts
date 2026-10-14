@@ -220,10 +220,6 @@ const TOML_MODEL_PROVIDER_LINE_PATTERN =
 const TOML_ANY_MODEL_PROVIDER_LINE_PATTERN = /^\s*model_provider\s*=/;
 // 后端写 live 时用的路由表 id（ROUTE_ID）
 const CODEX_CUSTOM_ROUTE_ID = "custom";
-const TOML_PROVIDER_NAME_PATTERN =
-  /^\s*name\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
-const TOML_PROVIDER_NAME_REPLACE_PATTERN =
-  /^(\s*name\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
 // Keep in sync with the backend list in src-tauri/src/codex_config.rs
 // (CODEX_RESERVED_MODEL_PROVIDER_IDS).
 const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
@@ -485,9 +481,9 @@ const isOtherProviderSection = (
 ): boolean =>
   Boolean(
     sectionName &&
-      sectionName !== targetSectionName &&
-      (sectionName === "model_providers" ||
-        sectionName.startsWith("model_providers.")),
+    sectionName !== targetSectionName &&
+    (sectionName === "model_providers" ||
+      sectionName.startsWith("model_providers.")),
   );
 
 const getRecoverableBaseUrlAssignments = (
@@ -644,182 +640,6 @@ export const extractCodexWireApi = (
   } catch {
     return undefined;
   }
-};
-
-// 在 Codex 的 TOML 配置文本中写入或更新 wire_api 字段
-export const setCodexWireApi = (
-  configText: string,
-  wireApi: "responses" | "chat",
-): string => {
-  const normalizedText = normalizeTomlText(configText);
-  const lines = normalizedText ? normalizedText.split("\n") : [];
-  const targetSectionName = getCodexProviderSectionName(normalizedText);
-  const replacementLine = `wire_api = "${wireApi}"`;
-  const allAssignments = findTomlAssignments(lines, TOML_WIRE_API_PATTERN);
-  const recoverableAssignments = getRecoverableCodexProviderAssignments(
-    allAssignments,
-    targetSectionName,
-  );
-
-  if (targetSectionName) {
-    let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
-    const targetMatch = targetSectionRange
-      ? findTomlAssignmentInRange(
-          lines,
-          TOML_WIRE_API_PATTERN,
-          targetSectionRange.bodyStartIndex,
-          targetSectionRange.bodyEndIndex,
-          targetSectionName,
-        )
-      : undefined;
-
-    if (targetMatch) {
-      lines[targetMatch.index] = replacementLine;
-      return finalizeTomlText(lines);
-    }
-
-    if (recoverableAssignments.length === 1) {
-      lines.splice(recoverableAssignments[0].index, 1);
-      targetSectionRange = getTomlSectionRange(lines, targetSectionName);
-    }
-
-    if (targetSectionRange) {
-      const insertIndex = getTomlSectionInsertIndex(lines, targetSectionRange);
-      lines.splice(insertIndex, 0, replacementLine);
-      return finalizeTomlText(lines);
-    }
-
-    if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
-      lines.push("");
-    }
-    lines.push(`[${targetSectionName}]`, replacementLine);
-    return finalizeTomlText(lines);
-  }
-
-  const topLevelEndIndex = getTopLevelEndIndex(lines);
-  const topLevelMatch = findTomlAssignmentInRange(
-    lines,
-    TOML_WIRE_API_PATTERN,
-    0,
-    topLevelEndIndex,
-  );
-  if (topLevelMatch) {
-    lines[topLevelMatch.index] = replacementLine;
-    return finalizeTomlText(lines);
-  }
-
-  const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
-  if (modelProviderIndex !== -1) {
-    lines.splice(modelProviderIndex + 1, 0, replacementLine);
-    return finalizeTomlText(lines);
-  }
-
-  if (lines.length === 0) {
-    return `${replacementLine}\n`;
-  }
-
-  lines.splice(topLevelEndIndex, 0, replacementLine);
-  return finalizeTomlText(lines);
-};
-
-export const isCodexRemoteCompactionEnabled = (
-  configText: string | undefined | null,
-): boolean => {
-  try {
-    const raw = typeof configText === "string" ? configText : "";
-    const text = normalizeTomlText(raw);
-    if (!text) return false;
-
-    try {
-      const parsed = parseToml(text) as Record<string, any>;
-      const providerId =
-        typeof parsed.model_provider === "string"
-          ? parsed.model_provider.trim()
-          : "";
-      if (!providerId || !isCustomCodexModelProviderId(providerId)) {
-        return false;
-      }
-
-      return parsed.model_providers?.[providerId]?.name === "OpenAI";
-    } catch {
-      // Fall back to line scanning while the user is editing invalid TOML.
-    }
-
-    const lines = text.split("\n");
-    const targetSectionName = getCodexCustomProviderSectionName(text);
-    if (!targetSectionName) return false;
-
-    const sectionRange = getTomlSectionRange(lines, targetSectionName);
-    if (!sectionRange) return false;
-
-    const nameAssignment = findTomlAssignmentInRange(
-      lines,
-      TOML_PROVIDER_NAME_PATTERN,
-      sectionRange.bodyStartIndex,
-      sectionRange.bodyEndIndex,
-      targetSectionName,
-    );
-
-    return nameAssignment?.value === "OpenAI";
-  } catch {
-    return false;
-  }
-};
-
-export const setCodexRemoteCompaction = (
-  configText: string,
-  enabled: boolean,
-  fallbackProviderName?: string,
-): string => {
-  const normalizedText = normalizeTomlText(configText);
-  const lines = normalizedText ? normalizedText.split("\n") : [];
-  const targetSectionName = getCodexCustomProviderSectionName(normalizedText);
-
-  if (!targetSectionName) {
-    return normalizedText;
-  }
-
-  let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
-  const replacementName = enabled
-    ? "OpenAI"
-    : fallbackProviderName?.trim() ||
-      getCodexModelProviderName(normalizedText) ||
-      "custom";
-  const replacementLine = `name = ${tomlBasicString(replacementName)}`;
-
-  if (targetSectionRange) {
-    const nameLine = findTomlLineInRange(
-      lines,
-      TOML_PROVIDER_NAME_REPLACE_PATTERN,
-      targetSectionRange.bodyStartIndex,
-      targetSectionRange.bodyEndIndex,
-    );
-
-    if (nameLine !== -1) {
-      lines[nameLine] = lines[nameLine].replace(
-        TOML_PROVIDER_NAME_REPLACE_PATTERN,
-        `$1${tomlBasicString(replacementName)}$2`,
-      );
-      return finalizeTomlText(lines);
-    }
-
-    lines.splice(
-      getTomlSectionInsertIndex(lines, targetSectionRange),
-      0,
-      replacementLine,
-    );
-    return finalizeTomlText(lines);
-  }
-
-  if (!enabled) return normalizedText;
-
-  if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
-    lines.push("");
-  }
-
-  lines.push(`[${targetSectionName}]`, replacementLine);
-  targetSectionRange = getTomlSectionRange(lines, targetSectionName);
-  return targetSectionRange ? finalizeTomlText(lines) : normalizedText;
 };
 
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）

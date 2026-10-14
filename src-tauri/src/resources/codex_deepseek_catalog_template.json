@@ -7,10 +7,7 @@
       "default_verbosity": "low",
       "apply_patch_tool_type": "freeform",
       "web_search_tool_type": "text",
-      "input_modalities": [
-        "text",
-        "image"
-      ],
+      "input_modalities": ["text", "image"],
       "supports_image_detail_original": true,
       "truncation_policy": {
         "mode": "tokens",
@@ -75,9 +72,7 @@
       "default_verbosity": "low",
       "apply_patch_tool_type": "freeform",
       "web_search_tool_type": "text",
-      "input_modalities": [
-        "text"
-      ],
+      "input_modalities": ["text"],
       "supports_image_detail_original": false,
       "truncation_policy": {
         "mode": "tokens",

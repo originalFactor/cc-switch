@@ -117,16 +117,24 @@ const renderModal = (props: Partial<UniversalProviderFormModalProps> = {}) => {
 };
 
 /**
- * 应用卡片根节点：应用名 → 标题行 → 卡片（含该应用的专属字段）。
+ * 应用区块根节点：应用名 → 标题行 → 展开后的内容（含该应用的专属字段）。
  *
- * 去掉应用开关后卡片恒定展开，按「卡片边框容器」挑出根节点。卡片内的配置预览也带一个
- * 同名的应用标题，所以取包含输入控件的那个。
+ * 区块默认收起：先点应用标题把它展开（内容里才有输入控件），再按标题文字找到
+ * AppSection 的边框容器。配置预览也带一个同名的应用标题，所以取包含输入控件的
+ * 那个；收起时内容根本不在 DOM 里，不会产生歧义。
  */
-const appRow = (label: string) =>
-  screen
+const appRow = (label: string) => {
+  const header = screen
+    .getAllByRole("button", { expanded: undefined })
+    .find((button) => button.textContent?.includes(label));
+  if (header && header.getAttribute("aria-expanded") === "false") {
+    fireEvent.click(header);
+  }
+  return screen
     .getAllByText(label)
     .map((el) => el.closest<HTMLElement>("div.rounded-lg.border")!)
     .find((node) => node && node.querySelector("input, textarea"))!;
+};
 
 // Radix 的 Select 选项在 jsdom 里要求 scrollIntoView
 beforeAll(() => {
@@ -271,13 +279,9 @@ describe("UniversalProviderFormModal", () => {
     // 模型只能从下拉选，先拉一份可用列表（新建 → 用表单里的地址和 Key 现拉）
     await user.click(screen.getByRole("button", { name: LABEL.fetchModels }));
 
-    // Claude：1M 声明、上游格式、认证字段、User-Agent
+    // Claude：上游格式、User-Agent（1M 与显示名都按所选模型的元数据自动判定）
     const claude = appRow("Claude Code");
-    // 声明支持 1M 的勾选框按档位命名（主模型 / Sonnet / Opus / Fable / Haiku）
-    await user.click(within(claude).getByRole("checkbox", { name: "Sonnet" }));
-    await user.click(within(claude).getByRole("checkbox", { name: "Fable" }));
-    await user.click(within(claude).getByRole("checkbox", { name: "主模型" }));
-    // Fable 档也从下拉里选（可用列表里给它一个值）
+    // Fable 档从下拉里选（可用列表里给它一个值）
     await pickModel(user, "Fable", "claude-fable-4-20250514");
     await user.click(
       within(claude).getByRole("combobox", { name: "上游格式" }),
@@ -288,11 +292,8 @@ describe("UniversalProviderFormModal", () => {
       "relay/1.0",
     );
 
-    // Codex：1M 上下文窗口、压缩阈值、远程压缩、完整 URL
+    // Codex：压缩阈值、远程压缩（上下文窗口跟模型元数据，无输入框）
     const codex = appRow("OpenAI Codex");
-    await user.click(
-      within(codex).getByRole("checkbox", { name: LABEL.oneMWindow }),
-    );
     await user.click(
       within(codex).getByRole("checkbox", { name: LABEL.remoteCompaction }),
     );
@@ -305,9 +306,8 @@ describe("UniversalProviderFormModal", () => {
       target: { value: '{"GEMINI_CLI_CUSTOM_HEADERS": "X-A: 1"}' },
     });
 
-    // Codex 的模型、最大输出 tokens、请求覆盖。目录不再手填：后端按可用模型列表自动生成
+    // Codex 的模型、子代理、请求覆盖。目录不再手填：后端按可用模型列表自动生成
     const codexCard = appRow("OpenAI Codex");
-    await user.type(within(codexCard).getByPlaceholderText("32000"), "16000");
     await user.click(
       within(codexCard).getByRole("combobox", { name: "子代理模型" }),
     );
@@ -346,19 +346,21 @@ describe("UniversalProviderFormModal", () => {
     await user.click(screen.getByRole("button", { name: LABEL.add }));
 
     const saved = onSave.mock.calls[0][0] as UniversalProvider;
-    expect(saved.models.claude?.sonnetModelOneM).toBe(true);
-    expect(saved.models.claude?.fableModelOneM).toBe(true);
+    // 1M 声明按所选模型的上下文窗口自动判定：claude-fable-4-20250514 只有
+    // 200000，不声明；没选的档也一律不声明。
+    expect(saved.models.claude?.sonnetModelOneM).toBeUndefined();
+    expect(saved.models.claude?.fableModelOneM).toBeUndefined();
+    expect(saved.models.claude?.modelOneM).toBeUndefined();
     expect(saved.models.claude?.fableModel).toBe("claude-fable-4-20250514");
-    expect(saved.models.claude?.modelOneM).toBe(true);
+    // 档位显示名跟随所选模型在可用列表里的显示名自动写入
+    expect(saved.models.claude?.fableModelName).toBe("Fable");
     expect(saved.models.claude?.apiFormat).toBe("openai_responses");
     expect(saved.models.claude?.customUserAgent).toBe("relay/1.0");
-    expect(saved.models.codex?.contextWindow1M).toBe(true);
     expect(saved.models.codex?.remoteCompaction).toBe(true);
     expect(saved.models.codex?.autoCompactLimit).toBe(800000);
     expect(saved.models.gemini?.env).toEqual({
       GEMINI_CLI_CUSTOM_HEADERS: "X-A: 1",
     });
-    expect(saved.models.codex?.maxOutputTokens).toBe(16000);
     expect(saved.models.codex?.subagentModel).toBe("gpt-5.6-sol");
     expect(saved.models.codex?.subagentReasoningEffort).toBe("medium");
     // 目录不落进 models：后端拿 availableModels 自动生成（此处验证它没被表单写脏）
@@ -383,7 +385,7 @@ describe("UniversalProviderFormModal", () => {
     // 这个用例覆盖五个应用的全部字段，交互次数远多于其他用例
   }, 20000);
 
-  it("新增时就显示配置预览，并把兼容开关和全局开关分开保存", async () => {
+  it("新增时就显示配置预览，五个开关都进保存的 models", async () => {
     const user = userEvent.setup();
     const { onSave } = renderModal();
 
@@ -400,7 +402,7 @@ describe("UniversalProviderFormModal", () => {
       ),
     ).toBe(true);
 
-    // 三个随供应商切换的开关
+    // 五个开关在同一行：三个上游兼容 + 署名 / 自动升级（都归这家供应商所有）
     await user.click(
       within(claude).getByRole("checkbox", { name: "启用 Tool Search" }),
     );
@@ -412,7 +414,6 @@ describe("UniversalProviderFormModal", () => {
         name: "关闭 auto mode 服务端检查",
       }),
     );
-    // 两个全局开关也在 Claude 卡片里（跟着预览一起）
     await user.click(
       within(claude).getByRole("checkbox", { name: "隐藏 AI 署名" }),
     );
@@ -426,7 +427,6 @@ describe("UniversalProviderFormModal", () => {
     expect(saved.models.claude?.enableToolSearch).toBe(true);
     expect(saved.models.claude?.disableArtifact).toBe(true);
     expect(saved.models.claude?.disableAutoModeServer).toBe(true);
-    // 全局开关也随统一供应商保存，后端据此写 live（不进子卡行）
     expect(saved.models.claude?.hideAttribution).toBe(true);
     expect(saved.models.claude?.disableAutoUpgrade).toBe(true);
   }, 20000);
@@ -480,9 +480,6 @@ describe("UniversalProviderFormModal", () => {
     expect(within(desktop).getAllByLabelText("菜单显示名")[0]).toHaveValue(
       "OldGateway",
     );
-    expect(
-      within(desktop).getAllByRole("checkbox", { name: "1M" })[0],
-    ).toBeChecked();
 
     await user.click(screen.getByRole("button", { name: LABEL.saveAndSync }));
     const confirm = screen.getByRole("dialog");
@@ -491,12 +488,12 @@ describe("UniversalProviderFormModal", () => {
     );
 
     const saved = onSaveAndSync.mock.calls[0][0] as UniversalProvider;
-    // 保存后只剩新形状：旧字段不再写回
+    // 保存后只剩新形状：旧字段不再写回。1M 声明按可用列表的上下文窗口判定，
+    // 旧值模型不在列表里 → 三档都不声明。
     expect(saved.models.claudeDesktop?.routes).toEqual({
       "claude-sonnet-5": {
         model: "old-sonnet",
         labelOverride: "OldGateway",
-        supports1m: true,
       },
       "claude-opus-5": { model: "old-opus", labelOverride: "OldGateway" },
       "claude-haiku-4-5": { model: "old-haiku", labelOverride: "OldGateway" },

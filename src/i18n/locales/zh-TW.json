@@ -80,7 +80,6 @@
     "disableArtifactHelp": "不把 Artifact 工具送給模型。部分第三方閘道會因它的 schema 對每個請求回報 400。隨供應商切換。",
     "disableAutoModeServer": "停用 auto mode 伺服器端檢查",
     "disableAutoModeServerHelp": "閘道不支援伺服器端檢查，auto mode 每個工作階段會先停下提示一次「不符合條件」，按 Enter 後改用本機檢查。勾選後直接用本機檢查，不再提示。官方端點不要勾選。",
-    "keyFieldsHint": "位址、Key、模型、上下文視窗和相容開關隨供應商切換；其餘欄位是 Claude Code 全域設定，儲存後對所有供應商生效。",
     "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的欄位。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
     "addToGlobalSettings": "加入全域設定"
   },
@@ -254,13 +253,8 @@
     "routeRoleHaiku": "Haiku",
     "labelOverrideLabel": "選單顯示名稱",
     "upstreamModelLabel": "實際請求模型",
-    "supports1mLabel": "聲明支援 1M",
-    "supports1mShort": "1M",
-    "directModelListTitle": "模型清單",
     "directModelListCollapsedHint": "原生 Claude 模型供應商通常不需填寫，Claude Desktop 會自動讀取 /v1/models。",
-    "directModelListHint": "設定 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空時 Claude Desktop 會自動讀取 /v1/models；勾選 1M 會聲明支援 1M 上下文。",
     "directModelInvalid": "直連模型必須使用 Claude Desktop 可識別的 Sonnet / Opus / Haiku 模型名稱",
-    "addModel": "新增模型",
     "addRoute": "新增模型",
     "routeInvalid": "請選擇模型角色並填寫實際請求模型",
     "routesRequired": "至少填寫一個模型對應",
@@ -1463,7 +1457,6 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
-    "modelDisplayNameLabel": "顯示名稱",
     "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
     "modelNoDisplayName": "不顯示於 /model 選單",
     "requestModelLabel": "實際請求模型",
@@ -1663,7 +1656,6 @@
     "modelNameHint": "指定使用的模型，將自動更新到 config.toml 中",
     "modelName": "模型名稱",
     "modelNamePlaceholder": "例如: gpt-5-codex",
-    "contextWindow1M": "1M 上下文視窗",
     "autoCompactLimit": "壓縮閾值",
     "autoCompactLimitHint": "上下文 token 數達到此閾值時自動壓縮歷史",
     "autoCompactLimitPlaceholder": "例如: 90000",
@@ -1681,7 +1673,6 @@
     "anthropicAuthFieldHint": "選擇閘道接收 API Key 的請求標頭：ANTHROPIC_AUTH_TOKEN 傳送 Authorization: Bearer；ANTHROPIC_API_KEY 傳送 x-api-key。兩者只傳其一。",
     "impersonateClaudeCodeLabel": "模擬 Claude Code 用戶端",
     "impersonateClaudeCodeHint": "閘道或其上游限制只能透過 Claude Code 使用時開啟：偽裝 User-Agent、anthropic-beta、x-app 請求標頭，並在系統提示首行注入 Claude Code 身分。",
-    "maxOutputTokensLabel": "最大輸出 tokens",
     "maxOutputTokensPlaceholder": "留空則使用預設 8192",
     "maxOutputTokensHint": "Codex 不會把 model_max_output_tokens 寫進請求體，預設上限 8192 容易在長回答或深度思考時被截斷（stop_reason=max_tokens）。此處設定會作為 Anthropic 的 max_tokens 覆蓋請求值。請勿超過該模型／閘道的真實輸出上限，否則可能 400。留空使用預設 8192。",
     "promptCacheRoutingLabel": "提示詞快取路由",
@@ -1734,7 +1725,8 @@
     "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊可複製它的 TOML，依需要貼到上方；供應商裡保存的原值不會刪除。",
     "inactiveFieldCopied": "已複製",
     "subagentModelLabel": "子代理模型",
-    "subagentReasoningEffortLabel": "子代理推理檔位"
+    "subagentReasoningEffortLabel": "子代理推理檔位",
+    "reasoningEffortLabel": "Reasoning Effort"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
@@ -1745,7 +1737,6 @@
     "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
     "addToGlobalSettings": "加入全域設定"
   },
-
   "usage": {
     "title": "使用統計",
     "subtitle": "查看 AI 模型的使用情況和成本統計",
@@ -3157,6 +3148,7 @@
   },
   "universalProvider": {
     "availableModels": "可用模型列表",
+    "availableModelsCount": "{{count}} 個模型",
     "availableModelsHint": "所有應用程式共用這一份；下拉選單中的模型與各應用程式的模型目錄都由它而來。",
     "availableModelsEmpty": "還沒有模型。先「取得模型列表」，或手動新增一筆。",
     "modelId": "模型 ID",
@@ -3189,7 +3181,6 @@
     "notesPlaceholder": "選填：加入備註資訊",
     "grokProfile": "設定檔",
     "grokUpstreamModel": "上游模型",
-    "grokContextWindow": "上下文視窗",
     "apiBackend": "上游協定",
     "model": "模型",
     "added": "通用供應商已新增",
@@ -3214,9 +3205,10 @@
     "mainModel": "主模型",
     "apiFormat": "上游格式",
     "apiKeyField": "認證欄位",
-    "modelOneM": "宣告支援 1M",
-    "mainModelOneM": "主模型",
-    "subagentModel": "Subagent 模型"
+    "subagentModel": "Subagent 模型",
+    "effortLevelsLabel": "思考等級",
+    "effortLevelsFollowModel": "跟隨模型中繼資料",
+    "effortLevelsFollowModelHelp": "按所選模型在 models.dev 宣告的檔位產生目錄"
   },
   "subscription": {
     "title": "訂閱額度",

@@ -72,3 +72,53 @@ export function isUniversalChildId(
 ): boolean {
   return universalParentIdOf(providerId, appId) !== undefined;
 }
+
+/**
+ * effort 档位全集（预置顺序即展示/写入顺序）。用户在统一供应商里勾选启用哪些；
+ * 勾选集与各模型元数据（models.dev reasoning_options）求交集后写进目录的
+ * `reasoningLevels`，并约束 effort 下拉的选项。
+ */
+export const EFFORT_PRESETS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const;
+
+/**
+ * 触发器标签：相邻 ≥3 个的连续预置档位压成「首 → 末」（跳过 minimal 时是
+ * "none, low → max"）。范围不会跨过未选档位，所以不会暗示没选的档。
+ * 非预置顺序保持原样列表。
+ */
+export function formatReasoningLevelsLabel(levels: string[]): string {
+  const canonical = EFFORT_PRESETS as readonly string[];
+  const positions = levels.map((level) => canonical.indexOf(level));
+  const ordered = positions.every(
+    (position, index) =>
+      position >= 0 && (index === 0 || position > positions[index - 1]),
+  );
+  if (!ordered) return levels.join(", ");
+
+  const parts: string[] = [];
+  let runStart = 0;
+  for (let index = 1; index <= levels.length; index++) {
+    if (
+      index < levels.length &&
+      positions[index] === positions[index - 1] + 1
+    ) {
+      continue;
+    }
+    const run = levels.slice(runStart, index);
+    if (run.length >= 3) {
+      parts.push(`${run[0]} → ${run[run.length - 1]}`);
+    } else {
+      parts.push(...run);
+    }
+    runStart = index;
+  }
+  return parts.join(", ");
+}

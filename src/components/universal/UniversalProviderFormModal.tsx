@@ -1,14 +1,14 @@
 import type * as React from "react";
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
+  ChevronRight,
   Eye,
   EyeOff,
   RefreshCw,
   Trash2,
-  X,
   Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,11 @@ import {
 } from "@/components/ui/select";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { IconPicker } from "@/components/IconPicker";
@@ -40,6 +45,7 @@ import JsonEditor from "@/components/JsonEditor";
 import { ModelSelect } from "./ModelSelect";
 import { AvailableModelsEditor } from "./AvailableModelsEditor";
 import { universalProvidersApi } from "@/lib/api";
+import { EFFORT_PRESETS } from "@/utils/universalProvider";
 import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import type {
@@ -87,7 +93,6 @@ type DesktopRouteRow = {
   routeId: string;
   model: string;
   labelOverride: string;
-  supports1m: boolean;
 };
 
 /** 默认四档（模型映射模式）：档位固定，上游模型留空由用户填。 */
@@ -96,7 +101,6 @@ const defaultDesktopRouteRows = (): DesktopRouteRow[] =>
     routeId: id,
     model: "",
     labelOverride: "",
-    supports1m: false,
   }));
 
 /** 预设/已存的路由表 → 可编辑行；没有就用固定四档。 */
@@ -120,17 +124,16 @@ const desktopRoutesOf = (
   }
   const label = config.labelOverride?.trim() || undefined;
   const legacy: Record<string, ClaudeDesktopModelRoute> = {};
-  const add = (routeId: string, model?: string, oneM?: boolean) => {
+  const add = (routeId: string, model?: string) => {
     if (!model?.trim()) return;
     legacy[routeId] = {
       model: model.trim(),
       ...(label ? { labelOverride: label } : {}),
-      ...(oneM ? { supports1m: true } : {}),
     };
   };
-  add("claude-sonnet-5", config.sonnetModel, config.sonnetOneM);
-  add("claude-opus-5", config.opusModel, config.opusOneM);
-  add("claude-haiku-4-5", config.haikuModel, config.haikuOneM);
+  add("claude-sonnet-5", config.sonnetModel);
+  add("claude-opus-5", config.opusModel);
+  add("claude-haiku-4-5", config.haikuModel);
   return Object.keys(legacy).length > 0 ? legacy : undefined;
 };
 
@@ -142,7 +145,6 @@ const desktopRouteRowsFrom = (
     routeId,
     model: route.model ?? "",
     labelOverride: route.labelOverride ?? "",
-    supports1m: route.supports1m === true,
   }));
 
 /**
@@ -151,6 +153,23 @@ const desktopRouteRowsFrom = (
  */
 const desktopRoleLabel = (routeId: string) =>
   DESKTOP_ROLE_ROUTES.find(({ id }) => id === routeId)?.label ?? routeId;
+
+/**
+ * Claude Desktop 直连只认 `claude-sonnet-* / claude-opus-* / claude-haiku-* /
+ * claude-fable-*`（或 `anthropic/claude-…`）这些名字。与后端
+ * `claude_desktop_config::is_claude_safe_model_id` 同一条规则。
+ */
+const isClaudeSafeModelId = (model: string) => {
+  const normalized = model.trim().toLowerCase();
+  const tail = normalized.startsWith("anthropic/claude-")
+    ? normalized.slice("anthropic/claude-".length)
+    : (normalized.match(/^claude-(.+)$/)?.[1] ?? null);
+  if (tail === null) return false;
+  return ["sonnet-", "opus-", "haiku-", "fable-"].some((prefix) => {
+    if (!tail.startsWith(prefix)) return false;
+    return tail.slice(prefix.length).length > 0;
+  });
+};
 
 /** 把存下来的请求覆盖还原成两个文本框里的文本 */
 const overridesToText = (
@@ -163,6 +182,95 @@ const overridesToText = (
     ? JSON.stringify(models.requestOverrides.body, null, 2)
     : "",
 });
+
+/** 应用区块的展开状态：默认全收起，只看应用名和摘要；点标题展开。 */
+type AppSectionKey =
+  "claude" | "codex" | "gemini" | "claudeDesktop" | "grokbuild";
+
+/**
+ * 应用区块的标题行：图标 + 应用名 + 已配置摘要，点击整行展开/收起。
+ *
+ * 折叠是这里的主要布局手段——每个应用的字段都很多，全展开时一屏只看得下一张卡。
+ * 摘要让收起时也能一眼看出「这个应用配了什么」。
+ */
+function AppSection({
+  icon,
+  name,
+  summary,
+  open,
+  onOpenChange,
+  children,
+}: {
+  icon: string;
+  name: string;
+  /** 收起时标题右侧的一行摘要；空数组就不显示。 */
+  summary?: string[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <div className="rounded-lg border">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            aria-expanded={open}
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+          >
+            <ChevronRight
+              className={`h-4 w-4 shrink-0 text-fg-3 transition-transform ${
+                open ? "rotate-90" : ""
+              }`}
+            />
+            <ProviderIcon icon={icon} name={name} size={20} />
+            <span className="font-medium">{name}</span>
+            {summary && summary.length > 0 && (
+              <span className="min-w-0 flex-1 truncate text-right text-xs text-fg-3">
+                {summary.join(" · ")}
+              </span>
+            )}
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="border-t px-3 pb-3 pt-3">{children}</div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  );
+}
+
+/** 一行内联的开关组（勾选框 + 文案 + 可选帮助问号）。 */
+function CheckPill({
+  checked,
+  onChange,
+  label,
+  help,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  help?: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-fg-2">
+        <input
+          type="checkbox"
+          className="ui-checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        {label}
+      </label>
+      {help && (
+        <HoverTip content={help}>
+          <span className="text-fg-3">?</span>
+        </HoverTip>
+      )}
+    </span>
+  );
+}
 
 export function UniversalProviderFormModal({
   isOpen,
@@ -203,16 +311,6 @@ export function UniversalProviderFormModal({
     headers: "",
     body: "",
   });
-  // Claude Code 的两个全局开关：对所有供应商生效，写进 live 而不是供应商行。
-  // 只在用户这次真的动过开关时才写出去：否则「打开编辑器再保存」会把别处设好的
-  // 全局值清掉。
-  const [claudeHideAttribution, setClaudeHideAttribution] = useState(false);
-  const [claudeDisableAutoUpgrade, setClaudeDisableAutoUpgrade] =
-    useState(false);
-  const claudeGlobalsTouched = useRef({
-    hideAttribution: false,
-    disableAutoUpgrade: false,
-  });
   const [codexOverrides, setCodexOverrides] = useState({
     headers: "",
     body: "",
@@ -234,6 +332,20 @@ export function UniversalProviderFormModal({
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
   const [pendingProvider, setPendingProvider] =
     useState<UniversalProvider | null>(null);
+
+  // 应用区块的展开状态：默认全收起（编辑时展开有配置内容的应用，见下面的 effect）。
+  const [openSections, setOpenSections] = useState<
+    Record<AppSectionKey, boolean>
+  >({
+    claude: false,
+    codex: false,
+    gemini: false,
+    claudeDesktop: false,
+    grokbuild: false,
+  });
+  const toggleSection = useCallback((key: AppSectionKey, open: boolean) => {
+    setOpenSections((prev) => ({ ...prev, [key]: open }));
+  }, []);
 
   // 初始化表单
   useEffect(() => {
@@ -258,16 +370,6 @@ export function UniversalProviderFormModal({
         JSON.stringify(editingProvider.models?.gemini?.config ?? {}, null, 2),
       );
       setClaudeOverrides(overridesToText(editingProvider.models?.claude));
-      setClaudeHideAttribution(
-        editingProvider.models?.claude?.hideAttribution === true,
-      );
-      claudeGlobalsTouched.current = {
-        hideAttribution: false,
-        disableAutoUpgrade: false,
-      };
-      setClaudeDisableAutoUpgrade(
-        editingProvider.models?.claude?.disableAutoUpgrade === true,
-      );
       setCodexOverrides(overridesToText(editingProvider.models?.codex));
       setDraftCustomEndpoints(
         Object.keys(editingProvider.meta?.custom_endpoints ?? {}),
@@ -290,12 +392,6 @@ export function UniversalProviderFormModal({
       setGeminiEnvText("{}");
       setGeminiConfigText("{}");
       setClaudeOverrides(EMPTY_OVERRIDES);
-      setClaudeHideAttribution(false);
-      claudeGlobalsTouched.current = {
-        hideAttribution: false,
-        disableAutoUpgrade: false,
-      };
-      setClaudeDisableAutoUpgrade(false);
       setCodexOverrides(EMPTY_OVERRIDES);
       setDraftCustomEndpoints([]);
       setEndpointAutoSelect(true);
@@ -303,6 +399,71 @@ export function UniversalProviderFormModal({
       setFetchedModels([]);
     }
   }, [editingProvider, isOpen]);
+
+  // 编辑时把「有实际配置」的应用区块自动展开，新建时全收起。
+  useEffect(() => {
+    if (!editingProvider) {
+      setOpenSections({
+        claude: false,
+        codex: false,
+        gemini: false,
+        claudeDesktop: false,
+        grokbuild: false,
+      });
+      return;
+    }
+    const m = editingProvider.models ?? {};
+    setOpenSections({
+      claude: Object.keys(m.claude ?? {}).length > 0,
+      codex: Object.keys(m.codex ?? {}).length > 0,
+      gemini: Object.keys(m.gemini ?? {}).length > 0,
+      claudeDesktop: Object.keys(m.claudeDesktop ?? {}).length > 0,
+      grokbuild: Object.keys(m.grokbuild ?? {}).length > 0,
+    });
+  }, [editingProvider]);
+
+  // Codex effort 下拉的选项：跟 Codex 卡所选模型那一行的档位（拉取时由
+  // models.dev 补全，模型列表编辑器里可改）；该行没声明时退回预置全集。
+  const codexEffortOptions = useMemo(() => {
+    const modelId = models.codex?.model?.trim();
+    const efforts = modelId
+      ? (availableModels.find((model) => model.id === modelId)?.efforts ?? [])
+      : [];
+    if (efforts.length > 0) {
+      return EFFORT_PRESETS.filter((preset) => efforts.includes(preset));
+    }
+    return [...EFFORT_PRESETS];
+  }, [models.codex, availableModels]);
+
+  // Codex 的上下文窗口 / 最大输出自动值：跟 Codex 卡所选模型行的元数据。
+  // 字段留空 = 用自动值（保存时后端同规则兜底）；手填值优先。
+  const sectionSummaries = useMemo<Record<AppSectionKey, string[]>>(() => {
+    const pick = (...parts: (string | undefined | false)[]) =>
+      parts.filter((part): part is string => Boolean(part)).slice(0, 3);
+    const t_or = (key: string, fallback: string) =>
+      t(key, { defaultValue: fallback });
+    return {
+      claude: pick(
+        models.claude?.model,
+        models.claude?.apiFormat && models.claude?.apiFormat !== "anthropic"
+          ? t_or("universalProvider.summaryNonDefaultFormat", "自定义上游格式")
+          : undefined,
+        models.claude?.customUserAgent,
+      ),
+      codex: pick(models.codex?.model, models.codex?.reasoningEffort),
+      gemini: pick(models.gemini?.model),
+      claudeDesktop: pick(
+        desktopMode === "direct"
+          ? t_or("claudeDesktop.modelModeDirect", "直连")
+          : t_or("claudeDesktop.modelModeProxy", "模型映射"),
+        desktopMode === "proxy"
+          ? (Object.values(desktopRoutes).find((row) => row.model.trim())
+              ?.model ?? undefined)
+          : undefined,
+      ),
+      grokbuild: pick(models.grokbuild?.model),
+    };
+  }, [models, desktopMode, desktopRoutes, t]);
 
   // 选择图标：同时带上图标自带的默认颜色（和单应用供应商表单一致）
   const handleIconSelect = useCallback((nextIcon: string) => {
@@ -418,24 +579,34 @@ export function UniversalProviderFormModal({
     return { env };
   }, [baseUrl, apiKey, models.claude]);
 
-  // 计算 Codex 配置 JSON 预览
+  // 计算 Codex 配置预览：与后端 `to_codex_provider` 生成的子卡行同形（auth.json +
+  // config.toml + 模型目录），不要在预览里发明后端不会写的东西。
   const codexConfigJson = useMemo(() => {
     const m = models.codex ?? {};
-    const model = m.model || "gpt-5.6-sol";
+    const model = m.model || "gpt-4o";
     const reasoningEffort = m.reasoningEffort || "high";
-    // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
-    const codexBaseUrl = baseUrl.endsWith("/v1")
-      ? baseUrl
-      : `${baseUrl.replace(/\/+$/, "")}/v1`;
+    // 与后端同一条 base_url 规则：以 /v1 结尾照抄；纯 origin（没有路径）补 /v1；
+    // 其余（带自定义路径）照抄，不强加版本前缀。
+    const baseTrimmed = baseUrl.trim().replace(/\/+$/, "");
+    const originOnly = !baseTrimmed.split("://")[1]?.includes("/");
+    const codexBaseUrl = baseTrimmed.endsWith("/v1")
+      ? baseTrimmed
+      : originOnly
+        ? `${baseTrimmed}/v1`
+        : baseTrimmed;
     let configToml = `model_provider = "custom"
 model = "${model}"
 model_reasoning_effort = "${reasoningEffort}"
 disable_response_storage = true`;
-    // 顶层字段写在表头之前：TOML 里表头之后的键属于那张表
-    if (m.contextWindow1M) {
-      configToml += "\nmodel_context_window = 1000000";
-      configToml += `\nmodel_auto_compact_token_limit = ${m.autoCompactLimit ?? 900000}`;
-    } else if (m.autoCompactLimit) {
+    // 顶层字段写在表头之前：TOML 里表头之后的键属于那张表。
+    // 上下文窗口跟所选模型行的元数据（models.dev limit.context）；压缩阈值自填。
+    const contextWindow = availableModels.find(
+      (row) => row.id === model,
+    )?.contextWindow;
+    if (contextWindow) {
+      configToml += `\nmodel_context_window = ${contextWindow}`;
+    }
+    if (m.autoCompactLimit) {
       configToml += `\nmodel_auto_compact_token_limit = ${m.autoCompactLimit}`;
     }
     configToml += `
@@ -452,11 +623,16 @@ requires_openai_auth = true`;
         configToml += `\ndefault_subagent_reasoning_effort = "${m.subagentReasoningEffort.trim()}"`;
       }
     }
-    const preview: Record<string, unknown> = {
+    const preview: {
+      auth: { OPENAI_API_KEY: string };
+      config: string;
+      modelCatalog?: { models: typeof catalog };
+    } = {
       auth: { OPENAI_API_KEY: apiKey },
       config: configToml,
     };
-    // 目录：用户填了就用它，否则和写 live 时一样从可用模型列表自动生成。
+    // 目录：用户填了就用它，否则和写 live 时一样从可用模型列表自动生成；
+    // effort 档位与默认档都是逐模型（拉取时补全，表单里可改）。
     const catalog =
       m.catalogModels && m.catalogModels.length > 0
         ? m.catalogModels
@@ -466,12 +642,22 @@ requires_openai_auth = true`;
             ...(model.contextWindow
               ? { contextWindow: model.contextWindow }
               : {}),
+            ...(model.efforts && model.efforts.length > 0
+              ? { reasoningLevels: model.efforts }
+              : {}),
+            ...(model.defaultEffort
+              ? { defaultReasoningLevel: model.defaultEffort }
+              : {}),
           }));
     if (catalog.length > 0) {
       preview.modelCatalog = { models: catalog };
     }
     return preview;
   }, [baseUrl, apiKey, models.codex, availableModels]);
+
+  // 预览里 config 字段的类型就是 TOML 字符串；目录条数决定要不要显示提示行。
+  const codexTomlPreview = codexConfigJson?.config;
+  const catalogPreviewCount = codexConfigJson?.modelCatalog?.models.length ?? 0;
 
   // 计算 Gemini 配置 JSON 预览
   const geminiConfigJson = useMemo(() => {
@@ -494,19 +680,38 @@ requires_openai_auth = true`;
   // 计算 Claude Desktop 配置 JSON 预览（和后端投影同形）
   const claudeDesktopConfigJson = useMemo(() => {
     const routeMap: Record<string, Record<string, unknown>> = {};
-    for (const row of desktopRoutes) {
-      const routeId = row.routeId.trim();
-      if (!routeId) continue;
-      // 映射模式下没填上游模型的档位后端会丢掉，预览保持一致
-      if (desktopMode === "proxy" && !row.model.trim()) continue;
-      // 直连模式模型名必须与角色 ID 同名
-      const model = desktopMode === "direct" ? routeId : row.model.trim();
-      const entry: Record<string, unknown> = { model };
-      if (row.labelOverride.trim()) {
-        entry.labelOverride = row.labelOverride.trim();
+    if (desktopMode === "direct") {
+      // 直连：模型 = 供应商级可用模型列表里的 claude-* 角色（后端同款规则），
+      // 1M 按上下文窗口元数据判定。
+      for (const model of availableModels) {
+        const routeId = model.id.trim();
+        if (!routeId) continue;
+        if (!isClaudeSafeModelId(routeId)) continue;
+        const entry: Record<string, unknown> = { model: routeId };
+        if ((model.contextWindow ?? 0) >= 1_000_000) {
+          entry.supports1m = true;
+        }
+        routeMap[routeId] = entry;
       }
-      if (row.supports1m) entry.supports1m = true;
-      routeMap[routeId] = entry;
+    } else {
+      for (const row of desktopRoutes) {
+        const routeId = row.routeId.trim();
+        if (!routeId) continue;
+        // 映射模式下没填上游模型的档位后端会丢掉，预览保持一致
+        if (!row.model.trim()) continue;
+        const entry: Record<string, unknown> = { model: row.model.trim() };
+        if (row.labelOverride.trim()) {
+          entry.labelOverride = row.labelOverride.trim();
+        }
+        // 1M 声明跟随所选模型的上下文窗口元数据
+        if (
+          (availableModels.find((m) => m.id === row.model.trim())
+            ?.contextWindow ?? 0) >= 1_000_000
+        ) {
+          entry.supports1m = true;
+        }
+        routeMap[routeId] = entry;
+      }
     }
     const meta: Record<string, unknown> = {
       claudeDesktopMode: desktopMode,
@@ -522,7 +727,14 @@ requires_openai_auth = true`;
       },
       meta,
     };
-  }, [baseUrl, apiKey, desktopMode, desktopRoutes, models.claudeDesktop]);
+  }, [
+    baseUrl,
+    apiKey,
+    desktopMode,
+    desktopRoutes,
+    models.claudeDesktop,
+    availableModels,
+  ]);
 
   // 计算 Grok Build 配置 TOML 预览
   const grokbuildConfigJson = useMemo(() => {
@@ -530,7 +742,13 @@ requires_openai_auth = true`;
     const profile = grok.model?.trim() || "grok-4.5";
     const upstreamModel = grok.upstreamModel?.trim() || profile;
     const apiBackend = grok.apiBackend?.trim() || "responses";
-    const contextWindow = grok.contextWindow ?? 500000;
+    // 窗口跟所选模型行（上游模型优先，退回配置档位）的元数据；取不到用保守默认。
+    const windowModelId = grok.upstreamModel?.trim() || grok.model?.trim();
+    const contextWindow =
+      (windowModelId
+        ? availableModels.find((model) => model.id === windowModelId)
+            ?.contextWindow
+        : undefined) ?? 500000;
     const config = `[models]
 default = "${profile}"
 
@@ -542,7 +760,7 @@ api_key = "${apiKey}"
 api_backend = "${apiBackend}"
 context_window = ${contextWindow}`;
     return { config };
-  }, [baseUrl, apiKey, name, models.grokbuild]);
+  }, [baseUrl, apiKey, name, models.grokbuild, availableModels]);
 
   // 构建 provider 对象的辅助函数：新建和编辑共用，字段与 per-app 设置一次写全
   const buildProvider = useCallback((): UniversalProvider | null => {
@@ -647,27 +865,59 @@ context_window = ${contextWindow}`;
       if (!geminiConfig) delete nextModels.gemini.config;
     }
     if (nextModels.claude) {
+      // 显示名与 1M 声明都不再手填：某档选了哪个模型，就从可用模型列表里取它的
+      // displayName（→ *ModelName）和 contextWindow（≥ 1,000,000 → *OneM 加 [1M]
+      // 标记）。没选模型或没有对应元数据就清掉，后端「没填就不写」。
+      const tierMetaOf = (
+        modelId: string | undefined,
+      ): { displayName?: string; supports1m: boolean } | undefined => {
+        const id = modelId?.trim();
+        if (!id) return undefined;
+        const hit = availableModels.find((model) => model.id === id);
+        if (!hit) return undefined;
+        return {
+          ...(hit.displayName ? { displayName: hit.displayName } : {}),
+          supports1m: (hit.contextWindow ?? 0) >= 1_000_000,
+        };
+      };
       nextModels.claude = {
         ...nextModels.claude,
         ...(claudeOverridesParsed
           ? { requestOverrides: claudeOverridesParsed }
           : {}),
-        // 全局开关也存进 models.claude：后端读它写进 live（不是写供应商行）。
-        // 只有用户这次动过的才写；没动过的保持原样（不写 = 后端不动 live）。
-        ...(claudeGlobalsTouched.current.hideAttribution
-          ? { hideAttribution: claudeHideAttribution }
-          : {}),
-        ...(claudeGlobalsTouched.current.disableAutoUpgrade
-          ? { disableAutoUpgrade: claudeDisableAutoUpgrade }
-          : {}),
+        // 署名与自动升级归供应商所有：和普通模型字段一样始终随保存写入，
+        // 后端写进子供应商行并投影到 live。
       };
+      // 显示名跟随所选模型，总是重算（不保留手填的旧值——表单里已经没有这个输入）。
+      for (const [field, modelField] of [
+        ["sonnetModelName", "sonnetModel"],
+        ["opusModelName", "opusModel"],
+        ["fableModelName", "fableModel"],
+        ["haikuModelName", "haikuModel"],
+      ] as const) {
+        const name = tierMetaOf(models.claude?.[modelField])?.displayName;
+        if (name) {
+          nextModels.claude[field] = name;
+        } else {
+          delete nextModels.claude[field];
+        }
+      }
+      // 1M 声明跟随所选模型，也总是重算（表单里已经没有这些勾选框）。
+      for (const [field, modelField] of [
+        ["modelOneM", "model"],
+        ["sonnetModelOneM", "sonnetModel"],
+        ["opusModelOneM", "opusModel"],
+        ["fableModelOneM", "fableModel"],
+        ["haikuModelOneM", "haikuModel"],
+        ["subagentModelOneM", "subagentModel"],
+      ] as const) {
+        if (tierMetaOf(models.claude?.[modelField])?.supports1m) {
+          nextModels.claude[field] = true;
+        } else {
+          delete nextModels.claude[field];
+        }
+      }
       if (!claudeOverridesParsed) delete nextModels.claude.requestOverrides;
-      if (!claudeGlobalsTouched.current.hideAttribution) {
-        delete nextModels.claude.hideAttribution;
-      }
-      if (!claudeGlobalsTouched.current.disableAutoUpgrade) {
-        delete nextModels.claude.disableAutoUpgrade;
-      }
     }
     if (nextModels.claudeDesktop) {
       // 旧版扁平字段只读：迁移成 routes 后必须丢掉，否则老值会一直跟着记录。
@@ -683,22 +933,30 @@ context_window = ${contextWindow}`;
       } = nextModels.claudeDesktop;
       nextModels.claudeDesktop = desktopConfig;
 
-      // 路由表：丢掉空行；直连模式的模型名由后端强制成角色 ID，这里只存角色 ID。
+      // 路由表只在映射模式下保存：直连的模型由后端从供应商级可用模型列表自动
+      // 生成（claude-* 角色 + 上下文窗口判定 1M），表单里没有直连的模型列表。
       // 映射模式下没填上游模型的行也丢掉——留着空模型会把后端的默认四档顶掉，
-      // 整张表会写成空模型名。
-      const routes: Record<string, ClaudeDesktopModelRoute> = {};
-      for (const row of desktopRoutes) {
-        const routeId = row.routeId.trim();
-        if (!routeId) continue;
-        if (desktopMode === "proxy" && !row.model.trim()) continue;
-        const entry: ClaudeDesktopModelRoute = {
-          model: desktopMode === "direct" ? routeId : row.model.trim(),
-        };
-        if (row.labelOverride.trim()) {
-          entry.labelOverride = row.labelOverride.trim();
+      // 整张表会写成空模型名。1M 声明不再手勾：按所选模型的上下文窗口自动判定。
+      let routes: Record<string, ClaudeDesktopModelRoute> = {};
+      if (desktopMode === "proxy") {
+        for (const row of desktopRoutes) {
+          const routeId = row.routeId.trim();
+          if (!routeId) continue;
+          if (!row.model.trim()) continue;
+          const entry: ClaudeDesktopModelRoute = {
+            model: row.model.trim(),
+          };
+          if (row.labelOverride.trim()) {
+            entry.labelOverride = row.labelOverride.trim();
+          }
+          if (
+            (availableModels.find((model) => model.id === row.model.trim())
+              ?.contextWindow ?? 0) >= 1_000_000
+          ) {
+            entry.supports1m = true;
+          }
+          routes[routeId] = entry;
         }
-        if (row.supports1m) entry.supports1m = true;
-        routes[routeId] = entry;
       }
       nextModels.claudeDesktop = {
         ...nextModels.claudeDesktop,
@@ -723,6 +981,8 @@ context_window = ${contextWindow}`;
       };
       if (!codexOverridesParsed) delete nextModels.codex.requestOverrides;
       delete nextModels.codex.catalogModels;
+      // 认证字段是 Claude Code 的配置，Codex 没有：清掉旧数据里可能存的值。
+      delete nextModels.codex.apiKeyField;
     }
 
     return {
@@ -743,7 +1003,7 @@ context_window = ${contextWindow}`;
       },
       models: nextModels,
       // 可用模型列表要一起存：它是所有应用共用的那份，模型下拉也从这里来。
-      // 手加的空行（id 还没填）只是草稿，不落库。
+      // 手加的空行（id 还没填）只是草稿，不落库。全局 effort 档位同属供应商级。
       ...(() => {
         const named = availableModels.filter((model) => model.id.trim());
         return named.length > 0 ? { availableModels: named } : {};
@@ -755,8 +1015,6 @@ context_window = ${contextWindow}`;
     geminiEnvText,
     geminiConfigText,
     claudeOverrides,
-    claudeHideAttribution,
-    claudeDisableAutoUpgrade,
     codexOverrides,
     desktopMode,
     desktopRoutes,
@@ -917,9 +1175,9 @@ context_window = ${contextWindow}`;
           }
         }}
       >
-        {/* 基本信息 */}
-        <div className="space-y-4">
-          <div className="space-y-2">
+        {/* 基本信息：两列网格压缩高度；名称带图标占一整行，其余两两并排 */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="name">
               {t("universalProvider.name", { defaultValue: "名称" })}
             </Label>
@@ -1105,7 +1363,8 @@ context_window = ${contextWindow}`;
           fetched={fetchedModels}
         />
 
-        {/* 各应用的专属字段。统一供应商始终同步到全部五个应用，没有开关。 */}
+        {/* 各应用的专属字段。统一供应商始终同步到全部五个应用，没有开关。
+            每个应用默认收起，展开才看到全部字段；收起时标题右侧有已配置摘要。 */}
         <div className="space-y-3">
           <Label>
             {t("universalProvider.appFields", {
@@ -1113,1051 +1372,834 @@ context_window = ${contextWindow}`;
             })}
           </Label>
           <div className="flex flex-col gap-3">
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2">
-                <ProviderIcon icon="claude" name="Claude" size={20} />
-                <span className="font-medium">Claude Code</span>
-              </div>
-              <div className="pt-3">
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.mainModel", {
-                        defaultValue: "主模型",
-                      })}
-                    </Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.claude?.model || ""}
-                      onChange={(value) =>
-                        updateModel("claude", "model", value)
-                      }
-                      label={t("modelLabel", {
-                        defaultValue: "主模型",
-                      })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Sonnet</Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.claude?.sonnetModel || ""}
-                      onChange={(value) =>
-                        updateModel("claude", "sonnetModel", value)
-                      }
-                      label={t("sonnetModelLabel", {
-                        defaultValue: "Sonnet",
-                      })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Opus</Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.claude?.opusModel || ""}
-                      onChange={(value) =>
-                        updateModel("claude", "opusModel", value)
-                      }
-                      label={t("opusModelLabel", {
-                        defaultValue: "Opus",
-                      })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Fable</Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.claude?.fableModel || ""}
-                      onChange={(value) =>
-                        updateModel("claude", "fableModel", value)
-                      }
-                      label={t("fableModelLabel", {
-                        defaultValue: "Fable",
-                      })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Haiku</Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.claude?.haikuModel || ""}
-                      onChange={(value) =>
-                        updateModel("claude", "haikuModel", value)
-                      }
-                      label={t("haikuModelLabel", {
-                        defaultValue: "Haiku",
-                      })}
-                    />
-                  </div>
-                </div>
-
-                {/* 声明支持 1M：和单应用表单一样，把标记加到模型名末尾 */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-xs text-fg-2">
-                  <span>
-                    {t("universalProvider.modelOneM", {
-                      defaultValue: "声明支持 1M",
+            <AppSection
+              icon="claude"
+              name="Claude Code"
+              summary={sectionSummaries.claude}
+              open={openSections.claude}
+              onOpenChange={(open) => toggleSection("claude", open)}
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.mainModel", {
+                      defaultValue: "主模型",
                     })}
-                  </span>
-                  {(
-                    [
-                      [
-                        "modelOneM",
-                        "universalProvider.mainModelOneM",
-                        "主模型",
-                      ],
-                      ["sonnetModelOneM", "Sonnet", "Sonnet"],
-                      ["opusModelOneM", "Opus", "Opus"],
-                      ["fableModelOneM", "Fable", "Fable"],
-                      ["haikuModelOneM", "Haiku", "Haiku"],
-                      [
-                        "subagentModelOneM",
-                        "universalProvider.subagentModel",
-                        "Subagent",
-                      ],
-                    ] as const
-                  ).map(([field, key, fallback]) => (
-                    <label
-                      key={field}
-                      className="inline-flex cursor-pointer items-center gap-1.5"
-                    >
-                      <input
-                        type="checkbox"
-                        className="ui-checkbox"
-                        checked={models.claude?.[field] === true}
-                        onChange={(e) =>
-                          updateModel("claude", field, e.target.checked)
-                        }
-                      />
-                      {t(key, { defaultValue: fallback })}
-                    </label>
-                  ))}
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.apiFormat", {
-                        defaultValue: "上游格式",
-                      })}
-                    </Label>
-                    <Select
-                      value={models.claude?.apiFormat || "anthropic"}
-                      onValueChange={(value) =>
-                        updateModel("claude", "apiFormat", value)
-                      }
-                    >
-                      <SelectTrigger aria-label="上游格式">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="anthropic">
-                          Anthropic Messages
-                        </SelectItem>
-                        <SelectItem value="openai_chat">
-                          Chat Completions
-                        </SelectItem>
-                        <SelectItem value="openai_responses">
-                          Responses
-                        </SelectItem>
-                        <SelectItem value="gemini_native">
-                          Gemini Native
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.apiKeyField", {
-                        defaultValue: "认证字段",
-                      })}
-                    </Label>
-                    <Select
-                      value={
-                        models.claude?.apiKeyField || "ANTHROPIC_AUTH_TOKEN"
-                      }
-                      onValueChange={(value) =>
-                        updateModel("claude", "apiKeyField", value)
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ANTHROPIC_AUTH_TOKEN">
-                          ANTHROPIC_AUTH_TOKEN
-                        </SelectItem>
-                        <SelectItem value="ANTHROPIC_API_KEY">
-                          ANTHROPIC_API_KEY
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1 sm:col-span-2">
-                    <Label className="text-xs">
-                      {t("providerForm.customUserAgent", {
-                        defaultValue: "自定义 User-Agent",
-                      })}
-                    </Label>
-                    <Input
-                      value={models.claude?.customUserAgent || ""}
-                      onChange={(e) =>
-                        updateModel("claude", "customUserAgent", e.target.value)
-                      }
-                      placeholder="claude-cli/2.0.0"
-                    />
-                  </div>
-                </div>
-
-                {/* /model 菜单里的显示名 + subagent 模型 */}
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  {(
-                    [
-                      ["sonnetModelName", "Sonnet"],
-                      ["opusModelName", "Opus"],
-                      ["fableModelName", "Fable"],
-                      ["haikuModelName", "Haiku"],
-                    ] as const
-                  ).map(([field, label]) => (
-                    <div key={field} className="space-y-1">
-                      <Label className="text-xs">
-                        {label}{" "}
-                        {t("providerForm.modelDisplayNameLabel", {
-                          defaultValue: "显示名称",
-                        })}
-                      </Label>
-                      <Input
-                        value={models.claude?.[field] || ""}
-                        onChange={(e) =>
-                          updateModel("claude", field, e.target.value)
-                        }
-                        placeholder={label.toLowerCase()}
-                      />
-                    </div>
-                  ))}
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.subagentModel", {
-                        defaultValue: "Subagent 模型",
-                      })}
-                    </Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.claude?.subagentModel || ""}
-                      onChange={(value) =>
-                        updateModel("claude", "subagentModel", value)
-                      }
-                      label={t("subagentModelLabel", {
-                        defaultValue: "子代理模型",
-                      })}
-                    />
-                  </div>
-                </div>
-
-                {/* 上游兼容开关：随供应商切换（后端 floor.rs 的独有字段） */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-xs text-fg-2">
-                  {(
-                    [
-                      [
-                        "enableToolSearch",
-                        "claudeConfig.enableToolSearch",
-                        "启用 Tool Search",
-                      ],
-                      [
-                        "disableArtifact",
-                        "claudeConfig.disableArtifact",
-                        "禁用 Artifact 工具",
-                      ],
-                      [
-                        "disableAutoModeServer",
-                        "claudeConfig.disableAutoModeServer",
-                        "关闭 auto mode 服务端检查",
-                      ],
-                    ] as const
-                  ).map(([field, key, fallback]) => (
-                    <span
-                      key={field}
-                      className="inline-flex items-center gap-1"
-                    >
-                      <label className="inline-flex cursor-pointer items-center gap-1.5">
-                        <input
-                          type="checkbox"
-                          className="ui-checkbox"
-                          checked={models.claude?.[field] === true}
-                          onChange={(e) =>
-                            updateModel("claude", field, e.target.checked)
-                          }
-                        />
-                        {t(key, { defaultValue: fallback })}
-                      </label>
-                      <HoverTip
-                        content={t(`${key}Help`, { defaultValue: fallback })}
-                      >
-                        <span className="text-fg-3">?</span>
-                      </HoverTip>
-                    </span>
-                  ))}
-                </div>
-
-                {/* 本地路由请求覆盖 */}
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  {(
-                    [
-                      [
-                        "headers",
-                        "providerForm.localProxyHeaderOverrides",
-                        "Header 覆盖",
-                      ],
-                      [
-                        "body",
-                        "providerForm.localProxyBodyOverrides",
-                        "Body 覆盖",
-                      ],
-                    ] as const
-                  ).map(([field, key, fallback]) => (
-                    <div key={field} className="space-y-1">
-                      <Label className="text-xs">
-                        {t(key, { defaultValue: fallback })}
-                      </Label>
-                      <Textarea
-                        value={claudeOverrides[field]}
-                        onChange={(e) =>
-                          setClaudeOverrides((prev) => ({
-                            ...prev,
-                            [field]: e.target.value,
-                          }))
-                        }
-                        className="min-h-[72px] resize-y font-mono text-xs"
-                        placeholder={'{\n  "X-Provider": "cc-switch"\n}'}
-                      />
-                    </div>
-                  ))}
-                </div>
-                {/* Claude JSON */}
-                {claudeConfigJson && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <ProviderIcon icon="claude" name="Claude" size={16} />
-                      Claude
-                    </div>
-                    <p className="text-xs text-fg-2">
-                      {t("claudeConfig.keyFieldsHint", {
-                        defaultValue:
-                          "地址、Key、模型、上下文窗口和兼容开关随供应商切换；其余字段是 Claude Code 全局设置，保存后对所有供应商生效。",
-                      })}
-                    </p>
-                    {/* 全局开关：对所有供应商生效，所以写进 live 而不是供应商行 */}
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                      {(
-                        [
-                          [
-                            claudeHideAttribution,
-                            setClaudeHideAttribution,
-                            "hideAttribution",
-                            "claudeConfig.hideAttribution",
-                            "隐藏 AI 署名",
-                          ],
-                          [
-                            claudeDisableAutoUpgrade,
-                            setClaudeDisableAutoUpgrade,
-                            "disableAutoUpgrade",
-                            "claudeConfig.disableAutoUpgrade",
-                            "禁用自动升级",
-                          ],
-                        ] as const
-                      ).map(([checked, onChange, field, key, fallback]) => (
-                        <span
-                          key={key}
-                          className="inline-flex items-center gap-1"
-                        >
-                          <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-fg-2">
-                            <input
-                              type="checkbox"
-                              className="ui-checkbox"
-                              checked={checked}
-                              onChange={(e) => {
-                                // 记下用户动过：只有动过的全局开关才会写进 live
-                                claudeGlobalsTouched.current[field] = true;
-                                onChange(e.target.checked);
-                              }}
-                            />
-                            {t(key, { defaultValue: fallback })}
-                          </label>
-                          <HoverTip
-                            content={t(`${key}Help`, {
-                              defaultValue: fallback,
-                            })}
-                          >
-                            <span className="text-fg-3">?</span>
-                          </HoverTip>
-                        </span>
-                      ))}
-                    </div>
-                    <JsonEditor
-                      value={JSON.stringify(claudeConfigJson, null, 2)}
-                      onChange={() => {}}
-                      height={180}
-                      darkMode={isDarkMode}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2">
-                <ProviderIcon icon="openai" name="Codex" size={20} />
-                <span className="font-medium">OpenAI Codex</span>
-              </div>
-              <div className="pt-3">
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.model", { defaultValue: "模型" })}
-                    </Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.codex?.model || ""}
-                      onChange={(value) => updateModel("codex", "model", value)}
-                      label={t("modelLabel", { defaultValue: "模型" })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Reasoning Effort</Label>
-                    <Input
-                      value={models.codex?.reasoningEffort || ""}
-                      onChange={(e) =>
-                        updateModel("codex", "reasoningEffort", e.target.value)
-                      }
-                      placeholder="high"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.apiFormat", {
-                        defaultValue: "上游格式",
-                      })}
-                    </Label>
-                    <Select
-                      value={models.codex?.apiFormat || "openai_responses"}
-                      onValueChange={(value) =>
-                        updateModel("codex", "apiFormat", value)
-                      }
-                    >
-                      <SelectTrigger aria-label="上游格式">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="openai_responses">
-                          Responses
-                        </SelectItem>
-                        <SelectItem value="openai_chat">
-                          Chat Completions
-                        </SelectItem>
-                        <SelectItem value="anthropic">
-                          Anthropic Messages
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.apiKeyField", {
-                        defaultValue: "认证字段",
-                      })}
-                    </Label>
-                    <Select
-                      value={
-                        models.codex?.apiKeyField || "ANTHROPIC_AUTH_TOKEN"
-                      }
-                      onValueChange={(value) =>
-                        updateModel("codex", "apiKeyField", value)
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ANTHROPIC_AUTH_TOKEN">
-                          ANTHROPIC_AUTH_TOKEN
-                        </SelectItem>
-                        <SelectItem value="ANTHROPIC_API_KEY">
-                          ANTHROPIC_API_KEY
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("codexConfig.autoCompactLimit", {
-                        defaultValue: "压缩阈值",
-                      })}
-                    </Label>
-                    <Input
-                      inputMode="numeric"
-                      value={models.codex?.autoCompactLimit?.toString() ?? ""}
-                      onChange={(e) =>
-                        updateModel(
-                          "codex",
-                          "autoCompactLimit",
-                          e.target.value.replace(/\D/g, ""),
-                        )
-                      }
-                      placeholder="900000"
-                      disabled={models.codex?.contextWindow1M !== true}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("providerForm.customUserAgent", {
-                        defaultValue: "自定义 User-Agent",
-                      })}
-                    </Label>
-                    <Input
-                      value={models.codex?.customUserAgent || ""}
-                      onChange={(e) =>
-                        updateModel("codex", "customUserAgent", e.target.value)
-                      }
-                      placeholder="codex/1.0"
-                    />
-                  </div>
-                </div>
-
-                {/* 配置文件的开关：1M 上下文窗口、压缩阈值、远程压缩 */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-xs text-fg-2">
-                  <label className="inline-flex cursor-pointer items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      className="ui-checkbox"
-                      checked={models.codex?.contextWindow1M === true}
-                      onChange={(e) =>
-                        updateModel(
-                          "codex",
-                          "contextWindow1M",
-                          e.target.checked,
-                        )
-                      }
-                    />
-                    {t("codexConfig.contextWindow1M", {
-                      defaultValue: "1M 上下文窗口",
+                  </Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.claude?.model || ""}
+                    onChange={(value) => updateModel("claude", "model", value)}
+                    label={t("modelLabel", {
+                      defaultValue: "主模型",
                     })}
-                  </label>
-                  <label
-                    className="inline-flex cursor-pointer items-center gap-1.5"
-                    title={t("codexConfig.remoteCompactionHint", {
-                      defaultValue:
-                        "开启后会将当前 model_providers 条目的 name 写为 OpenAI，使 Codex 尝试使用远程压缩。",
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Sonnet</Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.claude?.sonnetModel || ""}
+                    onChange={(value) =>
+                      updateModel("claude", "sonnetModel", value)
+                    }
+                    label={t("sonnetModelLabel", {
+                      defaultValue: "Sonnet",
                     })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Opus</Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.claude?.opusModel || ""}
+                    onChange={(value) =>
+                      updateModel("claude", "opusModel", value)
+                    }
+                    label={t("opusModelLabel", {
+                      defaultValue: "Opus",
+                    })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Fable</Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.claude?.fableModel || ""}
+                    onChange={(value) =>
+                      updateModel("claude", "fableModel", value)
+                    }
+                    label={t("fableModelLabel", {
+                      defaultValue: "Fable",
+                    })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Haiku</Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.claude?.haikuModel || ""}
+                    onChange={(value) =>
+                      updateModel("claude", "haikuModel", value)
+                    }
+                    label={t("haikuModelLabel", {
+                      defaultValue: "Haiku",
+                    })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.subagentModel", {
+                      defaultValue: "Subagent 模型",
+                    })}
+                  </Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.claude?.subagentModel || ""}
+                    onChange={(value) =>
+                      updateModel("claude", "subagentModel", value)
+                    }
+                    label={t("subagentModelLabel", {
+                      defaultValue: "子代理模型",
+                    })}
+                  />
+                </div>
+              </div>
+
+              {/* 1M 声明不再手勾：保存时按所选模型在可用列表里的上下文窗口自动判定
+                  （≥ 1,000,000 才给模型名加 [1M] 标记）。 */}
+
+              <div className="grid gap-3 pt-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.apiFormat", {
+                      defaultValue: "上游格式",
+                    })}
+                  </Label>
+                  <Select
+                    value={models.claude?.apiFormat || "anthropic"}
+                    onValueChange={(value) =>
+                      updateModel("claude", "apiFormat", value)
+                    }
                   >
-                    <input
-                      type="checkbox"
-                      className="ui-checkbox"
-                      checked={models.codex?.remoteCompaction === true}
-                      onChange={(e) =>
-                        updateModel(
-                          "codex",
-                          "remoteCompaction",
-                          e.target.checked,
-                        )
-                      }
-                    />
-                    {t("codexConfig.enableRemoteCompaction", {
-                      defaultValue: "启用远程压缩",
-                    })}
-                  </label>
-                  <label className="inline-flex cursor-pointer items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      className="ui-checkbox"
-                      checked={models.codex?.impersonateClaudeCode === true}
-                      onChange={(e) =>
-                        updateModel(
-                          "codex",
-                          "impersonateClaudeCode",
-                          e.target.checked,
-                        )
-                      }
-                    />
-                    {t("codexConfig.impersonateClaudeCodeLabel", {
-                      defaultValue: "模拟 Claude Code 客户端",
-                    })}
-                  </label>
-                  <label className="inline-flex cursor-pointer items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      className="ui-checkbox"
-                      checked={models.codex?.isFullUrl === true}
-                      onChange={(e) =>
-                        updateModel("codex", "isFullUrl", e.target.checked)
-                      }
-                    />
-                    {t("providerForm.fullUrlLabel", {
-                      defaultValue: "完整 URL",
-                    })}
-                  </label>
+                    <SelectTrigger aria-label="上游格式">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="anthropic">
+                        Anthropic Messages
+                      </SelectItem>
+                      <SelectItem value="openai_chat">
+                        Chat Completions
+                      </SelectItem>
+                      <SelectItem value="openai_responses">
+                        Responses
+                      </SelectItem>
+                      <SelectItem value="gemini_native">
+                        Gemini Native
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("codexConfig.maxOutputTokensLabel", {
-                        defaultValue: "最大输出 tokens",
-                      })}
-                    </Label>
-                    <Input
-                      inputMode="numeric"
-                      value={models.codex?.maxOutputTokens?.toString() ?? ""}
-                      onChange={(e) =>
-                        updateModel(
-                          "codex",
-                          "maxOutputTokens",
-                          e.target.value.replace(/\D/g, ""),
-                        )
-                      }
-                      placeholder="32000"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("codexConfig.subagentModelLabel", {
-                        defaultValue: "子代理模型",
-                      })}
-                    </Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.codex?.subagentModel || ""}
-                      onChange={(value) =>
-                        updateModel("codex", "subagentModel", value)
-                      }
-                      label={t("subagentModelLabel", {
-                        defaultValue: "子代理模型",
-                      })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("codexConfig.subagentReasoningEffortLabel", {
-                        defaultValue: "子代理推理档位",
-                      })}
-                    </Label>
-                    <Input
-                      value={models.codex?.subagentReasoningEffort || ""}
-                      onChange={(e) =>
-                        updateModel(
-                          "codex",
-                          "subagentReasoningEffort",
-                          e.target.value,
-                        )
-                      }
-                      placeholder="low"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("codexConfig.promptCacheRoutingLabel", {
-                        defaultValue: "提示词缓存路由",
-                      })}
-                    </Label>
-                    <Select
-                      value={models.codex?.promptCacheRouting || "auto"}
-                      onValueChange={(value) =>
-                        updateModel("codex", "promptCacheRouting", value)
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="auto">
-                          {t("codexConfig.promptCacheRoutingAuto", {
-                            defaultValue: "自动",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="enabled">
-                          {t("codexConfig.promptCacheRoutingEnabled", {
-                            defaultValue: "开启",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="disabled">
-                          {t("codexConfig.promptCacheRoutingDisabled", {
-                            defaultValue: "关闭",
-                          })}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.apiKeyField", {
+                      defaultValue: "认证字段",
+                    })}
+                  </Label>
+                  <Select
+                    value={models.claude?.apiKeyField || "ANTHROPIC_AUTH_TOKEN"}
+                    onValueChange={(value) =>
+                      updateModel("claude", "apiKeyField", value)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                        ANTHROPIC_AUTH_TOKEN
+                      </SelectItem>
+                      <SelectItem value="ANTHROPIC_API_KEY">
+                        ANTHROPIC_API_KEY
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-
-                {/* 思考能力（走 Chat Completions 时声明） */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-xs text-fg-2">
-                  <span>
-                    {t("codexConfig.reasoningGroupTitle", {
-                      defaultValue: "思考能力",
+                <div className="space-y-1 sm:col-span-2">
+                  <Label className="text-xs">
+                    {t("providerForm.customUserAgent", {
+                      defaultValue: "自定义 User-Agent",
                     })}
-                  </span>
-                  <label className="inline-flex cursor-pointer items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      className="ui-checkbox"
-                      checked={
-                        models.codex?.chatReasoning?.supportsThinking === true
-                      }
-                      onChange={(e) =>
-                        updateChatReasoning(
-                          "supportsThinking",
-                          e.target.checked,
-                        )
-                      }
-                    />
-                    {t("codexConfig.reasoningModeToggle", {
-                      defaultValue: "支持思考模式",
-                    })}
-                  </label>
-                  <label className="inline-flex cursor-pointer items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      className="ui-checkbox"
-                      checked={
-                        models.codex?.chatReasoning?.supportsEffort === true
-                      }
-                      onChange={(e) =>
-                        updateChatReasoning("supportsEffort", e.target.checked)
-                      }
-                    />
-                    {t("codexConfig.reasoningEffortToggle", {
-                      defaultValue: "支持思考等级",
-                    })}
-                  </label>
+                  </Label>
+                  <Input
+                    value={models.claude?.customUserAgent || ""}
+                    onChange={(e) =>
+                      updateModel("claude", "customUserAgent", e.target.value)
+                    }
+                    placeholder="claude-cli/2.0.0"
+                  />
                 </div>
+              </div>
 
-                {/* 模型目录不再手填：后端用统一供应商的可用模型列表自动生成
-                    （名称与上下文窗口来自拉取时的 models.dev 补全）。 */}
-                <p className="border-t pt-3 text-xs text-fg-2">
-                  {t("codexConfig.catalogAutoHint", {
-                    defaultValue:
-                      "Codex 的 /model 菜单由可用模型列表自动生成；想调整就先在上面维护模型列表。",
-                  })}
-                </p>
-
-                {/* 本地路由请求覆盖 */}
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  {(
+              {/* 开关行：上游兼容 + 署名 / 自动升级，全部归这家供应商所有 */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-3 text-xs text-fg-2">
+                {(
+                  [
                     [
-                      [
-                        "headers",
-                        "providerForm.localProxyHeaderOverrides",
-                        "Header 覆盖",
-                      ],
-                      [
-                        "body",
-                        "providerForm.localProxyBodyOverrides",
-                        "Body 覆盖",
-                      ],
-                    ] as const
-                  ).map(([field, key, fallback]) => (
-                    <div key={field} className="space-y-1">
-                      <Label className="text-xs">
-                        {t(key, { defaultValue: fallback })}
-                      </Label>
-                      <Textarea
-                        value={codexOverrides[field]}
-                        onChange={(e) =>
-                          setCodexOverrides((prev) => ({
-                            ...prev,
-                            [field]: e.target.value,
-                          }))
-                        }
-                        className="min-h-[72px] resize-y font-mono text-xs"
-                        placeholder={'{\n  "X-Provider": "cc-switch"\n}'}
-                      />
-                    </div>
-                  ))}
-                </div>
-                {/* Codex JSON */}
-                {codexConfigJson && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <ProviderIcon icon="openai" name="Codex" size={16} />
-                      Codex
-                    </div>
-                    <JsonEditor
-                      value={JSON.stringify(codexConfigJson, null, 2)}
-                      onChange={() => {}}
-                      height={280}
-                      darkMode={isDarkMode}
+                      "enableToolSearch",
+                      "claudeConfig.enableToolSearch",
+                      "启用 Tool Search",
+                    ],
+                    [
+                      "disableArtifact",
+                      "claudeConfig.disableArtifact",
+                      "禁用 Artifact 工具",
+                    ],
+                    [
+                      "disableAutoModeServer",
+                      "claudeConfig.disableAutoModeServer",
+                      "关闭 auto mode 服务端检查",
+                    ],
+                    [
+                      "hideAttribution",
+                      "claudeConfig.hideAttribution",
+                      "隐藏 AI 署名",
+                    ],
+                    [
+                      "disableAutoUpgrade",
+                      "claudeConfig.disableAutoUpgrade",
+                      "禁用自动升级",
+                    ],
+                  ] as const
+                ).map(([field, key, fallback]) => (
+                  <CheckPill
+                    key={field}
+                    checked={models.claude?.[field] === true}
+                    onChange={(checked) =>
+                      updateModel("claude", field, checked)
+                    }
+                    label={t(key, { defaultValue: fallback })}
+                    help={t(`${key}Help`, { defaultValue: fallback })}
+                  />
+                ))}
+              </div>
+
+              {/* 本地路由请求覆盖 */}
+              <div className="grid gap-3 pt-3 sm:grid-cols-2">
+                {(
+                  [
+                    [
+                      "headers",
+                      "providerForm.localProxyHeaderOverrides",
+                      "Header 覆盖",
+                    ],
+                    [
+                      "body",
+                      "providerForm.localProxyBodyOverrides",
+                      "Body 覆盖",
+                    ],
+                  ] as const
+                ).map(([field, key, fallback]) => (
+                  <div key={field} className="space-y-1">
+                    <Label className="text-xs">
+                      {t(key, { defaultValue: fallback })}
+                    </Label>
+                    <Textarea
+                      value={claudeOverrides[field]}
+                      onChange={(e) =>
+                        setClaudeOverrides((prev) => ({
+                          ...prev,
+                          [field]: e.target.value,
+                        }))
+                      }
+                      className="min-h-[72px] resize-y font-mono text-xs"
+                      placeholder={'{\n  "X-Provider": "cc-switch"\n}'}
                     />
                   </div>
-                )}
+                ))}
               </div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2">
-                <ProviderIcon icon="gemini" name="Gemini" size={20} />
-                <span className="font-medium">Gemini CLI</span>
-              </div>
-              <div className="pt-3">
-                <div className="space-y-1 border-t pt-3">
+              {/* Claude 配置预览 */}
+              {claudeConfigJson && (
+                <div className="pt-3">
+                  <JsonEditor
+                    value={JSON.stringify(claudeConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={180}
+                    darkMode={isDarkMode}
+                  />
+                </div>
+              )}
+            </AppSection>
+            <AppSection
+              icon="openai"
+              name="OpenAI Codex"
+              summary={sectionSummaries.codex}
+              open={openSections.codex}
+              onOpenChange={(open) => toggleSection("codex", open)}
+            >
+              <div className="grid gap-3 pt-3 sm:grid-cols-2">
+                <div className="space-y-1">
                   <Label className="text-xs">
                     {t("universalProvider.model", { defaultValue: "模型" })}
                   </Label>
                   <ModelSelect
                     models={availableModels}
-                    value={models.gemini?.model || ""}
-                    onChange={(value) => updateModel("gemini", "model", value)}
-                    label={t("universalProvider.modelField", {
-                      defaultValue: "模型",
-                    })}
+                    value={models.codex?.model || ""}
+                    onChange={(value) => updateModel("codex", "model", value)}
+                    label={t("modelLabel", { defaultValue: "模型" })}
                   />
                 </div>
-                {/* .env / settings.json 里的其他键：跟这个应用一起切换 */}
-                <div className="space-y-1 border-t pt-3">
+                <div className="space-y-1">
                   <Label className="text-xs">
-                    {t("geminiConfig.envFile", {
-                      defaultValue: "环境变量 (.env)",
+                    {t("codexConfig.reasoningEffortLabel", {
+                      defaultValue: "Reasoning Effort",
                     })}
                   </Label>
-                  <JsonEditor
-                    value={geminiEnvText}
-                    onChange={setGeminiEnvText}
-                    height={140}
-                    darkMode={isDarkMode}
-                  />
+                  <Select
+                    value={models.codex?.reasoningEffort || "high"}
+                    onValueChange={(value) =>
+                      updateModel("codex", "reasoningEffort", value)
+                    }
+                  >
+                    <SelectTrigger aria-label="Reasoning Effort">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(codexEffortOptions ?? []).map((level: string) => (
+                        <SelectItem key={level} value={level}>
+                          {level}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="space-y-1 border-t pt-3">
+              </div>
+
+              {/* Effort 档位编辑在上方「可用模型列表」（全局），所有应用共用 */}
+
+              <div className="grid gap-3 pt-3 sm:grid-cols-2">
+                <div className="space-y-1">
                   <Label className="text-xs">
-                    {t("geminiConfig.configJson", {
-                      defaultValue: "settings.json",
+                    {t("universalProvider.apiFormat", {
+                      defaultValue: "上游格式",
                     })}
                   </Label>
-                  <JsonEditor
-                    value={geminiConfigText}
-                    onChange={setGeminiConfigText}
-                    height={140}
-                    darkMode={isDarkMode}
+                  <Select
+                    value={models.codex?.apiFormat || "openai_responses"}
+                    onValueChange={(value) =>
+                      updateModel("codex", "apiFormat", value)
+                    }
+                  >
+                    <SelectTrigger aria-label="上游格式">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai_responses">
+                        Responses
+                      </SelectItem>
+                      <SelectItem value="openai_chat">
+                        Chat Completions
+                      </SelectItem>
+                      <SelectItem value="anthropic">
+                        Anthropic Messages
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("codexConfig.autoCompactLimit", {
+                      defaultValue: "压缩阈值",
+                    })}
+                  </Label>
+                  <Input
+                    inputMode="numeric"
+                    value={models.codex?.autoCompactLimit?.toString() ?? ""}
+                    onChange={(e) =>
+                      updateModel(
+                        "codex",
+                        "autoCompactLimit",
+                        e.target.value.replace(/\D/g, ""),
+                      )
+                    }
+                    placeholder="900000"
                   />
                 </div>
-                {/* Gemini JSON */}
-                {geminiConfigJson && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <ProviderIcon icon="gemini" name="Gemini" size={16} />
-                      Gemini
-                    </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("providerForm.customUserAgent", {
+                      defaultValue: "自定义 User-Agent",
+                    })}
+                  </Label>
+                  <Input
+                    value={models.codex?.customUserAgent || ""}
+                    onChange={(e) =>
+                      updateModel("codex", "customUserAgent", e.target.value)
+                    }
+                    placeholder="codex/1.0"
+                  />
+                </div>
+              </div>
+
+              {/* 配置文件的开关：远程压缩、模拟客户端、完整 URL */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-3 text-xs text-fg-2">
+                <label
+                  className="inline-flex cursor-pointer items-center gap-1.5"
+                  title={t("codexConfig.remoteCompactionHint", {
+                    defaultValue:
+                      "开启后会将当前 model_providers 条目的 name 写为 OpenAI，使 Codex 尝试使用远程压缩。",
+                  })}
+                >
+                  <input
+                    type="checkbox"
+                    className="ui-checkbox"
+                    checked={models.codex?.remoteCompaction === true}
+                    onChange={(e) =>
+                      updateModel("codex", "remoteCompaction", e.target.checked)
+                    }
+                  />
+                  {t("codexConfig.enableRemoteCompaction", {
+                    defaultValue: "启用远程压缩",
+                  })}
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    className="ui-checkbox"
+                    checked={models.codex?.impersonateClaudeCode === true}
+                    onChange={(e) =>
+                      updateModel(
+                        "codex",
+                        "impersonateClaudeCode",
+                        e.target.checked,
+                      )
+                    }
+                  />
+                  {t("codexConfig.impersonateClaudeCodeLabel", {
+                    defaultValue: "模拟 Claude Code 客户端",
+                  })}
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    className="ui-checkbox"
+                    checked={models.codex?.isFullUrl === true}
+                    onChange={(e) =>
+                      updateModel("codex", "isFullUrl", e.target.checked)
+                    }
+                  />
+                  {t("providerForm.fullUrlLabel", {
+                    defaultValue: "完整 URL",
+                  })}
+                </label>
+              </div>
+
+              <div className="grid gap-3 pt-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("codexConfig.subagentModelLabel", {
+                      defaultValue: "子代理模型",
+                    })}
+                  </Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.codex?.subagentModel || ""}
+                    onChange={(value) =>
+                      updateModel("codex", "subagentModel", value)
+                    }
+                    label={t("subagentModelLabel", {
+                      defaultValue: "子代理模型",
+                    })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("codexConfig.subagentReasoningEffortLabel", {
+                      defaultValue: "子代理推理档位",
+                    })}
+                  </Label>
+                  <Input
+                    value={models.codex?.subagentReasoningEffort || ""}
+                    onChange={(e) =>
+                      updateModel(
+                        "codex",
+                        "subagentReasoningEffort",
+                        e.target.value,
+                      )
+                    }
+                    placeholder="low"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("codexConfig.promptCacheRoutingLabel", {
+                      defaultValue: "提示词缓存路由",
+                    })}
+                  </Label>
+                  <Select
+                    value={models.codex?.promptCacheRouting || "auto"}
+                    onValueChange={(value) =>
+                      updateModel("codex", "promptCacheRouting", value)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">
+                        {t("codexConfig.promptCacheRoutingAuto", {
+                          defaultValue: "自动",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="enabled">
+                        {t("codexConfig.promptCacheRoutingEnabled", {
+                          defaultValue: "开启",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="disabled">
+                        {t("codexConfig.promptCacheRoutingDisabled", {
+                          defaultValue: "关闭",
+                        })}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* 思考能力（走 Chat Completions 时声明） */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-3 text-xs text-fg-2">
+                <span>
+                  {t("codexConfig.reasoningGroupTitle", {
+                    defaultValue: "思考能力",
+                  })}
+                </span>
+                <label className="inline-flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    className="ui-checkbox"
+                    checked={
+                      models.codex?.chatReasoning?.supportsThinking === true
+                    }
+                    onChange={(e) =>
+                      updateChatReasoning("supportsThinking", e.target.checked)
+                    }
+                  />
+                  {t("codexConfig.reasoningModeToggle", {
+                    defaultValue: "支持思考模式",
+                  })}
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    className="ui-checkbox"
+                    checked={
+                      models.codex?.chatReasoning?.supportsEffort === true
+                    }
+                    onChange={(e) =>
+                      updateChatReasoning("supportsEffort", e.target.checked)
+                    }
+                  />
+                  {t("codexConfig.reasoningEffortToggle", {
+                    defaultValue: "支持思考等级",
+                  })}
+                </label>
+              </div>
+
+              {/* 模型目录不再手填：后端用统一供应商的可用模型列表自动生成
+                  （名称与上下文窗口来自拉取时的 models.dev 补全）。 */}
+              <p className="pt-3 text-xs text-fg-2">
+                {t("codexConfig.catalogAutoHint", {
+                  defaultValue:
+                    "Codex 的 /model 菜单由可用模型列表自动生成；想调整就先在上面维护模型列表。",
+                })}
+              </p>
+
+              {/* 本地路由请求覆盖 */}
+              <div className="grid gap-3 pt-3 sm:grid-cols-2">
+                {(
+                  [
+                    [
+                      "headers",
+                      "providerForm.localProxyHeaderOverrides",
+                      "Header 覆盖",
+                    ],
+                    [
+                      "body",
+                      "providerForm.localProxyBodyOverrides",
+                      "Body 覆盖",
+                    ],
+                  ] as const
+                ).map(([field, key, fallback]) => (
+                  <div key={field} className="space-y-1">
+                    <Label className="text-xs">
+                      {t(key, { defaultValue: fallback })}
+                    </Label>
+                    <Textarea
+                      value={codexOverrides[field]}
+                      onChange={(e) =>
+                        setCodexOverrides((prev) => ({
+                          ...prev,
+                          [field]: e.target.value,
+                        }))
+                      }
+                      className="min-h-[72px] resize-y font-mono text-xs"
+                      placeholder={'{\n  "X-Provider": "cc-switch"\n}'}
+                    />
+                  </div>
+                ))}
+              </div>
+              {/* Codex 配置预览：与单应用表单一样分 auth.json / config.toml 两块 */}
+              {codexConfigJson && (
+                <div className="space-y-3 pt-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">
+                      {t("codexConfig.authJson", {
+                        defaultValue: "auth.json (JSON) *",
+                      })}
+                    </Label>
                     <JsonEditor
-                      value={JSON.stringify(geminiConfigJson, null, 2)}
+                      value={JSON.stringify(codexConfigJson.auth, null, 2)}
                       onChange={() => {}}
-                      height={140}
+                      height={100}
                       darkMode={isDarkMode}
                     />
                   </div>
-                )}
+                  <div className="space-y-1">
+                    <Label className="text-xs">
+                      {t("codexConfig.configToml", {
+                        defaultValue: "config.toml (TOML)",
+                      })}
+                    </Label>
+                    <JsonEditor
+                      value={codexTomlPreview}
+                      onChange={() => {}}
+                      height={240}
+                      darkMode={isDarkMode}
+                    />
+                  </div>
+                  {catalogPreviewCount > 0 && (
+                    <p className="text-xs text-fg-2">
+                      {t("codexConfig.catalogAutoHint", {
+                        defaultValue:
+                          "Codex 的 /model 菜单由可用模型列表自动生成；想调整就先在上面维护模型列表。",
+                      })}
+                    </p>
+                  )}
+                </div>
+              )}
+            </AppSection>
+            <AppSection
+              icon="gemini"
+              name="Gemini CLI"
+              summary={sectionSummaries.gemini}
+              open={openSections.gemini}
+              onOpenChange={(open) => toggleSection("gemini", open)}
+            >
+              <div className="space-y-1 pt-3">
+                <Label className="text-xs">
+                  {t("universalProvider.model", { defaultValue: "模型" })}
+                </Label>
+                <ModelSelect
+                  models={availableModels}
+                  value={models.gemini?.model || ""}
+                  onChange={(value) => updateModel("gemini", "model", value)}
+                  label={t("universalProvider.modelField", {
+                    defaultValue: "模型",
+                  })}
+                />
               </div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2">
-                <ProviderIcon icon="claude" name="Claude Desktop" size={20} />
-                <span className="font-medium">Claude Desktop</span>
+              {/* .env / settings.json 里的其他键：跟这个应用一起切换 */}
+              <div className="space-y-1 pt-3">
+                <Label className="text-xs">
+                  {t("geminiConfig.envFile", {
+                    defaultValue: "环境变量 (.env)",
+                  })}
+                </Label>
+                <JsonEditor
+                  value={geminiEnvText}
+                  onChange={setGeminiEnvText}
+                  height={140}
+                  darkMode={isDarkMode}
+                />
               </div>
-              <div className="pt-3">
-                {/* 接入方式：直连的供应商自己认 Claude 角色 ID；模型映射经本地路由 */}
-                <div className="flex items-start justify-between gap-4 border-t pt-3">
-                  <p className="min-w-0 flex-1 text-xs leading-relaxed text-fg-2">
-                    {desktopMode === "direct"
-                      ? t("claudeDesktop.modelMappingOffHint", {
-                          defaultValue:
-                            "仅当供应商直接接受 Claude Desktop 可识别的三档角色 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）时才适用直连；其他模型名（含 claude-3-5-sonnet-… 等旧式 ID）请选择模型映射。",
-                        })
-                      : t("claudeDesktop.modelMappingOnHint", {
-                          defaultValue:
-                            "Claude Desktop 只接受 claude-sonnet-* / claude-opus-* / claude-haiku-* 三档角色 ID。选择模型映射后，CC Switch 会把这三档映射到供应商的实际模型，并在使用期间保持本地路由开启。",
-                        })}
-                  </p>
-                  <div className="flex shrink-0 items-center gap-2 border-l border-border pl-4">
-                    <Label
-                      htmlFor="desktop-model-mode"
-                      className="text-sm font-normal text-fg-2"
-                    >
-                      {t("claudeDesktop.modelModeLabel", {
+              <div className="space-y-1 pt-3">
+                <Label className="text-xs">
+                  {t("geminiConfig.configJson", {
+                    defaultValue: "settings.json",
+                  })}
+                </Label>
+                <JsonEditor
+                  value={geminiConfigText}
+                  onChange={setGeminiConfigText}
+                  height={140}
+                  darkMode={isDarkMode}
+                />
+              </div>
+              {/* Gemini JSON */}
+              {geminiConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="gemini" name="Gemini" size={16} />
+                    Gemini
+                  </div>
+                  <JsonEditor
+                    value={JSON.stringify(geminiConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={140}
+                    darkMode={isDarkMode}
+                  />
+                </div>
+              )}
+            </AppSection>
+            <AppSection
+              icon="claude"
+              name="Claude Desktop"
+              summary={sectionSummaries.claudeDesktop}
+              open={openSections.claudeDesktop}
+              onOpenChange={(open) => toggleSection("claudeDesktop", open)}
+            >
+              {/* 接入方式：直连的供应商自己认 Claude 角色 ID；模型映射经本地路由 */}
+              <div className="flex items-start justify-between gap-4 pt-3">
+                <p className="min-w-0 flex-1 text-xs leading-relaxed text-fg-2">
+                  {desktopMode === "direct"
+                    ? t("claudeDesktop.modelMappingOffHint", {
+                        defaultValue:
+                          "仅当供应商直接接受 Claude Desktop 可识别的三档角色 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）时才适用直连；其他模型名（含 claude-3-5-sonnet-… 等旧式 ID）请选择模型映射。",
+                      })
+                    : t("claudeDesktop.modelMappingOnHint", {
+                        defaultValue:
+                          "Claude Desktop 只接受 claude-sonnet-* / claude-opus-* / claude-haiku-* 三档角色 ID。选择模型映射后，CC Switch 会把这三档映射到供应商的实际模型，并在使用期间保持本地路由开启。",
+                      })}
+                </p>
+                <div className="flex shrink-0 items-center gap-2 border-l border-border pl-4">
+                  <Label
+                    htmlFor="desktop-model-mode"
+                    className="text-sm font-normal text-fg-2"
+                  >
+                    {t("claudeDesktop.modelModeLabel", {
+                      defaultValue: "接入方式",
+                    })}
+                  </Label>
+                  <Select
+                    value={desktopMode}
+                    onValueChange={(value) => {
+                      setDesktopMode(value as ClaudeDesktopMode);
+                      setDesktopRoutes([]);
+                    }}
+                  >
+                    <SelectTrigger
+                      id="desktop-model-mode"
+                      className="w-[156px]"
+                      aria-label={t("claudeDesktop.modelModeLabel", {
                         defaultValue: "接入方式",
                       })}
-                    </Label>
-                    <Select
-                      value={desktopMode}
-                      onValueChange={(value) => {
-                        setDesktopMode(value as ClaudeDesktopMode);
-                        setDesktopRoutes([]);
-                      }}
                     >
-                      <SelectTrigger
-                        id="desktop-model-mode"
-                        className="w-[156px]"
-                        aria-label={t("claudeDesktop.modelModeLabel", {
-                          defaultValue: "接入方式",
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="direct">
+                        {t("claudeDesktop.modelModeDirect", {
+                          defaultValue: "直连",
                         })}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="direct">
-                          {t("claudeDesktop.modelModeDirect", {
-                            defaultValue: "直连",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="proxy">
-                          {t("claudeDesktop.modelModeProxy", {
-                            defaultValue: "模型映射",
-                          })}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                      </SelectItem>
+                      <SelectItem value="proxy">
+                        {t("claudeDesktop.modelModeProxy", {
+                          defaultValue: "模型映射",
+                        })}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+              </div>
 
-                {desktopMode === "proxy" && (
-                  <div className="space-y-1 border-t pt-3">
-                    <Label className="text-xs">
-                      {t("providerForm.apiFormat", {
-                        defaultValue: "上游格式",
-                      })}
-                    </Label>
-                    <Select
-                      value={models.claudeDesktop?.apiFormat || "anthropic"}
-                      onValueChange={(value) =>
-                        updateModel("claudeDesktop", "apiFormat", value)
-                      }
-                    >
-                      <SelectTrigger className="w-full" aria-label="上游格式">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="anthropic">
-                          {t("providerForm.apiFormatAnthropic", {
-                            defaultValue: "Anthropic Messages (原生)",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="openai_chat">
-                          {t("providerForm.apiFormatOpenAIChat", {
-                            defaultValue:
-                              "OpenAI Chat Completions (需开启路由)",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="openai_responses">
-                          {t("providerForm.apiFormatOpenAIResponses", {
-                            defaultValue: "OpenAI Responses API (需开启路由)",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="gemini_native">
-                          {t("providerForm.apiFormatGeminiNative", {
-                            defaultValue:
-                              "Gemini Native generateContent (需开启路由)",
-                          })}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                {/* 路由表：映射模式固定四档角色，直连模式只填角色 ID */}
-                <div className="space-y-2 border-t pt-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <Label className="text-xs">
-                      {desktopMode === "proxy"
-                        ? t("claudeDesktop.routeMapTitle", {
-                            defaultValue: "模型映射",
-                          })
-                        : t("claudeDesktop.directModelListTitle", {
-                            defaultValue: "模型列表",
-                          })}
-                    </Label>
-                    {desktopMode === "direct" && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setDesktopRoutes((prev) => [
-                            ...prev,
-                            {
-                              routeId: "",
-                              model: "",
-                              labelOverride: "",
-                              supports1m: false,
-                            },
-                          ])
-                        }
-                      >
-                        {t("claudeDesktop.addModel", {
-                          defaultValue: "添加模型",
+              {desktopMode === "proxy" && (
+                <div className="space-y-1 pt-3">
+                  <Label className="text-xs">
+                    {t("providerForm.apiFormat", {
+                      defaultValue: "上游格式",
+                    })}
+                  </Label>
+                  <Select
+                    value={models.claudeDesktop?.apiFormat || "anthropic"}
+                    onValueChange={(value) =>
+                      updateModel("claudeDesktop", "apiFormat", value)
+                    }
+                  >
+                    <SelectTrigger className="w-full" aria-label="上游格式">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="anthropic">
+                        {t("providerForm.apiFormatAnthropic", {
+                          defaultValue: "Anthropic Messages (原生)",
                         })}
-                      </Button>
-                    )}
-                  </div>
+                      </SelectItem>
+                      <SelectItem value="openai_chat">
+                        {t("providerForm.apiFormatOpenAIChat", {
+                          defaultValue: "OpenAI Chat Completions (需开启路由)",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="openai_responses">
+                        {t("providerForm.apiFormatOpenAIResponses", {
+                          defaultValue: "OpenAI Responses API (需开启路由)",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="gemini_native">
+                        {t("providerForm.apiFormatGeminiNative", {
+                          defaultValue:
+                            "Gemini Native generateContent (需开启路由)",
+                        })}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* 路由表只在映射模式下出现：直连的模型就是供应商级可用模型列表里
+                  的 claude-* 角色（后端强制角色 ID 同名），不需要在这里维护。
+                  1M 声明跟随所选模型的上下文窗口元数据，不再手勾。 */}
+              {desktopMode === "proxy" && (
+                <div className="space-y-2 pt-3">
+                  <Label className="text-xs">
+                    {t("claudeDesktop.routeMapTitle", {
+                      defaultValue: "模型映射",
+                    })}
+                  </Label>
                   <p className="text-xs leading-relaxed text-fg-2">
-                    {desktopMode === "proxy"
-                      ? t("claudeDesktop.routeMapHint", {
-                          defaultValue:
-                            "为 Sonnet、Opus、Haiku 三档分别填写实际请求模型；菜单显示名可写 DeepSeek、Kimi 等品牌名。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
-                        })
-                      : t("claudeDesktop.directModelListHint", {
-                          defaultValue:
-                            "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空时 Claude Desktop 会自动读取 /v1/models；勾选 1M 会声明支持 1M 上下文。",
-                        })}
+                    {t("claudeDesktop.routeMapHint", {
+                      defaultValue:
+                        "为 Sonnet、Opus、Haiku 三档分别填写实际请求模型；菜单显示名可写 DeepSeek、Kimi 等品牌名。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
+                    })}
                   </p>
 
-                  {desktopMode === "proxy" && (
-                    <div className="hidden grid-cols-[140px_1fr_1fr_116px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
-                      <span>
-                        {t("claudeDesktop.routeModelLabel", {
-                          defaultValue: "模型角色",
-                        })}
-                      </span>
-                      <span>
-                        {t("claudeDesktop.labelOverrideLabel", {
-                          defaultValue: "菜单显示名",
-                        })}
-                      </span>
-                      <span>
-                        {t("claudeDesktop.upstreamModelLabel", {
-                          defaultValue: "实际请求模型",
-                        })}
-                      </span>
-                      <span>
-                        {t("claudeDesktop.supports1mLabel", {
-                          defaultValue: "声明支持 1M",
-                        })}
-                      </span>
-                    </div>
-                  )}
+                  <div className="hidden grid-cols-[140px_1fr_1fr] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+                    <span>
+                      {t("claudeDesktop.routeModelLabel", {
+                        defaultValue: "模型角色",
+                      })}
+                    </span>
+                    <span>
+                      {t("claudeDesktop.labelOverrideLabel", {
+                        defaultValue: "菜单显示名",
+                      })}
+                    </span>
+                    <span>
+                      {t("claudeDesktop.upstreamModelLabel", {
+                        defaultValue: "实际请求模型",
+                      })}
+                    </span>
+                  </div>
 
                   <div className="space-y-2">
                     {desktopRoutes.map((row, index) => (
                       <div
                         key={`${row.routeId}-${index}`}
-                        className={
-                          desktopMode === "proxy"
-                            ? "grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px]"
-                            : "grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_116px_36px]"
-                        }
+                        className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr]"
                       >
-                        {desktopMode === "proxy" ? (
-                          <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
-                            {desktopRoleLabel(row.routeId)}
-                          </div>
-                        ) : (
-                          <Input
-                            aria-label={t("claudeDesktop.routeModelLabel", {
-                              defaultValue: "模型角色",
-                            })}
-                            value={row.routeId}
-                            onChange={(e) =>
-                              updateDesktopRoute(index, {
-                                routeId: e.target.value,
-                              })
-                            }
-                            placeholder="claude-sonnet-4-6"
-                          />
-                        )}
+                        <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
+                          {desktopRoleLabel(row.routeId)}
+                        </div>
                         <Input
                           aria-label={t("claudeDesktop.labelOverrideLabel", {
                             defaultValue: "菜单显示名",
@@ -2170,177 +2212,116 @@ context_window = ${contextWindow}`;
                           }
                           placeholder="DeepSeek V4 Pro"
                         />
-                        {desktopMode === "proxy" && (
-                          <ModelSelect
-                            models={availableModels}
-                            value={row.model}
-                            onChange={(value) =>
-                              updateDesktopRoute(index, { model: value })
-                            }
-                            label={t("claudeDesktop.upstreamModelLabel", {
-                              defaultValue: "实际请求模型",
-                            })}
-                          />
-                        )}
-                        <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
-                          <input
-                            type="checkbox"
-                            className="ui-checkbox"
-                            checked={row.supports1m}
-                            onChange={(e) =>
-                              updateDesktopRoute(index, {
-                                supports1m: e.target.checked,
-                              })
-                            }
-                          />
-                          {t("claudeDesktop.supports1mShort", {
-                            defaultValue: "1M",
+                        <ModelSelect
+                          models={availableModels}
+                          value={row.model}
+                          onChange={(value) =>
+                            updateDesktopRoute(index, { model: value })
+                          }
+                          label={t("claudeDesktop.upstreamModelLabel", {
+                            defaultValue: "实际请求模型",
                           })}
-                        </label>
-                        {desktopMode === "direct" && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={t("common.delete", {
-                              defaultValue: "删除",
-                            })}
-                            onClick={() =>
-                              setDesktopRoutes((prev) =>
-                                prev.filter((_, i) => i !== index),
-                              )
-                            }
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
+                        />
                       </div>
                     ))}
                   </div>
                 </div>
-                {/* Claude Desktop JSON */}
-                {claudeDesktopConfigJson && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <ProviderIcon
-                        icon="claude"
-                        name="Claude Desktop"
-                        size={16}
-                      />
-                      Claude Desktop
-                    </div>
-                    <JsonEditor
-                      value={JSON.stringify(claudeDesktopConfigJson, null, 2)}
-                      onChange={() => {}}
-                      height={280}
-                      darkMode={isDarkMode}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2">
-                <ProviderIcon icon="grok" name="Grok Build" size={20} />
-                <span className="font-medium">Grok Build</span>
-              </div>
-              <div className="pt-3">
-                <div className="grid gap-3 sm:grid-cols-2 border-t pt-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.grokProfile", {
-                        defaultValue: "配置档位",
-                      })}
-                    </Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.grokbuild?.model || ""}
-                      onChange={(value) =>
-                        updateModel("grokbuild", "model", value)
-                      }
-                      label={t("modelLabel", { defaultValue: "配置档位" })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.grokUpstreamModel", {
-                        defaultValue: "上游模型",
-                      })}
-                    </Label>
-                    <ModelSelect
-                      models={availableModels}
-                      value={models.grokbuild?.upstreamModel || ""}
-                      onChange={(value) =>
-                        updateModel("grokbuild", "upstreamModel", value)
-                      }
-                      label={t("universalProvider.grokUpstreamModel", {
-                        defaultValue: "上游模型",
-                      })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.apiBackend", {
-                        defaultValue: "上游协议",
-                      })}
-                    </Label>
-                    <Select
-                      value={models.grokbuild?.apiBackend || "responses"}
-                      onValueChange={(value) =>
-                        updateModel("grokbuild", "apiBackend", value)
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="responses">Responses</SelectItem>
-                        <SelectItem value="chat_completions">
-                          Chat Completions
-                        </SelectItem>
-                        <SelectItem value="anthropic_messages">
-                          Anthropic Messages
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">
-                      {t("universalProvider.grokContextWindow", {
-                        defaultValue: "上下文窗口",
-                      })}
-                    </Label>
-                    <Input
-                      inputMode="numeric"
-                      value={models.grokbuild?.contextWindow?.toString() ?? ""}
-                      onChange={(e) =>
-                        updateModel(
-                          "grokbuild",
-                          "contextWindow",
-                          e.target.value.replace(/\D/g, ""),
-                        )
-                      }
-                      placeholder="500000"
-                    />
-                  </div>
+              )}
+              {/* Claude Desktop 配置预览（和后端投影同形） */}
+              {claudeDesktopConfigJson && (
+                <div className="pt-3">
+                  <JsonEditor
+                    value={JSON.stringify(claudeDesktopConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={280}
+                    darkMode={isDarkMode}
+                  />
                 </div>
-                {/* Grok Build TOML */}
-                {grokbuildConfigJson && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <ProviderIcon icon="grok" name="Grok Build" size={16} />
-                      Grok Build
-                    </div>
-                    <JsonEditor
-                      value={grokbuildConfigJson.config}
-                      onChange={() => {}}
-                      height={280}
-                      darkMode={isDarkMode}
-                    />
-                  </div>
-                )}
+              )}
+            </AppSection>
+            <AppSection
+              icon="grok"
+              name="Grok Build"
+              summary={sectionSummaries.grokbuild}
+              open={openSections.grokbuild}
+              onOpenChange={(open) => toggleSection("grokbuild", open)}
+            >
+              <div className="grid gap-3 pt-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.grokProfile", {
+                      defaultValue: "配置档位",
+                    })}
+                  </Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.grokbuild?.model || ""}
+                    onChange={(value) =>
+                      updateModel("grokbuild", "model", value)
+                    }
+                    label={t("modelLabel", { defaultValue: "配置档位" })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.grokUpstreamModel", {
+                      defaultValue: "上游模型",
+                    })}
+                  </Label>
+                  <ModelSelect
+                    models={availableModels}
+                    value={models.grokbuild?.upstreamModel || ""}
+                    onChange={(value) =>
+                      updateModel("grokbuild", "upstreamModel", value)
+                    }
+                    label={t("universalProvider.grokUpstreamModel", {
+                      defaultValue: "上游模型",
+                    })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.apiBackend", {
+                      defaultValue: "上游协议",
+                    })}
+                  </Label>
+                  <Select
+                    value={models.grokbuild?.apiBackend || "responses"}
+                    onValueChange={(value) =>
+                      updateModel("grokbuild", "apiBackend", value)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="responses">Responses</SelectItem>
+                      <SelectItem value="chat_completions">
+                        Chat Completions
+                      </SelectItem>
+                      <SelectItem value="anthropic_messages">
+                        Anthropic Messages
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            </div>
+              {/* Grok Build TOML */}
+              {grokbuildConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="grok" name="Grok Build" size={16} />
+                    Grok Build
+                  </div>
+                  <JsonEditor
+                    value={grokbuildConfigJson.config}
+                    onChange={() => {}}
+                    height={280}
+                    darkMode={isDarkMode}
+                  />
+                </div>
+              )}
+            </AppSection>
           </div>
           <p className="text-xs text-fg-2">
             {t("universalProvider.allAppsHint", {

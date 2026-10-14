@@ -2384,10 +2384,23 @@ impl ProviderService {
 
         // 同步到 Claude
         if let Some(mut claude_provider) = provider.to_claude_provider() {
-            // 合并已有配置
+            // 合并已有配置。署名与自动升级由统一供应商驱动（用户取消勾选后子卡不能
+            // 留着旧值），已有行里的旧值要在合并时删掉；其余键保持「已有为底、
+            // 生成为补」的合并。
+            let generated = claude_provider.settings_config.clone();
             if let Some(existing) = state.db.get_provider_by_id(&claude_provider.id, "claude")? {
                 let mut merged = existing.settings_config.clone();
-                Self::merge_json(&mut merged, &claude_provider.settings_config);
+                if generated.get("attribution").is_none() {
+                    if let Some(obj) = merged.as_object_mut() {
+                        obj.remove("attribution");
+                    }
+                }
+                if generated["env"].get("DISABLE_AUTOUPDATER").is_none() {
+                    if let Some(env) = merged.get_mut("env").and_then(|e| e.as_object_mut()) {
+                        env.remove("DISABLE_AUTOUPDATER");
+                    }
+                }
+                Self::merge_json(&mut merged, &generated);
                 claude_provider.settings_config = merged;
                 // 子卡自己的设置（用量脚本、排序等）保留，统一供应商拥有的键以生成的为准。
                 claude_provider.meta = Self::merge_child_meta(existing.meta, claude_provider.meta);
@@ -2395,24 +2408,6 @@ impl ProviderService {
                 claude_provider.sort_index = existing.sort_index;
             }
             state.db.save_provider("claude", &claude_provider)?;
-            // 全局开关（隐藏 AI 署名、禁用自动升级）不属于任何一家：写进 live 而不是
-            // 供应商行，所以单独应用一次。两个都没填时不动 live。
-            let claude_globals = provider
-                .models
-                .claude
-                .as_ref()
-                .map(|m| (m.hide_attribution, m.disable_auto_upgrade))
-                .filter(|(attribution, updater)| attribution.is_some() || updater.is_some());
-            if let Some((hide_attribution, disable_auto_upgrade)) = claude_globals {
-                if let Err(err) = crate::services::provider::claude_direct::write_globals(
-                    state.db.as_ref(),
-                    hide_attribution,
-                    disable_auto_upgrade,
-                ) {
-                    log::warn!("统一供应商同步后写 Claude 全局开关失败: {err}");
-                    live_failures.push("claude(globals)".to_string());
-                }
-            }
             Self::project_universal_child_to_live(
                 state,
                 AppType::Claude,
@@ -6222,9 +6217,8 @@ wire_api = "responses"
 
     #[test]
     #[serial]
-    fn sync_universal_to_apps_writes_claude_global_switches_to_live() {
-        // 隐藏 AI 署名和禁用自动升级对所有供应商生效，不属于任何一家：写进 live，
-        // 不写供应商行（floor.rs 里两者都不在关键字段/独有字段里）。
+    fn sync_universal_to_apps_writes_claude_switches_into_child_row_and_live() {
+        // 署名与自动升级归供应商所有：写进子供应商行，同步时随行投影到 live。
         with_test_home(|state, _home| {
             let mut universal = UniversalProvider::new(
                 "globals".to_string(),
@@ -6243,8 +6237,33 @@ wire_api = "responses"
                 .db
                 .save_universal_provider(&universal)
                 .expect("save universal provider");
+            // 子卡是当前供应商，同步才会把行投影到 live
+            state
+                .db
+                .set_current_provider("claude", "universal-claude-globals")
+                .expect("set current provider");
+            crate::settings::set_current_provider(
+                &AppType::Claude,
+                Some("universal-claude-globals"),
+            )
+            .expect("set local current provider");
 
             ProviderService::sync_universal_to_apps(state, "globals").expect("sync");
+
+            // 子卡行带着这两个键：这是这一家的设置
+            let child = state
+                .db
+                .get_provider_by_id("universal-claude-globals", "claude")
+                .expect("read child")
+                .expect("child exists");
+            assert_eq!(
+                child.settings_config["attribution"],
+                json!({ "commit": "", "pr": "", "sessionUrl": false })
+            );
+            assert_eq!(
+                child.settings_config["env"]["DISABLE_AUTOUPDATER"],
+                json!("1")
+            );
 
             let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
             assert_eq!(
@@ -6252,8 +6271,54 @@ wire_api = "responses"
                 json!({ "commit": "", "pr": "", "sessionUrl": false })
             );
             assert_eq!(live["env"]["DISABLE_AUTOUPDATER"].as_str(), Some("1"));
+        });
+    }
 
-            // 全局键不进供应商行：它们是 live 的设置，不属于这一家
+    #[test]
+    #[serial]
+    fn switching_away_from_provider_with_claude_switches_clears_them() {
+        // 切到别的供应商：这两个键跟着当前那家走，上一家的值不再留在 live。
+        with_test_home(|state, _home| {
+            let mut universal = UniversalProvider::new(
+                "globals".to_string(),
+                "Globals".to_string(),
+                "https://api.globals.example".to_string(),
+                "globals-key".to_string(),
+            );
+            universal.apps.claude = true;
+            universal.models.claude = Some(ClaudeModelConfig {
+                model: Some("claude-sonnet-4".to_string()),
+                hide_attribution: Some(true),
+                disable_auto_upgrade: Some(true),
+                ..Default::default()
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("save universal provider");
+            state
+                .db
+                .set_current_provider("claude", "universal-claude-globals")
+                .expect("set current provider");
+            crate::settings::set_current_provider(
+                &AppType::Claude,
+                Some("universal-claude-globals"),
+            )
+            .expect("set local current provider");
+            ProviderService::sync_universal_to_apps(state, "globals").expect("sync");
+
+            // 把两个开关去掉再同步：子卡行清掉，live 也跟着清掉
+            let mut updated = universal;
+            updated.models.claude = Some(ClaudeModelConfig {
+                model: Some("claude-sonnet-4".to_string()),
+                ..Default::default()
+            });
+            state
+                .db
+                .save_universal_provider(&updated)
+                .expect("save updated");
+            ProviderService::sync_universal_to_apps(state, "globals").expect("sync 2");
+
             let child = state
                 .db
                 .get_provider_by_id("universal-claude-globals", "claude")
@@ -6263,89 +6328,10 @@ wire_api = "responses"
             assert!(child.settings_config["env"]
                 .get("DISABLE_AUTOUPDATER")
                 .is_none());
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn sync_universal_to_apps_removes_claude_global_switches_when_unchecked() {
-        with_test_home(|state, _home| {
-            // live 里已经有这两个键，用户显式取消勾选后要清掉
-            write_json_file(
-                &get_claude_settings_path(),
-                &json!({
-                    "attribution": { "commit": "", "pr": "", "sessionUrl": false },
-                    "env": { "DISABLE_AUTOUPDATER": "1" }
-                }),
-            )
-            .expect("seed live");
-
-            let mut universal = UniversalProvider::new(
-                "globals-off".to_string(),
-                "Globals Off".to_string(),
-                "https://api.example.com".to_string(),
-                "key".to_string(),
-            );
-            universal.apps.claude = true;
-            // `Some(false)` 是「用户取消勾选」；`None`（缺省）表示没动过，不动 live
-            universal.models.claude = Some(ClaudeModelConfig {
-                model: Some("claude-sonnet-4".to_string()),
-                hide_attribution: Some(false),
-                disable_auto_upgrade: Some(false),
-                ..Default::default()
-            });
-            state
-                .db
-                .save_universal_provider(&universal)
-                .expect("save universal provider");
-
-            ProviderService::sync_universal_to_apps(state, "globals-off").expect("sync");
 
             let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
             assert!(live.get("attribution").is_none(), "{live}");
             assert!(live["env"].get("DISABLE_AUTOUPDATER").is_none(), "{live}");
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn sync_universal_to_apps_leaves_untouched_claude_globals_alone() {
-        // 没动过的全局开关不能写也不能删：打开编辑器再保存不应该碰 live 里别人设的值
-        with_test_home(|state, _home| {
-            write_json_file(
-                &get_claude_settings_path(),
-                &json!({
-                    "attribution": { "commit": "", "pr": "", "sessionUrl": false },
-                    "env": { "DISABLE_AUTOUPDATER": "1" }
-                }),
-            )
-            .expect("seed live");
-
-            let mut universal = UniversalProvider::new(
-                "globals-none".to_string(),
-                "Globals None".to_string(),
-                "https://api.example.com".to_string(),
-                "key".to_string(),
-            );
-            universal.apps.claude = true;
-            universal.models.claude = Some(ClaudeModelConfig {
-                model: Some("claude-sonnet-4".to_string()),
-                ..Default::default()
-            });
-            state
-                .db
-                .save_universal_provider(&universal)
-                .expect("save universal provider");
-
-            ProviderService::sync_universal_to_apps(state, "globals-none").expect("sync");
-
-            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
-            assert_eq!(
-                live["attribution"],
-                json!({ "commit": "", "pr": "", "sessionUrl": false }),
-                "untouched globals must survive: {live}"
-            );
-            assert_eq!(live["env"]["DISABLE_AUTOUPDATER"].as_str(), Some("1"));
         });
     }
 

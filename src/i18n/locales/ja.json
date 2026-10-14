@@ -80,7 +80,6 @@
     "disableArtifactHelp": "Artifact ツールをリクエストに含めません。一部のサードパーティゲートウェイはそのスキーマを拒否し、すべてのリクエストで 400 を返します。プロバイダーに従って切り替わります。",
     "disableAutoModeServer": "auto mode のサーバー側チェックを無効化",
     "disableAutoModeServerHelp": "ゲートウェイはサーバー側チェックに対応していないため、auto mode はセッションごとに一度「対象外」の通知で止まり、Enter を押すとローカルチェックに切り替わります。オンにすると最初からローカルチェックを使い、通知は出ません。公式エンドポイントではオンにしないでください。",
-    "keyFieldsHint": "エンドポイント、キー、モデル、コンテキストウィンドウ、互換スイッチはプロバイダーの切り替えに従います。それ以外のフィールドは Claude Code のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
     "inactiveFieldsHint": "このプロバイダーには、切り替えても反映されないフィールドが {{count}} 件保存されています。クリックすると上のグローバル設定に追加され、保存時に設定ファイルへ書き込まれます。プロバイダーに保存された元の値は削除されません。",
     "addToGlobalSettings": "グローバル設定に追加"
   },
@@ -254,13 +253,8 @@
     "routeRoleHaiku": "Haiku",
     "labelOverrideLabel": "メニュー表示名",
     "upstreamModelLabel": "リクエストモデル",
-    "supports1mLabel": "1M 対応を宣言",
-    "supports1mShort": "1M",
-    "directModelListTitle": "モデル一覧",
     "directModelListCollapsedHint": "ネイティブ Claude モデルのプロバイダーでは通常不要です。Claude Desktop が /v1/models を自動取得します。",
-    "directModelListHint": "Claude Desktop で使用できる Sonnet、Opus、Haiku モデルを設定します。空欄の場合、Claude Desktop が /v1/models を自動取得します。1M をオンにすると 1M コンテキスト対応を宣言します。",
     "directModelInvalid": "直結モデルは Claude Desktop が認識できる Sonnet / Opus / Haiku モデル ID を使う必要があります",
-    "addModel": "モデルを追加",
     "addRoute": "モデルを追加",
     "routeInvalid": "モデル役割を選択し、リクエストモデルを入力してください",
     "routesRequired": "少なくとも 1 つのモデルマッピングが必要です",
@@ -1462,7 +1456,6 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
-    "modelDisplayNameLabel": "表示名",
     "modelDisplayNamePlaceholder": "例: DeepSeek V4 Pro",
     "modelNoDisplayName": "/model には表示されません",
     "requestModelLabel": "リクエストモデル",
@@ -1675,7 +1668,6 @@
     "anthropicAuthFieldHint": "ゲートウェイに API キーを渡すヘッダーを選択します。ANTHROPIC_AUTH_TOKEN は Authorization: Bearer、ANTHROPIC_API_KEY は x-api-key を送信します。送信されるのはどちらか一方のみです。",
     "impersonateClaudeCodeLabel": "Claude Code クライアントを模倣",
     "impersonateClaudeCodeHint": "ゲートウェイ（またはその上流）が Claude Code のみに制限している場合に有効化します。User-Agent・anthropic-beta・x-app ヘッダーを偽装し、システムプロンプトの先頭行に Claude Code のアイデンティティを注入します。",
-    "maxOutputTokensLabel": "最大出力トークン",
     "maxOutputTokensPlaceholder": "空欄の場合はデフォルトの 8192 を使用",
     "maxOutputTokensHint": "Codex は model_max_output_tokens をリクエストボディに含めないため、デフォルト上限 8192 では長い回答や深い思考時に切り詰められることがあります（stop_reason=max_tokens）。この値は Anthropic 経路で max_tokens を上書きします。モデル／ゲートウェイの実際の出力上限を超えると 400 になる場合があります。空欄でデフォルトの 8192 を使用します。",
     "promptCacheRoutingLabel": "プロンプトキャッシュルーティング",
@@ -1686,7 +1678,6 @@
     "upstreamModelName": "上流モデル名",
     "upstreamModelNameHint": "Chat 形式ではここに実際の上流モデルを入力します。ルーティングで Codex の Responses リクエストを Chat Completions に変換し、このモデルを維持します。",
     "modelNamePlaceholder": "例: gpt-5-codex",
-    "contextWindow1M": "1M コンテキストウィンドウ",
     "contextWindow": "コンテキストウィンドウ",
     "contextWindowPlaceholder": "例: 128000",
     "autoCompactLimit": "自動圧縮しきい値",
@@ -1733,7 +1724,8 @@
     "inactiveFieldsHint": "このプロバイダーには切り替え時に適用されない設定が {{count}} 件保存されています。クリックすると TOML をコピーできるので、必要なら上に貼り付けてください。保存済みの値は削除されません。",
     "inactiveFieldCopied": "コピーしました",
     "subagentModelLabel": "サブエージェントモデル",
-    "subagentReasoningEffortLabel": "サブエージェント推論レベル"
+    "subagentReasoningEffortLabel": "サブエージェント推論レベル",
+    "reasoningEffortLabel": "Reasoning Effort"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
@@ -1744,7 +1736,6 @@
     "inactiveFieldsHint": "このプロバイダーには切り替えで反映されない設定が {{count}} 件保存されています。クリックすると上のグローバル設定に追加され、保存時に設定ファイルへ書き込まれます。プロバイダーに保存された元の値は削除されません。",
     "addToGlobalSettings": "グローバル設定に追加"
   },
-
   "usage": {
     "title": "利用統計",
     "subtitle": "AI モデルの利用状況とコスト統計を表示",
@@ -3156,6 +3147,7 @@
   },
   "universalProvider": {
     "availableModels": "利用可能なモデル",
+    "availableModelsCount": "{{count}} 個のモデル",
     "availableModelsHint": "すべてのアプリで共通です。ドロップダウンの選択肢と各アプリのモデルカタログはこの一覧から作られます。",
     "availableModelsEmpty": "モデルがありません。「モデル一覧を取得」するか手動で追加してください。",
     "modelId": "モデル ID",
@@ -3188,7 +3180,6 @@
     "notesPlaceholder": "オプション：メモを追加",
     "grokProfile": "プロファイル",
     "grokUpstreamModel": "上流モデル",
-    "grokContextWindow": "コンテキストウィンドウ",
     "apiBackend": "上流プロトコル",
     "model": "モデル",
     "added": "統合プロバイダーを追加しました",
@@ -3213,9 +3204,10 @@
     "mainModel": "メインモデル",
     "apiFormat": "上流フォーマット",
     "apiKeyField": "認証フィールド",
-    "modelOneM": "1M 対応を宣言",
-    "mainModelOneM": "メインモデル",
-    "subagentModel": "Subagent モデル"
+    "subagentModel": "Subagent モデル",
+    "effortLevelsLabel": "思考レベル",
+    "effortLevelsFollowModel": "モデルのメタデータに従う",
+    "effortLevelsFollowModelHelp": "選択したモデルの models.dev 宣告に従ってカタログを生成"
   },
   "subscription": {
     "title": "サブスクリプションクォータ",

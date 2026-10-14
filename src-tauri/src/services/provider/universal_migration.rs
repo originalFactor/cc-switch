@@ -210,11 +210,6 @@ fn model_config_for(app: &AppType, settings: &Value) -> Option<UniversalProvider
             let mut codex = CodexModelConfig {
                 model: toml_str(doc.get("model")),
                 reasoning_effort: toml_str(doc.get("model_reasoning_effort")),
-                context_window_one_m: doc
-                    .get("model_context_window")
-                    .and_then(|v| v.as_integer())
-                    .filter(|v| *v == 1_000_000)
-                    .map(|_| true),
                 auto_compact_limit: doc
                     .get("model_auto_compact_token_limit")
                     .and_then(|v| v.as_integer())
@@ -274,10 +269,6 @@ fn model_config_for(app: &AppType, settings: &Value) -> Option<UniversalProvider
                 model: Some(profile.to_string()),
                 upstream_model: toml_str(entry.get("model")),
                 api_backend: toml_str(entry.get("api_backend")),
-                context_window: entry
-                    .get("context_window")
-                    .and_then(|v| v.as_integer())
-                    .and_then(|v| u64::try_from(v).ok()),
             });
         }
         // Claude Desktop 的模型配置全在 meta（接入方式 + 角色路由），单独处理。
@@ -339,6 +330,19 @@ fn merge_meta_into_models(
                 routes,
                 ..Default::default()
             });
+        }
+        // Codex 的专属设置全在行 meta（apiFormat / 完整 URL / UA / 请求覆盖 / 兼容
+        // 开关 / 思考声明 / 缓存路由 / 最大输出）。不搬的话，迁移后这些开关在表单里
+        // 全部回到默认值，`to_codex_provider` 也不会再写进生成的子卡。
+        AppType::Codex => {
+            let codex = models.codex.get_or_insert_with(CodexModelConfig::default);
+            codex.api_format = m.api_format.clone();
+            codex.is_full_url = m.is_full_url;
+            codex.custom_user_agent = m.custom_user_agent.clone();
+            codex.request_overrides = m.local_proxy_request_overrides.clone();
+            codex.impersonate_claude_code = m.impersonate_claude_code;
+            codex.prompt_cache_routing = m.prompt_cache_routing.clone();
+            codex.chat_reasoning = m.codex_chat_reasoning.clone();
         }
         _ => {}
     }
@@ -616,6 +620,7 @@ pub fn enable_all_apps_for_existing(state: &AppState) -> Result<usize, AppError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::CodexChatReasoningConfig;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -1010,6 +1015,51 @@ mod tests {
                     .as_deref()
                     .is_some_and(|id| id.starts_with("universal-codex-")),
                 "当前指针应挪到子卡，实际 {current:?}"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn carries_codex_meta_switches_into_the_model_block() {
+        with_state(|state| {
+            let mut provider = Provider::with_id(
+                "codex-a".to_string(),
+                "GW".to_string(),
+                codex_settings("https://gw.example/v1", "sk-1", "gpt-5.6-sol"),
+                None,
+            );
+            // 旧 per-app 行的 Codex 专属设置全在 meta 里。
+            provider.meta = Some(ProviderMeta {
+                api_format: Some("anthropic".into()),
+                is_full_url: Some(true),
+                custom_user_agent: Some("relay/1.0".into()),
+                impersonate_claude_code: Some(true),
+                prompt_cache_routing: Some("enabled".into()),
+                codex_chat_reasoning: Some(CodexChatReasoningConfig {
+                    supports_thinking: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+            state.db.save_provider("codex", &provider).expect("save");
+
+            migrate_per_app_to_universal(state).expect("migrate");
+
+            let universal = state.db.get_all_universal_providers().expect("load");
+            let universal = universal.values().next().expect("one");
+            let codex = universal.models.codex.as_ref().expect("codex block");
+            assert_eq!(codex.api_format.as_deref(), Some("anthropic"));
+            assert_eq!(codex.is_full_url, Some(true));
+            assert_eq!(codex.custom_user_agent.as_deref(), Some("relay/1.0"));
+            assert_eq!(codex.impersonate_claude_code, Some(true));
+            assert_eq!(codex.prompt_cache_routing.as_deref(), Some("enabled"));
+            assert_eq!(
+                codex
+                    .chat_reasoning
+                    .as_ref()
+                    .and_then(|r| r.supports_thinking),
+                Some(true)
             );
         });
     }

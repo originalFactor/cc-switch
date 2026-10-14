@@ -1,8 +1,13 @@
 {
-  "envPrefixes": ["ANTHROPIC_", "AWS_", "VERTEX_REGION_"],
+  "envPrefixes": [
+    "ANTHROPIC_",
+    "AWS_",
+    "VERTEX_REGION_"
+  ],
   "envKeys": [
     "CLAUDE_CODE_SUBAGENT_MODEL",
     "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+    "DISABLE_AUTOUPDATER",
     "CLOUD_ML_REGION",
     "GOOGLE_APPLICATION_CREDENTIALS",
     "CLAUDE_CODE_OAUTH_TOKEN",
@@ -10,7 +15,10 @@
     "CLAUDE_CODE_OAUTH_SCOPES",
     "CLAUDE_CODE_API_KEY_HELPER_TTL_MS"
   ],
-  "envSkipAuth": { "prefix": "CLAUDE_CODE_SKIP_", "suffix": "_AUTH" },
+  "envSkipAuth": {
+    "prefix": "CLAUDE_CODE_SKIP_",
+    "suffix": "_AUTH"
+  },
   "protocolSelectors": [
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
@@ -26,6 +34,7 @@
     "primaryModel",
     "smallFastModel",
     "apiKey",
+    "attribution",
     "model",
     "fallbackModel",
     "modelOverrides",

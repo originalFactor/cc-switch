@@ -10,7 +10,6 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::LiveFile;
 use crate::live::patch::json::JsonPatch;
-use crate::live::patch::KeyPath;
 use crate::live::project::claude::{direct_patch, ClaudeProjection};
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::state::{op, PendingTarget};
@@ -87,37 +86,4 @@ pub(crate) fn run(
         })
         .collect();
     write.run(op, &changes, target)
-}
-
-/// 写 Claude Code 的全局开关：隐藏 AI 署名（顶层 `attribution`）和禁用自动升级
-/// （`env.DISABLE_AUTOUPDATER`）。
-///
-/// 这两个键对所有供应商生效，不属于任何一家，所以既不进供应商行、也不随切换清理
-/// （`floor.rs` 里两者都不在关键字段和独有字段里）。`None` 表示这次不动它。
-pub(crate) fn write_globals(
-    db: &Database,
-    hide_attribution: Option<bool>,
-    disable_auto_upgrade: Option<bool>,
-) -> Result<OperationReport, AppError> {
-    let env = KeyPath::new(&["env"]);
-    let mut patch = JsonPatch::default();
-    for (path, enabled, value) in [
-        (
-            KeyPath::root().child("attribution"),
-            hide_attribution,
-            serde_json::json!({ "commit": "", "pr": "", "sessionUrl": false }),
-        ),
-        (
-            env.child("DISABLE_AUTOUPDATER"),
-            disable_auto_upgrade,
-            serde_json::json!("1"),
-        ),
-    ] {
-        match enabled {
-            Some(true) => patch.set.push((path, value)),
-            Some(false) => patch.remove.push(path),
-            None => {}
-        }
-    }
-    run(db, op::APPLY, Some(&patch), PendingTarget::default())
 }

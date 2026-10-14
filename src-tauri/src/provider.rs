@@ -767,10 +767,10 @@ pub struct ClaudeModelConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub disable_auto_mode_server: Option<bool>,
-    /// 全局：隐藏 AI 署名（顶层 `attribution`）。不属于单个供应商，只用于编辑器往返。
+    /// 隐藏 AI 署名（live 顶层 `attribution`）：随这家供应商切换。
     #[serde(rename = "hideAttribution", skip_serializing_if = "Option::is_none")]
     pub hide_attribution: Option<bool>,
-    /// 全局：禁用自动升级（`DISABLE_AUTOUPDATER`）。同上。
+    /// 禁用自动升级（live `env.DISABLE_AUTOUPDATER`）：随这家供应商切换。
     #[serde(rename = "disableAutoUpgrade", skip_serializing_if = "Option::is_none")]
     pub disable_auto_upgrade: Option<bool>,
 }
@@ -794,9 +794,6 @@ pub struct CodexModelConfig {
     /// 地址是完整 API 端点
     #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
     pub is_full_url: Option<bool>,
-    /// 顶层 `model_context_window` 声明 1M
-    #[serde(rename = "contextWindow1M", skip_serializing_if = "Option::is_none")]
-    pub context_window_one_m: Option<bool>,
     /// 顶层 `model_auto_compact_token_limit`
     #[serde(rename = "autoCompactLimit", skip_serializing_if = "Option::is_none")]
     pub auto_compact_limit: Option<u32>,
@@ -815,9 +812,6 @@ pub struct CodexModelConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub impersonate_claude_code: Option<bool>,
-    /// 走 Anthropic 路径时的 max_tokens 覆盖
-    #[serde(rename = "maxOutputTokens", skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<u64>,
     /// 模型目录：写进 `settings_config.modelCatalog`
     #[serde(
         rename = "catalogModels",
@@ -983,9 +977,6 @@ pub struct GrokBuildModelConfig {
     /// 上游协议：responses / chat_completions / anthropic_messages
     #[serde(rename = "apiBackend", skip_serializing_if = "Option::is_none")]
     pub api_backend: Option<String>,
-    /// 写入 TOML 的上下文窗口
-    #[serde(rename = "contextWindow", skip_serializing_if = "Option::is_none")]
-    pub context_window: Option<u64>,
 }
 
 /// 各应用的模型配置
@@ -1016,6 +1007,17 @@ pub struct AvailableModel {
     /// 上下文窗口：models.dev 的 `limit.context`，取不到就不写。
     #[serde(rename = "contextWindow", skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
+    /// effort 档位：models.dev `reasoning_options` 里 `type: "effort"` 的并集，
+    /// 用户可在表单里逐模型改。空表示没声明。
+    #[serde(rename = "efforts", default, skip_serializing_if = "Vec::is_empty")]
+    pub efforts: Vec<String>,
+    /// 默认 effort 档位（`reasoningLevels` 的子集）；空表示目录不写
+    /// `default_reasoning_level`，由后端按模板缺省兜底。
+    #[serde(rename = "defaultEffort", skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// 最大输出 tokens：models.dev 的 `limit.output`，取不到就不写。
+    #[serde(rename = "maxOutput", skip_serializing_if = "Option::is_none")]
+    pub max_output: Option<u64>,
 }
 
 /// 统一供应商（跨应用共享配置）
@@ -1115,8 +1117,26 @@ impl UniversalProvider {
             .unwrap_or_else(|| model.clone());
 
         // 1M 声明和单应用表单同一个标记：模型名末尾的 `[1M]`。
+        //
+        // 标志的来源有两层：显式存了 `*OneM` 就照它（老数据、单应用表单）；
+        // 没存（`None`，统一供应商新表单不再手勾）时按可用模型列表的上下文窗口
+        // 元数据判定（≥ 1,000,000 视为支持 1M）。列表里查不到的模型按不支持。
+        let context_window_of = |model_id: &str| -> Option<u64> {
+            let id = model_id.trim();
+            if id.is_empty() {
+                return None;
+            }
+            self.available_models
+                .iter()
+                .find(|model| model.id.trim() == id)
+                .and_then(|model| model.context_window)
+        };
         let one_m = |value: &str, flag: Option<bool>| -> String {
-            if flag == Some(true) && !value.trim().is_empty() {
+            let supports = match flag {
+                Some(explicit) => explicit,
+                None => context_window_of(value).is_some_and(|window| window >= 1_000_000),
+            };
+            if supports && !value.trim().is_empty() {
                 format!("{}[1M]", value.trim_end())
             } else {
                 value.to_string()
@@ -1219,8 +1239,14 @@ impl UniversalProvider {
                 _ => {}
             }
         }
-
-        let settings_config = serde_json::json!({ "env": env });
+        // 署名与自动升级也归供应商所有（floor.rs 的关键字段列表里），随切换覆盖。
+        let mut settings_config = serde_json::json!({ "env": env });
+        if models.and_then(|m| m.hide_attribution).unwrap_or(false) {
+            settings_config["attribution"] = json!({ "commit": "", "pr": "", "sessionUrl": false });
+        }
+        if models.and_then(|m| m.disable_auto_upgrade).unwrap_or(false) {
+            settings_config["env"]["DISABLE_AUTOUPDATER"] = json!("1");
+        }
 
         // 上游协议、完整 URL、User-Agent、请求覆盖都是这个应用的专属设置，存在 meta 里。
         // 以 per-app 配置为准（包括清空）：用户把某个选项去掉后，子卡不能留着旧值。
@@ -1298,12 +1324,17 @@ model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
 disable_response_storage = true"#
         );
-        // 1M 上下文窗口和压缩阈值是顶层字段，勾了才写。
-        if models.and_then(|m| m.context_window_one_m) == Some(true) {
-            config_toml.push_str("\nmodel_context_window = 1000000");
-            let limit = models.and_then(|m| m.auto_compact_limit).unwrap_or(900_000);
-            config_toml.push_str(&format!("\nmodel_auto_compact_token_limit = {limit}"));
-        } else if let Some(limit) = models.and_then(|m| m.auto_compact_limit) {
+        // 上下文窗口：跟随所选模型行的元数据（models.dev limit.context），填了才写
+        // （交给 Codex 默认）。压缩阈值仍是自填数字：填了才写。
+        if let Some(window) = models.and_then(|m| m.model.clone()).and_then(|model| {
+            self.available_models
+                .iter()
+                .find(|row| row.id.trim() == model.trim())
+                .and_then(|row| row.context_window)
+        }) {
+            config_toml.push_str(&format!("\nmodel_context_window = {window}"));
+        }
+        if let Some(limit) = models.and_then(|m| m.auto_compact_limit) {
             config_toml.push_str(&format!("\nmodel_auto_compact_token_limit = {limit}"));
         }
         config_toml.push_str(&format!(
@@ -1343,8 +1374,8 @@ requires_openai_auth = true"#
             "config": config_toml
         });
         // 模型目录：用户填了行就用它；没填时用统一供应商的可用模型列表自动生成，
-        // 名称与上下文窗口来自拉取时 models.dev 的补全值。两者都没有就不写目录
-        // （和没配区分开）。
+        // 名称、上下文窗口、effort 档位与默认档都是逐模型（拉取时由 models.dev
+        // api.json 补全，表单里可改）。两者都没有就不写目录（和没配区分开）。
         let catalog = models
             .map(|m| m.catalog_models.clone())
             .filter(|c| !c.is_empty())
@@ -1360,6 +1391,12 @@ requires_openai_auth = true"#
                         }
                         if let Some(window) = model.context_window {
                             row["contextWindow"] = serde_json::json!(window);
+                        }
+                        if !model.efforts.is_empty() {
+                            row["reasoningLevels"] = serde_json::json!(model.efforts);
+                        }
+                        if let Some(default_effort) = model.default_effort.as_ref() {
+                            row["defaultReasoningLevel"] = serde_json::json!(default_effort);
                         }
                         row
                     })
@@ -1388,7 +1425,17 @@ requires_openai_auth = true"#
         meta.impersonate_claude_code = models
             .and_then(|m| m.impersonate_claude_code)
             .filter(|v| *v);
-        meta.max_output_tokens = models.and_then(|m| m.max_output_tokens).filter(|t| *t > 0);
+        // max_output_tokens：用户手填优先；没填时从所选模型行的元数据
+        // （models.dev limit.output）自动补——与表单的自动预填同源。
+        let selected_row = models.and_then(|m| m.model.clone()).and_then(|model| {
+            self.available_models
+                .iter()
+                .find(|row| row.id.trim() == model.trim())
+        });
+        // 最大输出：跟所选模型行的元数据（models.dev limit.output）。
+        meta.max_output_tokens = selected_row
+            .and_then(|row| row.max_output)
+            .filter(|t| *t > 0);
 
         Some(Provider {
             id: format!("universal-codex-{}", self.id),
@@ -1475,11 +1522,54 @@ requires_openai_auth = true"#
             .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
 
         // 路由表：新形状优先，旧版扁平字段自动迁移；都没有时用默认四档。
-        let mut routes = models
-            .map(ClaudeDesktopModelConfig::effective_routes)
-            .filter(|routes| !routes.is_empty())
-            .unwrap_or_else(|| default_desktop_routes(&fallback, direct));
-        // 直连模式不能映射模型：model 必须与角色 ID 同名，否则 Desktop 会拒收整组。
+        // 直连模式不再有「模型列表」编辑：直接从供应商级可用模型列表里挑
+        // claude-* / anthropic/claude-* 的 id 生成路由（Claude Desktop 直连只认
+        // 这些名字），1M 声明按上下文窗口元数据（≥ 1,000,000）自动判定。
+        let mut routes = if direct {
+            let derived: HashMap<String, ClaudeDesktopModelRoute> = self
+                .available_models
+                .iter()
+                .filter(|model| crate::claude_desktop_config::is_claude_safe_model_id(&model.id))
+                .map(|model| {
+                    (
+                        model.id.clone(),
+                        ClaudeDesktopModelRoute {
+                            model: model.id.clone(),
+                            label_override: None,
+                            supports_1m: model
+                                .context_window
+                                .is_some_and(|window| window >= 1_000_000)
+                                .then_some(true),
+                        },
+                    )
+                })
+                .collect();
+            if derived.is_empty() {
+                default_desktop_routes(&fallback, direct)
+            } else {
+                derived
+            }
+        } else {
+            models
+                .map(ClaudeDesktopModelConfig::effective_routes)
+                .filter(|routes| !routes.is_empty())
+                .unwrap_or_else(|| default_desktop_routes(&fallback, direct))
+        };
+        // 映射模式下没存 1M 声明的档（统一供应商新表单不再手勾），按所选上游模型
+        // 的上下文窗口元数据判定；显式存了 true / false 的照旧（老数据兼容）。
+        if !direct {
+            for route in routes.values_mut() {
+                if route.supports_1m.is_none() {
+                    route.supports_1m = self
+                        .available_models
+                        .iter()
+                        .find(|model| model.id.trim() == route.model.trim())
+                        .and_then(|model| model.context_window)
+                        .is_some_and(|window| window >= 1_000_000)
+                        .then_some(true);
+                }
+            }
+        }
         if direct {
             for (route_id, route) in routes.iter_mut() {
                 route.model = route_id.clone();
@@ -1541,9 +1631,17 @@ requires_openai_auth = true"#
             .filter(|m| !m.trim().is_empty())
             .unwrap_or_else(|| "responses".to_string());
 
-        let context_window = models
-            .and_then(|m| m.context_window)
-            .filter(|w| *w > 0)
+        // 上下文窗口：跟随 Grok 卡所选模型行（上游模型优先，退回配置档位）的
+        // 元数据（models.dev limit.context）；取不到用保守默认 500_000。
+        let selected_row = models
+            .and_then(|m| m.upstream_model.clone().or_else(|| m.model.clone()))
+            .and_then(|model| {
+                self.available_models
+                    .iter()
+                    .find(|row| row.id.trim() == model.trim())
+            });
+        let context_window = selected_row
+            .and_then(|row| row.context_window)
             .unwrap_or(500_000);
         let config = format!(
             r#"[models]
@@ -1865,7 +1963,6 @@ mod tests {
             fable_model_name: Some("Fable Display".to_string()),
             ..Default::default()
         });
-
         let provider = universal.to_claude_provider().expect("claude provider");
 
         assert_eq!(provider.id, "universal-claude-u1");
@@ -1914,6 +2011,69 @@ mod tests {
                 .and_then(|item| item.as_str()),
             Some("Fable Display")
         );
+    }
+
+    #[test]
+    fn universal_provider_to_claude_provider_derives_one_m_from_context_window() {
+        // 1M 声明不再由表单勾选：所在档选的模型在可用列表里上下文窗口 ≥ 1,000,000
+        // 才加 [1M] 标记；没选模型或窗口不足就不加。Sonnet 顺带拿到元数据里的
+        // 显示名。
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.claude = true;
+        universal.available_models = vec![
+            AvailableModel {
+                id: "claude-sonnet-5".to_string(),
+                display_name: Some("Claude Sonnet 5".to_string()),
+                context_window: Some(1_000_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+            AvailableModel {
+                id: "claude-haiku-5".to_string(),
+                display_name: Some("Claude Haiku 5".to_string()),
+                context_window: Some(200_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+        ];
+        universal.models.claude = Some(ClaudeModelConfig {
+            model: Some("claude-sonnet-5".to_string()),
+            sonnet_model: Some("claude-sonnet-5".to_string()),
+            // 显示名由表单按元数据写进 models（保存时推导），后端照存照写。
+            sonnet_model_name: Some("Claude Sonnet 5".to_string()),
+            haiku_model: Some("claude-haiku-5".to_string()),
+            opus_model: Some("not-in-list".to_string()),
+            ..Default::default()
+        });
+
+        let env = &universal
+            .to_claude_provider()
+            .expect("claude provider")
+            .settings_config["env"];
+        assert_eq!(env["ANTHROPIC_MODEL"], json!("claude-sonnet-5[1M]"));
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            json!("claude-sonnet-5[1M]")
+        );
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"],
+            json!("Claude Sonnet 5")
+        );
+        // 窗口 200,000：不加标记
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            json!("claude-haiku-5")
+        );
+        // 不在可用列表里：无元数据，不加标记也不写显示名
+        assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], json!("not-in-list"));
+        assert!(env.get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME").is_none());
     }
 
     #[test]
@@ -2296,14 +2456,14 @@ mod tests {
     }
 
     #[test]
-    fn universal_provider_to_claude_desktop_provider_direct_forces_role_ids() {
-        let universal = universal_with_apps(
+    fn universal_provider_to_claude_desktop_provider_direct_derives_from_available_models() {
+        let mut universal = universal_with_apps(
             "u1",
             |apps| apps.claude_desktop = true,
             |models| {
                 models.claude_desktop = Some(ClaudeDesktopModelConfig {
                     mode: Some(ClaudeDesktopMode::Direct),
-                    // 直连不允许映射，填了上游模型也要被角色 ID 顶掉
+                    // 直连不允许映射，填了也要被供应商级列表生成的路由顶掉
                     api_format: Some("openai_chat".to_string()),
                     routes: HashMap::from([(
                         "claude-sonnet-5".to_string(),
@@ -2314,9 +2474,37 @@ mod tests {
                         },
                     )]),
                     ..Default::default()
-                })
+                });
             },
         );
+        // 供应商级可用模型列表：claude-* 角色进直连路由，1M 按上下文窗口判定；
+        // 非 claude-* 的 id 不进。
+        universal.available_models = vec![
+            AvailableModel {
+                id: "claude-sonnet-5".to_string(),
+                display_name: Some("Claude Sonnet 5".to_string()),
+                context_window: Some(1_000_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+            AvailableModel {
+                id: "claude-opus-5".to_string(),
+                display_name: Some("Claude Opus 5".to_string()),
+                context_window: Some(200_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+            AvailableModel {
+                id: "gpt-5.6-sol".to_string(),
+                display_name: None,
+                context_window: Some(1_000_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+        ];
 
         let meta = universal
             .to_claude_desktop_provider()
@@ -2326,9 +2514,47 @@ mod tests {
         assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Direct));
         // 直连不能带 apiFormat：Desktop 只接受原生 Anthropic
         assert_eq!(meta.api_format, None);
+        let routes = &meta.claude_desktop_model_routes;
+        // 只有 claude-* 的两条；模型与角色同名
+        assert_eq!(routes.len(), 2, "{routes:?}");
+        let sonnet = routes.get("claude-sonnet-5").expect("sonnet");
+        assert_eq!(sonnet.model, "claude-sonnet-5");
+        // 1M 按元数据自动判定：sonnet 1,000,000 → 声明；opus 200,000 → 不声明
+        assert_eq!(sonnet.supports_1m, Some(true));
+        assert_eq!(routes["claude-opus-5"].supports_1m, None);
+        // 存量手填路由不参与：direct 一律以列表生成结果为准
+        assert!(routes.get("claude-haiku-4-5").is_none());
+    }
+
+    #[test]
+    fn universal_provider_to_claude_desktop_provider_direct_without_models_uses_defaults() {
+        let universal = universal_with_apps(
+            "u1",
+            |apps| apps.claude_desktop = true,
+            |models| {
+                models.claude = Some(ClaudeModelConfig {
+                    model: Some("claude-main".to_string()),
+                    ..ClaudeModelConfig::default()
+                });
+                models.claude_desktop = Some(ClaudeDesktopModelConfig {
+                    mode: Some(ClaudeDesktopMode::Direct),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let meta = universal
+            .to_claude_desktop_provider()
+            .expect("provider")
+            .meta
+            .expect("meta");
+        // 列表为空时回退默认四档（模型 = 角色 ID）
+        assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Direct));
+        let routes = &meta.claude_desktop_model_routes;
+        assert_eq!(routes.len(), 4, "{routes:?}");
         assert_eq!(
-            meta.claude_desktop_model_routes["claude-sonnet-5"].model,
-            "claude-sonnet-5"
+            routes["claude-sonnet-5"].model, "claude-sonnet-5",
+            "{routes:?}"
         );
     }
 
@@ -2673,11 +2899,17 @@ mod tests {
                 id: "gpt-5.6-sol".into(),
                 display_name: Some("GPT-5.6 Sol".into()),
                 context_window: Some(1_050_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
             },
             AvailableModel {
                 id: "plain-id".into(),
                 display_name: None,
                 context_window: None,
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
             },
         ];
 
@@ -2694,6 +2926,65 @@ mod tests {
         assert_eq!(rows[1]["model"], json!("plain-id"));
         assert!(rows[1].get("displayName").is_none());
         assert!(rows[1].get("contextWindow").is_none());
+    }
+
+    #[test]
+    fn universal_codex_catalog_efforts_intersect_user_levels() {
+        // 目录的 reasoningLevels = 模型元数据 ∩ 用户勾选；用户没勾（空）= 全按
+        // 元数据。用户勾了模型没声明的档位不会凭空出现。
+        let mut universal = universal_with_apps(
+            "codex-effort",
+            |apps| apps.codex = true,
+            |models| {
+                models.codex = Some(CodexModelConfig {
+                    model: Some("gpt-5.6-sol".into()),
+                    ..Default::default()
+                });
+            },
+        );
+        universal.available_models = vec![
+            AvailableModel {
+                id: "gpt-5.6-sol".into(),
+                display_name: None,
+                context_window: None,
+                efforts: vec!["low".into(), "high".into(), "max".into()],
+                default_effort: None,
+                max_output: None,
+            },
+            AvailableModel {
+                id: "undeclared".into(),
+                display_name: None,
+                context_window: None,
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+        ];
+        // 默认档位也逐模型（可选，目录写 defaultReasoningLevel）
+        universal.available_models[0].default_effort = Some("high".into());
+
+        let rows = universal.to_codex_provider().unwrap().settings_config["modelCatalog"]["models"]
+            .as_array()
+            .expect("catalog rows")
+            .clone();
+        assert_eq!(
+            rows[0]["reasoningLevels"],
+            json!(["low", "high", "max"]),
+            "逐模型档位直接来自该模型的元数据"
+        );
+        assert_eq!(rows[0]["defaultReasoningLevel"], json!("high"));
+        assert!(
+            rows[1].get("reasoningLevels").is_none(),
+            "没声明的模型不写档位"
+        );
+
+        // 默认档改成 low：目录的 defaultReasoningLevel 跟着走（档位列表不变）。
+        universal.available_models[0].default_effort = Some("low".into());
+        let rows = universal.to_codex_provider().unwrap().settings_config["modelCatalog"]["models"]
+            .as_array()
+            .expect("catalog rows")
+            .clone();
+        assert_eq!(rows[0]["defaultReasoningLevel"], json!("low"));
     }
 
     #[test]
@@ -2714,11 +3005,17 @@ mod tests {
                 id: "  ".into(),
                 display_name: None,
                 context_window: None,
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
             },
             AvailableModel {
                 id: "real-model".into(),
                 display_name: None,
                 context_window: None,
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
             },
         ];
 
@@ -2746,6 +3043,9 @@ mod tests {
             id: "from-list".into(),
             display_name: None,
             context_window: None,
+            efforts: Vec::new(),
+            default_effort: None,
+            max_output: None,
         }];
 
         let rows = universal.to_codex_provider().unwrap().settings_config["modelCatalog"]["models"]
@@ -2764,16 +3064,15 @@ mod tests {
 
     #[test]
     fn universal_codex_provider_emits_config_switches_and_catalog() {
-        let universal = universal_with_apps(
+        let mut universal = universal_with_apps(
             "codex-adv",
             |apps| apps.codex = true,
             |models| {
                 models.codex = Some(CodexModelConfig {
                     model: Some("gpt-5.6-sol".into()),
-                    context_window_one_m: Some(true),
+                    auto_compact_limit: Some(900_000),
                     remote_compaction: Some(true),
                     impersonate_claude_code: Some(true),
-                    max_output_tokens: Some(32000),
                     prompt_cache_routing: Some("enabled".into()),
                     api_format: Some("anthropic".into()),
                     subagent_model: Some("gpt-5.6-mini".into()),
@@ -2784,11 +3083,21 @@ mod tests {
             },
         );
 
+        // 上下文窗口跟随所选模型行的元数据
+        universal.available_models = vec![AvailableModel {
+            id: "gpt-5.6-sol".into(),
+            display_name: None,
+            context_window: Some(1_000_000),
+            efforts: Vec::new(),
+            default_effort: None,
+            max_output: None,
+        }];
+
         let provider = universal.to_codex_provider().expect("codex provider");
         let toml = provider.settings_config["config"]
             .as_str()
             .expect("toml string");
-        // 远程压缩把供应商表名写成 OpenAI；1M 写顶层窗口和压缩阈值
+        // 远程压缩把供应商表名写成 OpenAI；窗口写顶层（跟模型元数据）和压缩阈值
         assert!(toml.contains(r#"name = "OpenAI""#), "{toml}");
         assert!(toml.contains("model_context_window = 1000000"), "{toml}");
         assert!(
@@ -2833,7 +3142,8 @@ mod tests {
         let meta = provider.meta.expect("meta");
         assert_eq!(meta.api_format.as_deref(), Some("anthropic"));
         assert_eq!(meta.impersonate_claude_code, Some(true));
-        assert_eq!(meta.max_output_tokens, Some(32000));
+        // max_output_tokens 跟所选模型行的元数据（此测试的行没有 max_output）
+        assert_eq!(meta.max_output_tokens, None);
         assert_eq!(meta.prompt_cache_routing.as_deref(), Some("enabled"));
     }
 
@@ -2928,23 +3238,115 @@ mod tests {
     }
 
     #[test]
-    fn universal_grokbuild_provider_uses_configured_context_window() {
-        let universal = universal_with_apps(
+    fn universal_grokbuild_provider_uses_model_row_context_window() {
+        // 手填入口已移除：窗口永远跟 Grok 卡所选模型行（配置档位）的元数据。
+        let mut universal = universal_with_apps(
             "grok-cw",
             |apps| apps.grokbuild = true,
             |models| {
                 models.grokbuild = Some(GrokBuildModelConfig {
                     model: Some("grok-4.5".into()),
-                    context_window: Some(1_000_000),
                     ..Default::default()
                 });
             },
         );
+        universal.available_models = vec![AvailableModel {
+            id: "grok-4.5".into(),
+            display_name: None,
+            context_window: Some(1_000_000),
+            efforts: Vec::new(),
+            default_effort: None,
+            max_output: None,
+        }];
 
         let config = universal.to_grokbuild_provider().unwrap().settings_config["config"]
             .as_str()
             .unwrap()
             .to_string();
         assert!(config.contains("context_window = 1000000"), "{config}");
+    }
+
+    #[test]
+    fn universal_codex_max_output_falls_back_to_selected_model_row() {
+        // max_output_tokens 手填优先；没填时从所选模型行的 limit.output 自动补。
+        let mut universal = universal_with_apps(
+            "codex-mo",
+            |apps| apps.codex = true,
+            |models| {
+                models.codex = Some(CodexModelConfig {
+                    model: Some("gpt-5.6-sol".into()),
+                    ..Default::default()
+                });
+            },
+        );
+        universal.available_models = vec![
+            AvailableModel {
+                id: "gpt-5.6-sol".into(),
+                display_name: None,
+                context_window: Some(1_050_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: Some(128_000),
+            },
+            AvailableModel {
+                id: "other".into(),
+                display_name: None,
+                context_window: None,
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: Some(999),
+            },
+        ];
+
+        let meta = universal.to_codex_provider().unwrap().meta.expect("meta");
+        assert_eq!(meta.max_output_tokens, Some(128_000), "自动取所选行的值");
+    }
+
+    #[test]
+    fn universal_grokbuild_context_window_falls_back_to_model_row() {
+        // 上游模型行有元数据时自动补；仍没有才用保守默认 500_000。
+        let mut universal = universal_with_apps(
+            "grok-auto",
+            |apps| apps.grokbuild = true,
+            |models| {
+                models.grokbuild = Some(GrokBuildModelConfig {
+                    model: Some("grok-4.5".into()),
+                    upstream_model: Some("grok-4.5-auto".into()),
+                    ..Default::default()
+                });
+            },
+        );
+        universal.available_models = vec![AvailableModel {
+            id: "grok-4.5-auto".into(),
+            display_name: None,
+            context_window: Some(2_000_000),
+            efforts: Vec::new(),
+            default_effort: None,
+            max_output: None,
+        }];
+
+        let config = universal.to_grokbuild_provider().unwrap().settings_config["config"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(config.contains("context_window = 2000000"), "{config}");
+
+        // 两处都取不到 → 默认 500_000
+        let mut empty = universal_with_apps(
+            "grok-none",
+            |apps| apps.grokbuild = true,
+            |models| {
+                models.grokbuild = Some(GrokBuildModelConfig {
+                    model: Some("unknown-model".into()),
+                    ..Default::default()
+                });
+            },
+        );
+        empty.available_models = Vec::new();
+        let config = empty.to_grokbuild_provider().unwrap().settings_config["config"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(config.contains("context_window = 500000"), "{config}");
     }
 }

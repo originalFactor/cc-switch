@@ -781,9 +781,9 @@ export interface ClaudeModelConfig {
   disableArtifact?: boolean;
   /** 上游不支持服务端 auto mode 检查时关掉（`CLAUDE_CODE_AUTO_MODE_SERVER=0`） */
   disableAutoModeServer?: boolean;
-  /** 全局：隐藏 AI 署名（顶层 `attribution`），不属于单个供应商 */
+  /** 隐藏 AI 署名（live 顶层 `attribution`）：随这家供应商切换 */
   hideAttribution?: boolean;
-  /** 全局：禁用自动升级（`DISABLE_AUTOUPDATER`），不属于单个供应商 */
+  /** 禁用自动升级（`DISABLE_AUTOUPDATER`）：随这家供应商切换 */
   disableAutoUpgrade?: boolean;
 }
 
@@ -824,8 +824,6 @@ export interface CodexModelConfig {
   apiKeyField?: ClaudeApiKeyField;
   /** 地址是完整 API 端点 */
   isFullUrl?: boolean;
-  /** 顶层 `model_context_window`：勾选 1M 时为 1000000 */
-  contextWindow1M?: boolean;
   /** 顶层 `model_auto_compact_token_limit`（压缩阈值） */
   autoCompactLimit?: number;
   /** 远程压缩：把 `[model_providers.<id>].name` 写成 OpenAI */
@@ -866,8 +864,6 @@ export interface GrokBuildModelConfig {
   upstreamModel?: string;
   /** 上游协议：responses / chat_completions / anthropic_messages */
   apiBackend?: string;
-  /** 写入 TOML 的上下文窗口 */
-  contextWindow?: number;
 }
 
 // 各应用的模型配置
@@ -884,6 +880,12 @@ export interface AvailableModel {
   id: string;
   displayName?: string;
   contextWindow?: number;
+  /** effort 档位（models.dev reasoning_options 的并集），逐模型可改；空表示没声明。 */
+  efforts?: string[];
+  /** 默认 effort 档位（efforts 的子集）；不设则目录不写 defaultReasoningLevel。 */
+  defaultEffort?: string;
+  /** 最大输出 tokens（models.dev limit.output），逐模型可改；空表示没声明。 */
+  maxOutput?: number;
 }
 
 // 统一供应商（跨应用共享配置）

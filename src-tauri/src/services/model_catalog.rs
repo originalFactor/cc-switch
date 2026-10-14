@@ -1,8 +1,11 @@
-//! 统一供应商的可用模型列表：`/v1/models` 出 id，models.dev 补名称和上下文窗口。
+//! 统一供应商的可用模型列表：`/v1/models` 出 id，models.dev 补名称、上下文窗口和
+//! effort 档位。
 //!
-//! models.dev 的 `models.json` 是一张扁平的 `模型 id -> {name, limit.context, …}` 表
-//! （约 470 KB，公开、无需鉴权），所以拉取顺序是：先用供应商自己的凭据取 id 列表，
-//! 再拿这份表去补全每个 id 的显示名和上下文窗口；表里没有的 id 只填 id 本身。
+//! 用 models.dev 的 `api.json`（和计价同源）：它是 `供应商 -> {models: {模型 id ->
+//! 元数据}}` 的嵌套表，同名模型会在多家供应商下重复出现。这里把它压扁成
+//! `模型 id -> 元数据`：同名条目按字段合并（非空值优先、effort 档位取并集），所以
+//! 任何一个供应商声明的能力都能查到。拉取顺序是：先用供应商自己的凭据取 id 列表，
+//! 再拿这份表去补全；表里没有的 id 只填 id 本身。
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -11,24 +14,112 @@ use serde::Deserialize;
 
 use crate::provider::AvailableModel;
 
-/// models.dev 的公开模型表。
-const MODELS_DEV_URL: &str = "https://models.dev/models.json";
+/// models.dev 的公开模型表（与计价同源）。
+const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 const FETCH_TIMEOUT_SECS: u64 = 25;
 
-/// models.dev 一条模型里我们关心的字段。
-#[derive(Debug, Deserialize)]
+/// 一条压扁后的模型元数据。
+#[derive(Debug, Default, Clone)]
 pub(crate) struct ModelsDevEntry {
     name: Option<String>,
+    context_window: Option<u64>,
+    /// models.dev 的 `limit.output`（最大输出 tokens）。
+    max_output: Option<u64>,
+    /// `reasoning_options` 里 `type: "effort"` 的档位并集（保持声明顺序去重）。
+    efforts: Vec<String>,
+}
+
+/// api.json 一条模型里我们关心的字段。
+#[derive(Debug, Deserialize)]
+struct ModelsDevRawModel {
+    name: Option<String>,
     limit: Option<ModelsDevLimit>,
+    reasoning_options: Option<Vec<ModelsDevReasoningOption>>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct ModelsDevLimit {
+struct ModelsDevLimit {
     context: Option<u64>,
+    output: Option<u64>,
 }
 
-/// 拉取 models.dev 的模型表。失败时返回空表：补全只是锦上添花，
+#[derive(Debug, Deserialize)]
+struct ModelsDevReasoningOption {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    // api.json 里有 `"values": [null, "low", …]`（占位 null），必须容忍。
+    values: Option<Vec<Option<String>>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsDevRawProvider {
+    models: Option<BTreeMap<String, ModelsDevRawModel>>,
+}
+
+/// api.json 的顶层形状：`供应商 id -> {models: {...}}`。
+type ModelsDevRaw = BTreeMap<String, ModelsDevRawProvider>;
+
+/// effort 档位的合并顺序：先声明的供应商排前面，未知档位按字典序殿后。
+fn merge_efforts(into: &mut Vec<String>, values: &[String]) {
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() || into.iter().any(|existing| existing == value) {
+            continue;
+        }
+        into.push(value.to_string());
+    }
+}
+
+/// 把嵌套的 api.json 压扁：`provider/model -> 元数据` 合并成 `model -> 元数据`。
+///
+/// 合并规则逐字段独立：`name` / `context_window` 取第一个非空值（遍历序稳定，
+/// api.json 是 BTreeMap 序），`efforts` 取并集（保持首次出现的顺序）。
+fn flatten_models_dev(raw: ModelsDevRaw) -> BTreeMap<String, ModelsDevEntry> {
+    let mut flat: BTreeMap<String, ModelsDevEntry> = BTreeMap::new();
+    for provider in raw.values() {
+        let Some(models) = provider.models.as_ref() else {
+            continue;
+        };
+        for (model_id, model) in models {
+            let entry = flat.entry(model_id.clone()).or_default();
+            if entry.name.is_none() {
+                entry.name = model.name.clone().filter(|name| !name.trim().is_empty());
+            }
+            if entry.context_window.is_none() {
+                entry.context_window = model
+                    .limit
+                    .as_ref()
+                    .and_then(|limit| limit.context)
+                    .filter(|context| *context > 0);
+            }
+            if entry.max_output.is_none() {
+                entry.max_output = model
+                    .limit
+                    .as_ref()
+                    .and_then(|limit| limit.output)
+                    .filter(|output| *output > 0);
+            }
+            if let Some(options) = model.reasoning_options.as_ref() {
+                for option in options {
+                    if option.kind.as_deref() == Some("effort") {
+                        if let Some(values) = option.values.as_ref() {
+                            let named: Vec<String> =
+                                values.iter().filter_map(|v| v.clone()).collect();
+                            merge_efforts(&mut entry.efforts, &named);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    flat
+}
+
+/// 拉取 models.dev 的模型表并压扁。失败时返回空表：补全只是锦上添花，
 /// 供应商自己给的 id 列表照常可用。
+///
+/// 全局 HTTP 客户端禁用了自动解压（代理转发路径按 `content-encoding` 手动处理，
+/// 见 `http_client.rs`），所以这里同样要拿 `content-encoding` 头自己解一次。
 async fn fetch_models_dev() -> BTreeMap<String, ModelsDevEntry> {
     let client = crate::proxy::http_client::get();
     let response = match client
@@ -47,8 +138,31 @@ async fn fetch_models_dev() -> BTreeMap<String, ModelsDevEntry> {
         log::warn!("models.dev 模型表返回 {}，跳过补全", response.status());
         return BTreeMap::new();
     }
-    match response.json::<BTreeMap<String, ModelsDevEntry>>().await {
-        Ok(table) => table,
+    let encoding = response
+        .headers()
+        .get(reqwest::header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let raw_bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::warn!("读取 models.dev 模型表失败，跳过补全: {e}");
+            return BTreeMap::new();
+        }
+    };
+    let body = match crate::proxy::content_encoding::decompress_body(&encoding, raw_bytes.as_ref())
+    {
+        Ok(Some(body)) => body,
+        // 没有 content-encoding：原样就是 JSON。
+        Ok(None) => raw_bytes.to_vec(),
+        Err(e) => {
+            log::warn!("解压 models.dev 模型表失败（{}），跳过补全: {e}", encoding);
+            return BTreeMap::new();
+        }
+    };
+    match serde_json::from_slice::<ModelsDevRaw>(&body) {
+        Ok(raw) => flatten_models_dev(raw),
         Err(e) => {
             log::warn!("解析 models.dev 模型表失败，跳过补全: {e}");
             BTreeMap::new()
@@ -146,7 +260,7 @@ pub(crate) fn best_models_dev_match<'a>(
     best.map(|(_, entry)| entry)
 }
 
-/// 把 ids 逐条补上 models.dev 的名称与上下文窗口。
+/// 把 ids 逐条补上 models.dev 的名称、上下文窗口和 effort 档位。
 pub(crate) fn enrich_with_models_dev(
     ids: Vec<String>,
     table: &BTreeMap<String, ModelsDevEntry>,
@@ -158,19 +272,14 @@ pub(crate) fn enrich_with_models_dev(
                 display_name: hit
                     .and_then(|entry| entry.name.clone())
                     .filter(|name| !name.trim().is_empty()),
-                context_window: hit
-                    .and_then(|entry| entry.limit.as_ref())
-                    .and_then(|limit| limit.context)
-                    .and_then(entry_limit),
+                context_window: hit.and_then(|entry| entry.context_window),
+                max_output: hit.and_then(|entry| entry.max_output),
+                efforts: hit.map(|entry| entry.efforts.clone()).unwrap_or_default(),
+                default_effort: None,
                 id,
             }
         })
         .collect()
-}
-
-/// `limit.context` 为 0 时当作没填（models.dev 里有少量 0 占位）。
-fn entry_limit(context: u64) -> Option<u64> {
-    (context > 0).then_some(context)
 }
 
 /// 取 id 列表（已按调用方去重），补全后返回。
@@ -186,10 +295,83 @@ mod tests {
     fn entry(name: Option<&str>, context: Option<u64>) -> ModelsDevEntry {
         ModelsDevEntry {
             name: name.map(str::to_string),
-            limit: context.map(|context| ModelsDevLimit {
-                context: Some(context),
+            context_window: context,
+            max_output: None,
+            efforts: Vec::new(),
+        }
+    }
+
+    fn raw_model(
+        name: Option<&str>,
+        context: Option<u64>,
+        efforts: Option<Vec<&str>>,
+    ) -> ModelsDevRawModel {
+        ModelsDevRawModel {
+            name: name.map(str::to_string),
+            limit: Some(ModelsDevLimit {
+                context,
+                output: None,
+            }),
+            reasoning_options: efforts.map(|values| {
+                vec![ModelsDevReasoningOption {
+                    kind: Some("effort".to_string()),
+                    values: Some(
+                        values
+                            .into_iter()
+                            .map(|value| Some(value.to_string()))
+                            .collect(),
+                    ),
+                }]
             }),
         }
+    }
+
+    #[test]
+    fn flattens_api_json_merging_provider_duplicates() {
+        let mut raw = ModelsDevRaw::new();
+        let mut deepinfra_models = BTreeMap::new();
+        deepinfra_models.insert(
+            "tencent/hy3".to_string(),
+            raw_model(Some("Hy3"), Some(262_144), Some(vec!["low", "high"])),
+        );
+        raw.insert(
+            "deepinfra".to_string(),
+            ModelsDevRawProvider {
+                models: Some(deepinfra_models),
+            },
+        );
+        let mut hf_models = BTreeMap::new();
+        hf_models.insert(
+            "tencent/hy3".to_string(),
+            raw_model(None, Some(999_999), Some(vec!["high", "max"])),
+        );
+        raw.insert(
+            "huggingface".to_string(),
+            ModelsDevRawProvider {
+                models: Some(hf_models),
+            },
+        );
+
+        let flat = flatten_models_dev(raw);
+        let hy3 = flat.get("tencent/hy3").expect("flattened");
+        // 名称与窗口取第一个非空；effort 取并集（保持首现顺序去重）。
+        assert_eq!(hy3.name.as_deref(), Some("Hy3"));
+        assert_eq!(hy3.context_window, Some(262_144));
+        assert_eq!(hy3.efforts, vec!["low", "high", "max"]);
+    }
+
+    #[test]
+    fn enrich_carries_efforts_from_the_table() {
+        let mut table = BTreeMap::new();
+        let mut glm = entry(Some("GLM-5"), Some(200_000));
+        glm.efforts = vec!["low".to_string(), "high".to_string()];
+        table.insert("zhipuai/glm-5".to_string(), glm);
+        table.insert("gpt-reserve".to_string(), entry(None, None));
+
+        let out =
+            enrich_with_models_dev(vec!["glm-5".to_string(), "gpt-reserve".to_string()], &table);
+        assert_eq!(out[0].efforts, vec!["low", "high"]);
+        assert!(out[1].efforts.is_empty(), "未收录的模型没有档位");
     }
 
     #[test]
@@ -336,8 +518,17 @@ mod tests {
 
     #[test]
     fn treats_zero_context_as_missing() {
-        let mut table = BTreeMap::new();
-        table.insert("m".to_string(), entry(Some("M"), Some(0)));
+        // api.json 里有少量 0 占位：压扁时（flatten_models_dev）就被当作没填。
+        let mut raw = ModelsDevRaw::new();
+        let mut models = BTreeMap::new();
+        models.insert("m".to_string(), raw_model(Some("M"), Some(0), None));
+        raw.insert(
+            "vendor".to_string(),
+            ModelsDevRawProvider {
+                models: Some(models),
+            },
+        );
+        let table = flatten_models_dev(raw);
         let out = enrich_with_models_dev(vec!["m".to_string()], &table);
         assert_eq!(out[0].context_window, None);
         assert_eq!(out[0].display_name.as_deref(), Some("M"));

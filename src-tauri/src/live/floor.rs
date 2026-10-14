@@ -33,6 +33,8 @@ pub const CLAUDE_FLOOR_ENV_PREFIXES: &[&str] = &["ANTHROPIC_", "AWS_", "VERTEX_R
 pub const CLAUDE_FLOOR_ENV_KEYS: &[&str] = &[
     "CLAUDE_CODE_SUBAGENT_MODEL",
     "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+    // 禁用自动升级：统一供应商的开关，随供应商切换。
+    "DISABLE_AUTOUPDATER",
     "CLOUD_ML_REGION",
     // Vertex 的凭据路径。
     "GOOGLE_APPLICATION_CREDENTIALS",
@@ -65,6 +67,8 @@ pub const CLAUDE_FLOOR_TOP: &[&str] = &[
     "smallFastModel",
     // 旧 Bedrock API Key 预设写在顶层的真实 Key。
     "apiKey",
+    // 署名清空：统一供应商的「隐藏 AI 署名」开关，随供应商切换。
+    "attribution",
     // `/model` 保存的选择，属于当时所在的那一家。
     "model",
     // 备用模型链；模型 ID → 供应商专属 ID（如 Bedrock ARN）。
