@@ -73,11 +73,23 @@ describe("extractBaseUrlForUsageDetection", () => {
     ).toBe("https://opencode.ai/zen/go/v1");
   });
 
-  it("returns null for unsupported apps", () => {
+  it("reads the remaining apps' native base URL fields", () => {
+    const kimi = "https://api.kimi.com/coding/v1";
     expect(
       extractBaseUrlForUsageDetection("gemini", {
-        env: { GOOGLE_GEMINI_BASE_URL: "https://opencode.ai/zen/go" },
+        env: { GOOGLE_GEMINI_BASE_URL: kimi },
       }),
+    ).toBe(kimi);
+    expect(
+      extractBaseUrlForUsageDetection("grokbuild", {
+        config: `[models]\ndefault = "k"\n\n[model.k]\nmodel = "kimi-for-coding"\nbase_url = "${kimi}"\n`,
+      }),
+    ).toBe(kimi);
+  });
+
+  it("returns null for unknown apps", () => {
+    expect(
+      extractBaseUrlForUsageDetection("unknown", { baseUrl: "https://x" }),
     ).toBeNull();
   });
 });
@@ -129,15 +141,29 @@ describe("injectCodingPlanUsageScript", () => {
     expect(injected.meta?.usage_script?.codingPlanProvider).toBe("kimi");
   });
 
-  it("does not extend other coding plans to non-claude apps", () => {
-    // 智谱/Kimi 等在其他 app 的自动注入未逐一验证，仅 OpenCode Go 放行
-    const provider: TestProvider = {
-      settingsConfig: {
-        env: { ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic" },
-      },
+  it("injects every coding plan for non-claude apps", () => {
+    expect(
+      inject("claude-desktop", {
+        settingsConfig: {
+          env: { ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic" },
+        },
+      }).meta?.usage_script,
+    ).toMatchObject({ enabled: true, codingPlanProvider: "zhipu" });
+    expect(
+      inject("gemini", {
+        settingsConfig: {
+          env: { GOOGLE_GEMINI_BASE_URL: "https://api.kimi.com/coding/v1" },
+        },
+      }).meta?.usage_script,
+    ).toMatchObject({ enabled: true, codingPlanProvider: "kimi" });
+  });
+
+  it("keeps ZenMux claude-only", () => {
+    const settingsConfig = {
+      env: { GOOGLE_GEMINI_BASE_URL: "https://zenmux.ai/api/v1" },
     };
     expect(
-      inject("claude-desktop", provider).meta?.usage_script,
+      inject("gemini", { settingsConfig }).meta?.usage_script,
     ).toBeUndefined();
   });
 

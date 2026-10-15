@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithQueryClient } from "../utils/testQueryClient";
 import {
   UniversalProviderFormModal,
   type UniversalProviderFormModalProps,
@@ -80,7 +81,6 @@ const LABEL = {
   add: "添加",
   changeIcon: "更换图标",
   iconSearch: "搜索图标",
-  done: "完成",
   manageAndTest: "管理和测速",
   autoSelect: "endpointTest.autoSelect",
   cancel: "取消",
@@ -109,7 +109,7 @@ const renderModal = (props: Partial<UniversalProviderFormModalProps> = {}) => {
   const onSave = vi.fn();
   const onClose = vi.fn();
   const onSaveAndSync = vi.fn();
-  render(
+  renderWithQueryClient(
     <UniversalProviderFormModal
       isOpen
       onSave={onSave}
@@ -470,8 +470,8 @@ describe("UniversalProviderFormModal", () => {
       .getAllByRole("button")
       .find((button) => button.getAttribute("title") === "Gemini");
     expect(geminiButton).toBeDefined();
+    // 点了就是选好了：选择器直接关掉，没有「完成」按钮
     await user.click(geminiButton!);
-    await user.click(within(picker).getByRole("button", { name: LABEL.done }));
     await user.click(screen.getByRole("button", { name: LABEL.add }));
 
     const saved = onSave.mock.calls[0][0] as UniversalProvider;

@@ -121,10 +121,28 @@ fn parse_provider_deeplink(
         .get("icon")
         .map(|v| v.trim().to_lowercase())
         .filter(|v| !v.is_empty());
+    // iconUrl 只在确认框里由专门的命令下载（见 `icon_fetch`）。形状不合格的地址同样丢掉，
+    // 不让整条链路失败
+    let icon_url = params
+        .get("iconUrl")
+        .and_then(|v| super::icon_fetch::parse_icon_url(v))
+        .map(|url| url.to_string());
     let config = params.get("config").cloned();
     let config_format = params.get("configFormat").cloned();
-    let config_url = params.get("configUrl").cloned();
+    // 远程配置还没实现。在解析阶段就拒绝，用户当场看到原因，而不是确认导入之后才失败
+    if params.contains_key("configUrl") {
+        return Err(AppError::InvalidInput(
+            "'configUrl' is not supported yet; pass the config inline with 'config' (Base64)"
+                .to_string(),
+        ));
+    }
+    let config_url = None;
     let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
+    // 在解析阶段就核对，用户当场看到「这个应用不支持这种接口」，而不是确认导入之后才失败
+    let api_format = params.get("apiFormat").cloned();
+    if let Some(format) = &api_format {
+        super::provider::check_api_format(&app, format)?;
+    }
 
     // Extract usage script fields (v3.9+)
     let usage_enabled = params
@@ -150,6 +168,8 @@ fn parse_provider_deeplink(
         api_key,
         icon,
         model,
+        api_format,
+        icon_url,
         notes,
         haiku_model,
         sonnet_model,
@@ -237,6 +257,8 @@ fn parse_prompt_deeplink(
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     })
 }
 
@@ -302,6 +324,8 @@ fn parse_mcp_deeplink(
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     })
 }
 
@@ -357,5 +381,7 @@ fn parse_skill_deeplink(
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     })
 }

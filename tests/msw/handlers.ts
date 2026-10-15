@@ -1,12 +1,7 @@
 import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
-import type {
-  McpServer,
-  Provider,
-  Settings,
-  UniversalProvider,
-} from "@/types";
+import type { McpServer, Provider, Settings, UniversalProvider } from "@/types";
 import {
   addProvider,
   deleteProvider,
@@ -16,6 +11,8 @@ import {
   getProviders,
   listProviders,
   listSessions,
+  ackPendingDeepLink,
+  peekPendingDeepLink,
   resetProviderState,
   setCurrentProviderId,
   updateProvider,
@@ -29,6 +26,10 @@ import {
   upsertMcpServer,
   deleteMcpServer,
   deleteUniversalProvider,
+  listCustomIcons,
+  addCustomIcon,
+  renameCustomIcon,
+  deleteCustomIcon,
   getUniversalProvider,
   listUniversalProviders,
   saveUniversalProvider,
@@ -79,6 +80,16 @@ export const handlers = [
   ),
 
   http.post(`${TAURI_ENDPOINT}/update_tray_menu`, () => success(true)),
+  // 默认下载失败：确认框退回内置图标或首字母
+  http.post(`${TAURI_ENDPOINT}/fetch_deeplink_icon`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/peek_pending_deeplink`, () =>
+    success(peekPendingDeepLink()),
+  ),
+  http.post(`${TAURI_ENDPOINT}/ack_pending_deeplink`, async ({ request }) => {
+    const { id } = await withJson<{ id: number }>(request);
+    ackPendingDeepLink(id);
+    return success(null);
+  }),
 
   http.post(`${TAURI_ENDPOINT}/switch_provider`, async ({ request }) => {
     const { id, app } = await withJson<{ id: string; app: AppId }>(request);
@@ -143,21 +154,32 @@ export const handlers = [
     return success(getUniversalProvider(id));
   }),
 
-  http.post(`${TAURI_ENDPOINT}/upsert_universal_provider`, async ({ request }) => {
-    const { provider } = await withJson<{ provider: UniversalProvider }>(request);
-    saveUniversalProvider(provider);
-    return success(true);
-  }),
+  http.post(
+    `${TAURI_ENDPOINT}/upsert_universal_provider`,
+    async ({ request }) => {
+      const { provider } = await withJson<{ provider: UniversalProvider }>(
+        request,
+      );
+      saveUniversalProvider(provider);
+      return success(true);
+    },
+  ),
 
-  http.post(`${TAURI_ENDPOINT}/delete_universal_provider`, async ({ request }) => {
-    const { id } = await withJson<{ id: string }>(request);
-    return success(deleteUniversalProvider(id));
-  }),
+  http.post(
+    `${TAURI_ENDPOINT}/delete_universal_provider`,
+    async ({ request }) => {
+      const { id } = await withJson<{ id: string }>(request);
+      return success(deleteUniversalProvider(id));
+    },
+  ),
 
-  http.post(`${TAURI_ENDPOINT}/sync_universal_provider`, async ({ request }) => {
-    const { id } = await withJson<{ id: string }>(request);
-    return success(syncUniversalProviderToApps(id));
-  }),
+  http.post(
+    `${TAURI_ENDPOINT}/sync_universal_provider`,
+    async ({ request }) => {
+      const { id } = await withJson<{ id: string }>(request);
+      return success(syncUniversalProviderToApps(id));
+    },
+  ),
 
   http.post(`${TAURI_ENDPOINT}/open_external`, () => success(true)),
 
@@ -536,4 +558,22 @@ export const handlers = [
       gatewayTokenConfigured: false,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_custom_icons`, () =>
+    success(listCustomIcons()),
+  ),
+  http.post(`${TAURI_ENDPOINT}/add_custom_icon`, async ({ request }) => {
+    const { name, data } = await withJson<{ name: string; data: string }>(
+      request,
+    );
+    return success(addCustomIcon(name, data));
+  }),
+  http.post(`${TAURI_ENDPOINT}/rename_custom_icon`, async ({ request }) => {
+    const { id, name } = await withJson<{ id: string; name: string }>(request);
+    return success(renameCustomIcon(id, name));
+  }),
+  http.post(`${TAURI_ENDPOINT}/delete_custom_icon`, async ({ request }) => {
+    const { id } = await withJson<{ id: string }>(request);
+    deleteCustomIcon(id);
+    return success(null);
+  }),
 ];

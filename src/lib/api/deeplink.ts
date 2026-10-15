@@ -16,7 +16,15 @@ export interface DeepLinkImportRequest {
   endpoint?: string;
   apiKey?: string;
   icon?: string;
+  /** 图标下载地址；确认框里经 `fetchDeeplinkIcon` 下载、重新编码后放进 `icon` */
+  iconUrl?: string;
   model?: string;
+  /**
+   * 供应商声明的接口格式：anthropic | openai_chat | openai_responses | gemini_native。
+   * 没写时用各应用的默认格式。
+   */
+  apiFormat?:
+    "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
   notes?: string;
   haikuModel?: string;
   sonnetModel?: string;
@@ -69,6 +77,17 @@ export type ImportResult =
     }
   | { type: "skill"; key: string };
 
+/** 后端暂存、等前端处理的深链接（解析结果或解析错误） */
+export type PendingDeepLink =
+  | { kind: "import"; request: DeepLinkImportRequest }
+  | { kind: "error"; url: string; error: string };
+
+/** 带编号的待处理深链接：编号用于确认清除和去重 */
+export interface PendingDeepLinkEntry {
+  id: number;
+  link: PendingDeepLink;
+}
+
 export const deeplinkApi = {
   /**
    * Parse a deep link URL
@@ -100,5 +119,29 @@ export const deeplinkApi = {
     request: DeepLinkImportRequest,
   ): Promise<ImportResult> => {
     return invoke("import_from_deeplink_unified", { request });
+  },
+
+  /**
+   * Read the deep link waiting for the frontend without clearing it
+   * @returns The pending entry, or null when there is none
+   */
+  peekPendingDeeplink: async (): Promise<PendingDeepLinkEntry | null> => {
+    return invoke("peek_pending_deeplink");
+  },
+
+  /**
+   * Clear the pending deep link once it has been shown; a stale id is ignored
+   * @param id The entry id returned by peekPendingDeeplink
+   */
+  ackPendingDeeplink: async (id: number): Promise<void> => {
+    return invoke("ack_pending_deeplink", { id });
+  },
+
+  /**
+   * 下载链接里 `iconUrl` 指向的图标，返回核对过类型的 data URI；
+   * 任何失败（地址不合规、超时、类型不符等）都返回 null，原因只进后端日志
+   */
+  fetchDeeplinkIcon: async (url: string): Promise<string | null> => {
+    return invoke("fetch_deeplink_icon", { url });
   },
 };

@@ -1,5 +1,11 @@
 import type * as React from "react";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+} from "react";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useTranslation } from "react-i18next";
 import {
@@ -362,8 +368,8 @@ export function UniversalProviderFormModal({
     setOpenSections((prev) => ({ ...prev, [key]: open }));
   }, []);
 
-  // 初始化表单
-  useEffect(() => {
+  // Populate before paint so opening the panel never shows empty/stale fields.
+  useLayoutEffect(() => {
     if (editingProvider) {
       // 编辑模式：加载现有数据
       setName(editingProvider.name);
@@ -513,6 +519,8 @@ export function UniversalProviderFormModal({
     const meta = getIconMetadata(nextIcon);
     setIcon(nextIcon);
     setIconColor(meta?.defaultColor ?? "");
+    // 单选：点了就是选好了，不用再找「完成」
+    setIconDialogOpen(false);
   }, []);
 
   // 更新某个应用的配置。值可以是字符串（文本框）、布尔（勾选）或数字（阈值），
@@ -1316,14 +1324,8 @@ ${tables.join("\n\n")}
                           value={icon}
                           onValueChange={handleIconSelect}
                           color={iconColor}
+                          defaultName={name}
                         />
-                        <div className="flex justify-end gap-2">
-                          <DialogClose asChild>
-                            <Button type="button" variant="outline">
-                              {t("common.done", { defaultValue: "完成" })}
-                            </Button>
-                          </DialogClose>
-                        </div>
                       </div>
                     </div>
                   </div>

@@ -2,6 +2,8 @@
 //!
 //! Handles importing provider configurations via ccswitch:// URLs.
 
+use super::codex_link::{self, CodexLinkConfig};
+use super::grok_link::GrokLinkProfile;
 use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
@@ -109,8 +111,14 @@ pub fn import_provider_from_deeplink(
 
     let provider_id = provider.id.clone();
 
-    // Use ProviderService to add the provider
-    ProviderService::add(state, app_type.clone(), provider, true)?;
+    // `enabled` 是确认框里「导入后立即切换」开关的值（链接里的 `enabled` 只是它的初始值）。
+    // 开关关闭时只把这家存进列表：`add` 在还没有当前供应商时会让它直接生效，不能这样。
+    let activate = merged_request.enabled.unwrap_or(false);
+    if activate {
+        ProviderService::add(state, app_type.clone(), provider, true)?;
+    } else {
+        ProviderService::add_without_switching(state, app_type.clone(), provider)?;
+    }
 
     // Add extra endpoints as custom endpoints (skip first one as it's the primary)
     for ep in all_endpoints.iter().skip(1) {
@@ -131,7 +139,7 @@ pub fn import_provider_from_deeplink(
     }
 
     // If enabled=true, set as current provider
-    if merged_request.enabled.unwrap_or(false) {
+    if activate {
         ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }
@@ -139,23 +147,107 @@ pub fn import_provider_from_deeplink(
     Ok(provider_id)
 }
 
+/// 链接声明的接口格式（`apiFormat`）。站长只学这一套词，各应用换算成自己的字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApiFormat {
+    Anthropic,
+    OpenAiChat,
+    OpenAiResponses,
+    GeminiNative,
+}
+
+impl ApiFormat {
+    const VALUES: &'static str = "anthropic, openai_chat, openai_responses, gemini_native";
+
+    fn parse(value: &str) -> Result<Self, AppError> {
+        match value.trim() {
+            "anthropic" => Ok(Self::Anthropic),
+            "openai_chat" => Ok(Self::OpenAiChat),
+            "openai_responses" => Ok(Self::OpenAiResponses),
+            "gemini_native" => Ok(Self::GeminiNative),
+            other => Err(AppError::InvalidInput(format!(
+                "Unsupported apiFormat '{other}'; use one of: {}",
+                Self::VALUES
+            ))),
+        }
+    }
+
+    /// 这个格式在应用里对应的值；应用不支持这种接口时为 `None`。
+    ///
+    /// Claude Code、Codex、Grok Build 写进 `meta.apiFormat`（非原生格式由本地路由转换）；
+    /// Gemini CLI 只有原生接口。
+    fn native_value(self, app_type: &AppType) -> Option<&'static str> {
+        use ApiFormat::*;
+        match (app_type, self) {
+            (AppType::Claude, Anthropic) => Some("anthropic"),
+            (AppType::Claude | AppType::Codex | AppType::GrokBuild, OpenAiChat) => {
+                Some("openai_chat")
+            }
+            (AppType::Claude | AppType::Codex | AppType::GrokBuild, OpenAiResponses) => {
+                Some("openai_responses")
+            }
+            (AppType::Claude, GeminiNative) => Some("gemini_native"),
+            (AppType::Codex | AppType::GrokBuild, Anthropic) => Some("anthropic"),
+            (AppType::Gemini, GeminiNative) => Some("gemini_native"),
+            _ => None,
+        }
+    }
+}
+
+/// 核对链接的 `apiFormat` 在这个应用上是否可用（解析和导入两处都调）。
+pub(super) fn check_api_format(app: &str, value: &str) -> Result<(), AppError> {
+    let app_type = AppType::from_str(app)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app}")))?;
+    let format = ApiFormat::parse(value)?;
+    if format.native_value(&app_type).is_none() {
+        return Err(AppError::InvalidInput(format!(
+            "apiFormat '{}' is not supported for app '{app}'",
+            value.trim()
+        )));
+    }
+    Ok(())
+}
+
+/// 链接声明的格式，已核对过这个应用支持它；没写时为 `None`。
+fn link_api_format(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+) -> Result<Option<ApiFormat>, AppError> {
+    let Some(value) = request.api_format.as_deref() else {
+        return Ok(None);
+    };
+    check_api_format(app_type.as_str(), value)?;
+    ApiFormat::parse(value).map(Some)
+}
+
 /// Build a Provider structure from a deep link request
 pub(crate) fn build_provider_from_request(
     app_type: &AppType,
     request: &DeepLinkImportRequest,
 ) -> Result<Provider, AppError> {
+    let api_format = link_api_format(app_type, request)?;
     let settings_config = match app_type {
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
-        AppType::Codex => build_codex_settings(request),
+        AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
-        AppType::GrokBuild => build_grokbuild_settings(request),
+        AppType::GrokBuild => build_grokbuild_settings(request)?,
     };
 
     // Build usage script configuration if provided
-    let mut meta = build_provider_meta(request)?;
+    let mut meta = build_provider_meta(app_type, request)?;
     if matches!(app_type, AppType::ClaudeDesktop) {
         meta.get_or_insert_with(ProviderMeta::default)
             .claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
+    }
+    // Claude Code、Codex、Grok Build 的格式记在 meta 上：非原生格式的卡片会带「需要路由」，
+    // 切过去时由本地路由转换。链接没写时不加这个字段，和旧链接导入的行一致。
+    if matches!(
+        app_type,
+        AppType::Claude | AppType::Codex | AppType::GrokBuild
+    ) {
+        if let Some(value) = api_format.and_then(|format| format.native_value(app_type)) {
+            meta.get_or_insert_with(ProviderMeta::default).api_format = Some(value.to_string());
+        }
     }
 
     let provider = Provider {
@@ -228,10 +320,27 @@ fn usage_base_url_override(request: &DeepLinkImportRequest) -> Option<String> {
     }
 }
 
+/// 主地址命中套餐用量路由表时返回套餐 id，规则同前端 `injectCodingPlanUsageScript`：
+/// 所有应用一视同仁，只有 ZenMux 限 Claude（它的查询直接 GET base_url，
+/// 其他应用的推理地址没验证过能返回额度）。
+fn link_coding_plan_provider(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+) -> Option<&'static str> {
+    let id = crate::services::coding_plan::detect_provider_id(&get_primary_endpoint(request))?;
+    (id != "zenmux" || matches!(app_type, AppType::Claude)).then_some(id)
+}
+
 /// Build provider meta with usage script configuration
-fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
+fn build_provider_meta(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+) -> Result<Option<ProviderMeta>, AppError> {
+    let coding_plan_provider = link_coding_plan_provider(app_type, request);
+
     // Check if any usage script fields are provided
-    if request.usage_script.is_none()
+    if coding_plan_provider.is_none()
+        && request.usage_script.is_none()
         && request.usage_enabled.is_none()
         && request.usage_api_key.is_none()
         && request.usage_base_url.is_none()
@@ -251,18 +360,42 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         String::new()
     };
 
-    // Determine enabled state: explicit param only, defaulting to disabled.
+    // 套餐地址且没带脚本：和在应用里新建一样，按套餐额度查询并默认启用
+    // （链接写了 `usageEnabled` 仍照办）。额度走后端固定端点，不执行任何脚本。
+    if let (Some(provider_id), true) = (coding_plan_provider, code.is_empty()) {
+        return Ok(Some(ProviderMeta {
+            usage_script: Some(UsageScript {
+                enabled: request.usage_enabled.unwrap_or(true),
+                language: "javascript".to_string(),
+                code,
+                timeout: Some(10),
+                api_key: usage_api_key_override(request),
+                base_url: usage_base_url_override(request),
+                access_token: None,
+                user_id: None,
+                template_type: Some("token_plan".to_string()),
+                auto_query_interval: request.usage_auto_interval.or(Some(5)),
+                coding_plan_provider: Some(provider_id.to_string()),
+                access_key_id: None,
+                secret_access_key: None,
+                team_organization_id: None,
+                team_project_id: None,
+            }),
+            ..Default::default()
+        }));
+    }
+
+    // 启用状态：链接写了 `usageEnabled` 就照办；没写时，带了脚本就启用。
     //
-    // 「携带了代码」不构成用户的启用决定。此处的输入来自 deeplink——即第三方
-    // 构造、经浏览器抵达的不可信载荷——而 `code` 是一段会在查询用量时执行的
-    // JavaScript。若以 `!code.is_empty()` 作默认，一条链接就能让脚本在用户
-    // 从未勾选过的情况下进入启用态。
+    // 站长放脚本就是为了让用户看到余额，导入后还要再手动打开一次是多余的一步。
+    // 默认启用的代价可控：脚本跑在受限的 QuickJS 里，只能发一个请求，且必须是
+    // 与 base_url 同源的 HTTPS（`usage_script::validate_request_url`；深链接导入
+    // 的脚本没有 template_type，不算自定义模板，这项检查不会被跳过）。
     //
-    // 要启用，链接必须显式携带 `usageEnabled=true`。注意该参数是**链接作者**的
-    // 请求，不构成用户的同意；用户的同意体现在确认框展示了完整脚本正文与启用
-    // 徽章之后仍点了导入——所以那两处展示是本设计的承重部分，不可省略。
-    // 用户在应用内手动配置的脚本不走这条路径。
-    let enabled = request.usage_enabled.unwrap_or(false);
+    // 用户的同意仍然体现在确认框：完整的脚本正文和启用徽章都展示过之后才点导入，
+    // 所以那两处展示是本设计的承重部分，不可省略。前端徽章的判断必须和这里一致。
+    // 链接想导入但不启用，就显式写 `usageEnabled=false`。
+    let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
 
     let usage_script = UsageScript {
         enabled,
@@ -382,7 +515,11 @@ fn extract_claude_config_env(
 }
 
 /// Build Codex settings configuration
-fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+///
+/// 链接附带了 `config.toml` 时，按白名单收下其中属于这个供应商的部分（[`codex_link`]）；
+/// 没带时用固定模板。模板的字节由 golden 测试锁住：降级后旧版会把行里的 config 整份写进
+/// live，已发布的行形状不能变。
+fn build_codex_settings(request: &DeepLinkImportRequest) -> Result<serde_json::Value, AppError> {
     let provider_display_name = request
         .name
         .as_deref()
@@ -411,6 +548,25 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         .trim_end_matches('/')
         .to_string();
 
+    let link_config = match decode_link_config(request)? {
+        Some(config) => codex_link::config_text(&config)?,
+        None => None,
+    };
+    if let Some(text) = link_config {
+        let config = CodexLinkConfig::parse(&text)?.render(
+            &provider_display_name,
+            &endpoint,
+            &model_name,
+            request.api_key.as_deref().unwrap_or_default(),
+        )?;
+        return Ok(json!({
+            "auth": {
+                "OPENAI_API_KEY": request.api_key,
+            },
+            "config": config
+        }));
+    }
+
     let provider_display_name = toml_edit::Value::from(provider_display_name.as_str()).to_string();
     let model_name = toml_edit::Value::from(model_name.as_str()).to_string();
     let endpoint = toml_edit::Value::from(endpoint.as_str()).to_string();
@@ -430,12 +586,12 @@ requires_openai_auth = true
 "#
     );
 
-    json!({
+    Ok(json!({
         "auth": {
             "OPENAI_API_KEY": request.api_key,
         },
         "config": config_toml
-    })
+    }))
 }
 
 /// Build Gemini settings configuration
@@ -455,7 +611,11 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!({ "env": env })
 }
 
-fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+/// 链接附带了 `config.toml` 时，按白名单收下选中的那张模型表（[`grok_link`]）；没带时用
+/// 固定模板。模板的字节由 golden 测试锁住（降级后旧版会把行里的 config 整份写进 live）。
+fn build_grokbuild_settings(
+    request: &DeepLinkImportRequest,
+) -> Result<serde_json::Value, AppError> {
     let model = request
         .model
         .as_deref()
@@ -471,55 +631,60 @@ fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Valu
     let endpoint = get_primary_endpoint(request).trim().to_string();
     let api_key = request.api_key.as_deref().unwrap_or("").trim();
 
+    if let Some(config) = decode_link_config(request)? {
+        let profile = GrokLinkProfile::parse(&grokbuild_config_text(&config)?)?;
+        return Ok(json!({ "config": profile.render(name, model, &endpoint, api_key) }));
+    }
+
     let model_value = toml_edit::Value::from(model).to_string();
     let name_value = toml_edit::Value::from(name).to_string();
     let endpoint_value = toml_edit::Value::from(endpoint.as_str()).to_string();
     let api_key_value = toml_edit::Value::from(api_key).to_string();
 
-    json!({
+    Ok(json!({
         "config": format!(
             "[models]\ndefault = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
             crate::grok_config::DEFAULT_API_BACKEND,
             crate::grok_config::DEFAULT_CONTEXT_WINDOW,
         )
-    })
+    }))
 }
 
-/// Parse and merge configuration from Base64 encoded config or remote URL
-///
-/// Priority: URL params > inline config > remote config
-pub fn parse_and_merge_config(
-    request: &DeepLinkImportRequest,
-) -> Result<DeepLinkImportRequest, AppError> {
-    // If no config provided, return original request
-    if request.config.is_none() && request.config_url.is_none() {
-        return Ok(request.clone());
+/// 链接 config 参数里的 Grok Build `config.toml` 文本：`{"config": "<toml 文本>"}`，或者
+/// 整份就是 config.toml（`configFormat=toml`，或 JSON 写的同一份内容）。
+fn grokbuild_config_text(config: &serde_json::Value) -> Result<String, AppError> {
+    if let Some(config_toml) = config.get("config").and_then(|v| v.as_str()) {
+        return Ok(config_toml.to_string());
     }
+    let toml_value: toml::Value = serde_json::from_value(config.clone())
+        .map_err(|error| AppError::InvalidInput(format!("Invalid Grok Build config: {error}")))?;
+    toml::to_string(&toml_value)
+        .map_err(|error| AppError::InvalidInput(format!("Invalid Grok Build config: {error}")))
+}
 
-    // Step 1: Get config content
+/// 解码链接的 `config` 参数（Base64），按 `configFormat` 解析成 JSON 值。没带时返回 `None`。
+fn decode_link_config(
+    request: &DeepLinkImportRequest,
+) -> Result<Option<serde_json::Value>, AppError> {
     let config_content = if let Some(config_b64) = &request.config {
-        // Decode Base64 inline config
         let decoded = decode_base64_param("config", config_b64)?;
         String::from_utf8(decoded)
             .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in config: {e}")))?
-    } else if let Some(_config_url) = &request.config_url {
-        // Fetch remote config (TODO: implement remote fetching in next phase)
+    } else if request.config_url.is_some() {
         return Err(AppError::InvalidInput(
             "Remote config URL is not yet supported. Use inline config instead.".to_string(),
         ));
     } else {
-        return Ok(request.clone());
+        return Ok(None);
     };
 
-    // Step 2: Parse config based on format
     let format = request.config_format.as_deref().unwrap_or("json");
-    let config_value: serde_json::Value = match format {
+    let config_value = match format {
         "json" => serde_json::from_str(&config_content)
             .map_err(|e| AppError::InvalidInput(format!("Invalid JSON config: {e}")))?,
         "toml" => {
             let toml_value: toml::Value = toml::from_str(&config_content)
                 .map_err(|e| AppError::InvalidInput(format!("Invalid TOML config: {e}")))?;
-            // Convert TOML to JSON for uniform processing
             serde_json::to_value(toml_value)
                 .map_err(|e| AppError::Message(format!("Failed to convert TOML to JSON: {e}")))?
         }
@@ -529,8 +694,20 @@ pub fn parse_and_merge_config(
             )))
         }
     };
+    Ok(Some(config_value))
+}
 
-    // Step 3: Extract values from config based on app type and merge with URL params
+/// Parse and merge configuration from Base64 encoded config or remote URL
+///
+/// Priority: URL params > inline config > remote config
+pub fn parse_and_merge_config(
+    request: &DeepLinkImportRequest,
+) -> Result<DeepLinkImportRequest, AppError> {
+    let Some(config_value) = decode_link_config(request)? else {
+        return Ok(request.clone());
+    };
+
+    // Extract values from config based on app type and merge with URL params
     let mut merged = request.clone();
 
     // MCP, Skill and other resource types don't need config merging
@@ -628,34 +805,49 @@ fn merge_codex_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
+    let config_text = codex_link::config_text(config)?;
+    // 先过白名单：拒绝的键在确认框打开时就报出来，而不是点了导入才失败
+    let link = config_text
+        .as_deref()
+        .map(CodexLinkConfig::parse)
+        .transpose()?;
+
     // Auto-fill API key from auth.OPENAI_API_KEY or Codex mobile-compatible bearer token.
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
-        let config_str = config.get("config").and_then(|v| v.as_str());
         if let Some(api_key) =
-            crate::codex_config::extract_codex_api_key(config.get("auth"), config_str)
+            crate::codex_config::extract_codex_api_key(config.get("auth"), config_text.as_deref())
         {
             request.api_key = Some(api_key.to_string());
         }
     }
+    // 只给了 env_key：Key 在本机环境变量里，不能从不可信的链接导入（同 Grok Build）
+    if request.api_key.as_ref().is_none_or(|s| s.is_empty())
+        && link.as_ref().is_some_and(|link| link.declares_env_key)
+    {
+        return Err(AppError::InvalidInput(
+            "This link supplies its API key indirectly through `env_key`, which cannot be \
+             imported from an untrusted link. Add the provider manually and enter the key \
+             yourself."
+                .to_string(),
+        ));
+    }
 
-    // Auto-fill endpoint and model from config string
-    if let Some(config_str) = config.get("config").and_then(|v| v.as_str()) {
-        // Parse TOML config string to extract base_url and model
-        if let Ok(toml_value) = toml::from_str::<toml::Value>(config_str) {
-            // Extract base_url from model_providers section
-            if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
-                if let Some(base_url) = extract_codex_base_url(&toml_value) {
-                    request.endpoint = Some(base_url);
-                }
-            }
-
-            // Extract model
-            if request.model.is_none() {
-                if let Some(model) = toml_value.get("model").and_then(|v| v.as_str()) {
-                    request.model = Some(model.to_string());
-                }
-            }
+    // Auto-fill endpoint and model from the selected provider table
+    if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(base_url) = link
+            .as_ref()
+            .and_then(CodexLinkConfig::base_url)
+            .or_else(|| {
+                config_text
+                    .as_deref()
+                    .and_then(crate::codex_config::extract_codex_base_url)
+            })
+        {
+            request.endpoint = Some(base_url);
         }
+    }
+    if request.model.is_none() {
+        request.model = link.as_ref().and_then(CodexLinkConfig::model);
     }
 
     // Auto-fill homepage from endpoint
@@ -717,19 +909,8 @@ fn merge_grokbuild_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
-    let config_toml = if let Some(config_toml) = config.get("config").and_then(|v| v.as_str()) {
-        config_toml.to_string()
-    } else {
-        let toml_value: toml::Value = serde_json::from_value(config.clone()).map_err(|error| {
-            AppError::InvalidInput(format!("Invalid Grok Build config: {error}"))
-        })?;
-        toml::to_string(&toml_value).map_err(|error| {
-            AppError::InvalidInput(format!("Invalid Grok Build config: {error}"))
-        })?
-    };
-    let model = crate::grok_config::extract_model_config(&config_toml).ok_or_else(|| {
-        AppError::InvalidInput("Invalid Grok Build config.toml model profile".to_string())
-    })?;
+    // 先过白名单：拒绝的键在确认框打开时就报出来，而不是点了导入才失败
+    let profile = GrokLinkProfile::parse(&grokbuild_config_text(config)?)?;
 
     if request
         .api_key
@@ -742,7 +923,7 @@ fn merge_grokbuild_config(
         // victim's environment secret into the imported provider's config.toml
         // and ship it to whatever `base_url` the link declares. `env_key` is an
         // indirection that must stay a name, not a resolved secret, on import.
-        request.api_key = model.api_key;
+        request.api_key = profile.api_key();
 
         // An `env_key`-only link is not importable at all, and saying so beats
         // falling through to the generic "API key is required" (which reads like
@@ -755,7 +936,7 @@ fn merge_grokbuild_config(
             .api_key
             .as_ref()
             .is_none_or(|value| value.is_empty())
-            && model.env_key.is_some()
+            && profile.declares_env_key
         {
             return Err(AppError::InvalidInput(
                 "This link supplies its API key indirectly through `env_key`, which cannot be \
@@ -770,10 +951,10 @@ fn merge_grokbuild_config(
         .as_ref()
         .is_none_or(|value| value.is_empty())
     {
-        request.endpoint = Some(model.base_url);
+        request.endpoint = profile.base_url();
     }
     if request.model.is_none() {
-        request.model = Some(model.model);
+        request.model = profile.model();
     }
     if request
         .homepage
@@ -786,19 +967,6 @@ fn merge_grokbuild_config(
     }
 
     Ok(())
-}
-
-/// Extract base_url from Codex TOML config
-fn extract_codex_base_url(toml_value: &toml::Value) -> Option<String> {
-    // Try to find base_url in model_providers section
-    if let Some(providers) = toml_value.get("model_providers").and_then(|v| v.as_table()) {
-        for (_key, provider) in providers.iter() {
-            if let Some(base_url) = provider.get("base_url").and_then(|v| v.as_str()) {
-                return Some(base_url.to_string());
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -838,7 +1006,7 @@ mod tests {
         });
 
         merge_grokbuild_config(&mut request, &config).expect("merge should succeed");
-        let settings = build_grokbuild_settings(&request);
+        let settings = build_grokbuild_settings(&request).unwrap();
         let rendered = settings["config"].as_str().expect("config string");
 
         assert!(
@@ -923,7 +1091,7 @@ mod tests {
             ..Default::default()
         };
 
-        let settings = build_codex_settings(&request);
+        let settings = build_codex_settings(&request).unwrap();
         let config_text = settings
             .get("config")
             .and_then(|value| value.as_str())

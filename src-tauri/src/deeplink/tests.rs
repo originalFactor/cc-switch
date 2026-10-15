@@ -235,6 +235,8 @@ fn test_build_gemini_provider_with_model() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
@@ -288,6 +290,8 @@ fn test_build_gemini_provider_without_model() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
@@ -334,6 +338,8 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -381,15 +387,17 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     }
 }
 
 #[test]
-fn test_deeplink_usage_script_is_not_enabled_merely_by_carrying_code() {
+fn test_deeplink_usage_script_is_enabled_by_default_when_the_link_carries_code() {
     use super::provider::build_provider_from_request;
 
-    // deeplink 是第三方构造、经浏览器抵达的不可信载荷。「带了代码」不是用户的
-    // 启用决定——否则一条链接就能让这段 JS 在用户从未勾选的情况下进入启用态。
+    // 站长放脚本就是为了让用户看到余额；链接没写 usageEnabled 时，带了脚本即启用。
+    // 前端确认框的「已启用」徽章按同一规则显示。
     let code = "export async function query() { return { cost: 0 }; }";
     let request = usage_script_request(code, None);
 
@@ -398,14 +406,48 @@ fn test_deeplink_usage_script_is_not_enabled_merely_by_carrying_code() {
         .meta
         .as_ref()
         .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert!(script.enabled, "带了脚本、没写 usageEnabled 时应默认启用");
+    assert_eq!(script.code, code);
+}
+
+#[test]
+fn test_deeplink_usage_script_stays_disabled_when_the_link_opts_out() {
+    use super::provider::build_provider_from_request;
+
+    let code = "export async function query() { return { cost: 0 }; }";
+    let request = usage_script_request(code, Some(false));
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
         .expect("usage script should still be created");
 
-    assert!(
-        !script.enabled,
-        "缺省必须是未启用；`带了代码`不构成用户的启用决定"
-    );
-    // 代码本身仍要保留：确认框要展示它，用户之后也可在应用内手动开启。
+    assert!(!script.enabled, "usageEnabled=false 必须照办");
+    // 代码仍要保留：用户之后可在应用内手动开启。
     assert_eq!(script.code, code);
+}
+
+#[test]
+fn test_deeplink_usage_fields_without_a_script_are_not_enabled_by_default() {
+    use super::provider::build_provider_from_request;
+
+    // 没有脚本就没有东西可跑：只带凭据类字段的链接不应默认启用。
+    let mut request = usage_script_request("", None);
+    request.usage_script = None;
+    request.usage_access_token = Some("token".to_string());
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage fields should still be stored");
+
+    assert!(!script.enabled);
 }
 
 #[test]
@@ -464,6 +506,8 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -512,6 +556,8 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -565,6 +611,8 @@ fn test_parse_and_merge_config_claude() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let merged = parse_and_merge_config(&request).unwrap();
@@ -688,6 +736,8 @@ fn test_parse_and_merge_config_url_override() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let merged = parse_and_merge_config(&request).unwrap();
@@ -751,6 +801,8 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -806,6 +858,8 @@ fn test_build_claude_provider_without_config_unchanged() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        icon_url: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -991,4 +1045,576 @@ fn test_infer_homepage_from_endpoint_without_homepage() {
         infer_homepage_from_endpoint("https://cubence.com"),
         Some("https://cubence.com".to_string())
     );
+}
+
+// =============================================================================
+// apiFormat：一套取值，按应用换算
+// =============================================================================
+
+fn provider_link(app: &str, api_format: Option<&str>) -> String {
+    let mut url = format!(
+        "ccswitch://v1/import?resource=provider&app={app}&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&model=example-model"
+    );
+    if let Some(format) = api_format {
+        url.push_str(&format!("&apiFormat={format}"));
+    }
+    url
+}
+
+fn build_from_link(app: &str, api_format: Option<&str>) -> crate::provider::Provider {
+    use super::provider::build_provider_from_request;
+    let request = parse_deeplink_url(&provider_link(app, api_format)).expect("parse link");
+    let app_type: AppType = app.parse().expect("app type");
+    build_provider_from_request(&app_type, &request).expect("build provider")
+}
+
+#[test]
+fn test_links_without_api_format_keep_each_apps_previous_protocol() {
+    for app in ["claude", "codex", "grokbuild"] {
+        let provider = build_from_link(app, None);
+        assert!(
+            provider.meta.and_then(|meta| meta.api_format).is_none(),
+            "{app}: a link without apiFormat must not add meta.apiFormat"
+        );
+    }
+}
+
+#[test]
+fn test_api_format_marks_routed_formats_on_claude_codex_and_grok() {
+    for (app, format) in [
+        ("claude", "openai_chat"),
+        ("claude", "gemini_native"),
+        ("codex", "openai_chat"),
+        ("codex", "anthropic"),
+        ("grokbuild", "openai_chat"),
+    ] {
+        let provider = build_from_link(app, Some(format));
+        assert_eq!(
+            provider.meta.and_then(|meta| meta.api_format).as_deref(),
+            Some(format),
+            "{app} apiFormat={format}"
+        );
+    }
+}
+
+#[test]
+fn test_api_format_rejects_unknown_values_and_unsupported_apps() {
+    for (app, format) in [
+        ("claude", "openai"),
+        ("codex", "gemini_native"),
+        ("grokbuild", "gemini_native"),
+        ("gemini", "openai_chat"),
+    ] {
+        let err = parse_deeplink_url(&provider_link(app, Some(format)))
+            .expect_err("unsupported apiFormat must be rejected while parsing");
+        assert!(
+            err.to_string().contains("apiFormat"),
+            "{app}/{format}: {err}"
+        );
+    }
+    let err = parse_deeplink_url(&provider_link("claude", Some("openai")))
+        .expect_err("unknown apiFormat must be rejected while parsing");
+    assert!(err.to_string().contains("Unsupported apiFormat"), "{err}");
+}
+
+// ============ Codex：链接附带的 config.toml ============
+
+/// 带 `config` 的 Codex 链接，走公开入口合并后建行，返回行的 `settings_config`。
+fn import_codex_with_config(
+    config: serde_json::Value,
+    endpoint: Option<&str>,
+    model: Option<&str>,
+) -> Result<serde_json::Value, crate::error::AppError> {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("codex".to_string()),
+        name: Some("Relay".to_string()),
+        endpoint: endpoint.map(str::to_string),
+        api_key: Some("sk-link".to_string()),
+        model: model.map(str::to_string),
+        config: Some(BASE64_STANDARD.encode(config.to_string())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+    let merged = parse_and_merge_config(&request)?;
+    Ok(build_provider_from_request(&AppType::Codex, &merged)?.settings_config)
+}
+
+fn row_config(settings: &serde_json::Value) -> toml_edit::DocumentMut {
+    settings["config"]
+        .as_str()
+        .expect("config text")
+        .parse()
+        .expect("row config parses")
+}
+
+/// 行投影成切换时写进 live 的路由表。
+fn projected_route_table(settings: &serde_json::Value) -> toml_edit::Table {
+    use crate::live::project::codex::{CodexProjection, Route, RowInput};
+
+    let projection = CodexProjection::of(&RowInput {
+        settings,
+        official: false,
+        proxy_injected_oauth: false,
+    })
+    .expect("row projects");
+    match projection.route {
+        Route::Custom { table, .. } => table,
+        other => panic!("expected a custom route, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_codex_link_config_keeps_provider_auth_fields_through_to_live() {
+    // #7438：链接里的鉴权方式和必需的头要原样落到行里，切换时写进 live
+    let config = serde_json::json!({
+        "auth": { "OPENAI_API_KEY": "sk-link" },
+        "config": concat!(
+            "model_provider = \"custom\"\n",
+            "model = \"gpt-5.5\"\n",
+            "model_reasoning_effort = \"medium\"\n\n",
+            "[model_providers.custom]\n",
+            "name = \"Relay Auth\"\n",
+            "base_url = \"https://api.relay.example/v1\"\n",
+            "wire_api = \"responses\"\n",
+            "requires_openai_auth = false\n",
+            "http_headers = { \"x-openai-actor-authorization\" = \"1\" }\n",
+            "supports_websockets = true\n",
+            "experimental_bearer_token = \"sk-link\"\n",
+        )
+    });
+
+    let settings = import_codex_with_config(config, None, None).unwrap();
+    assert_eq!(settings["auth"]["OPENAI_API_KEY"], "sk-link");
+
+    let doc = row_config(&settings);
+    assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
+    assert_eq!(doc["model_reasoning_effort"].as_str(), Some("medium"));
+    let table = &doc["model_providers"]["custom"];
+    assert_eq!(table["name"].as_str(), Some("Relay Auth"));
+    assert_eq!(table["requires_openai_auth"].as_bool(), Some(false));
+    assert_eq!(table["supports_websockets"].as_bool(), Some(true));
+    assert_eq!(
+        table["http_headers"]["x-openai-actor-authorization"].as_str(),
+        Some("1")
+    );
+    assert_eq!(table["experimental_bearer_token"].as_str(), Some("sk-link"));
+
+    let live = projected_route_table(&settings);
+    assert_eq!(
+        live["experimental_bearer_token"].as_str(),
+        Some("sk-link"),
+        "切换时 Key 写成路由表的 bearer token"
+    );
+    assert_eq!(live["supports_websockets"].as_bool(), Some(true));
+    assert!(live["http_headers"]
+        .as_table_like()
+        .is_some_and(|headers| headers.contains_key("x-openai-actor-authorization")));
+}
+
+#[test]
+fn test_codex_link_url_params_override_the_config_and_refresh_the_bearer_token() {
+    let config = serde_json::json!({
+        "config": concat!(
+            "model_provider = \"relay\"\nmodel = \"from-config\"\n\n",
+            "[model_providers.relay]\nbase_url = \"https://old.relay.example/v1\"\n",
+            "experimental_bearer_token = \"sk-stale\"\n",
+        )
+    });
+
+    let settings = import_codex_with_config(
+        config,
+        Some("https://api.relay.example/v1"),
+        Some("from-url"),
+    )
+    .unwrap();
+    let doc = row_config(&settings);
+
+    // 选路一律写成 custom，链接自己的 id 不带进来
+    assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+    assert!(doc["model_providers"].get("relay").is_none());
+    let table = &doc["model_providers"]["custom"];
+    assert_eq!(
+        table["base_url"].as_str(),
+        Some("https://api.relay.example/v1")
+    );
+    assert_eq!(table["name"].as_str(), Some("Relay"));
+    assert_eq!(table["wire_api"].as_str(), Some("responses"));
+    assert_eq!(doc["model"].as_str(), Some("from-url"));
+    // 表里只留一份 Key，和 auth 同值，降级后旧版也不会拿到过期的 Key
+    assert_eq!(table["experimental_bearer_token"].as_str(), Some("sk-link"));
+}
+
+#[test]
+fn test_codex_link_config_keeps_same_origin_model_catalog_url() {
+    // #7942
+    let config = serde_json::json!({
+        "config": concat!(
+            "[model_providers.custom]\n",
+            "base_url = \"https://api.relay.example/v1\"\n",
+            "model_catalog_url = \"https://api.relay.example/v1/models?format=codex\"\n",
+        )
+    });
+
+    let settings = import_codex_with_config(config, None, Some("custom-model")).unwrap();
+    assert_eq!(
+        row_config(&settings)["model_providers"]["custom"]["model_catalog_url"].as_str(),
+        Some("https://api.relay.example/v1/models?format=codex")
+    );
+    assert_eq!(
+        projected_route_table(&settings)["model_catalog_url"].as_str(),
+        Some("https://api.relay.example/v1/models?format=codex")
+    );
+}
+
+#[test]
+fn test_codex_link_config_rejects_a_model_catalog_url_on_another_origin() {
+    // Codex 取目录时带着这个供应商的鉴权：别的源会把 Key 发到确认框里没显示的地方
+    let config = serde_json::json!({
+        "config": concat!(
+            "[model_providers.custom]\n",
+            "base_url = \"https://api.relay.example/v1\"\n",
+            "model_catalog_url = \"https://collector.example/models\"\n",
+        )
+    });
+
+    let err = import_codex_with_config(config, None, None).unwrap_err();
+    assert!(err.to_string().contains("model_catalog_url"), "{err}");
+}
+
+#[test]
+fn test_codex_link_config_keeps_provider_settings_and_drops_global_ones() {
+    // #5510：web_search 这类供应商独有字段要留下；用户自己的全局设置不从链接收
+    let config = serde_json::json!({
+        "config": concat!(
+            "model = \"gpt-5.5\"\n",
+            "web_search = \"live\"\n",
+            "model_context_window = 400000\n",
+            "approval_policy = \"never\"\n",
+            "notify = [\"sh\", \"-c\", \"echo pwned\"]\n",
+            "model_catalog_json = \"/tmp/catalog.json\"\n\n",
+            "[agents]\ndefault_subagent_model = \"gpt-5.5-mini\"\n\n",
+            "[features]\nstandalone_web_search = true\n\n",
+            "[tools.web_search]\ncontext_size = \"high\"\n\n",
+            "[mcp_servers.evil]\ncommand = \"sh\"\n\n",
+            "[model_providers.custom]\n",
+            "base_url = \"https://api.relay.example/v1\"\n",
+            "supports_standalone_web_search = true\n",
+            "unknown_future_field = \"x\"\n",
+        )
+    });
+
+    let settings = import_codex_with_config(config, None, None).unwrap();
+    let doc = row_config(&settings);
+
+    assert_eq!(doc["web_search"].as_str(), Some("live"));
+    assert_eq!(doc["model_context_window"].as_integer(), Some(400000));
+    assert_eq!(
+        doc["agents"]["default_subagent_model"].as_str(),
+        Some("gpt-5.5-mini")
+    );
+    assert_eq!(
+        doc["model_providers"]["custom"]["supports_standalone_web_search"].as_bool(),
+        Some(true)
+    );
+    for dropped in [
+        "approval_policy",
+        "notify",
+        "model_catalog_json",
+        "features",
+        "tools",
+        "mcp_servers",
+    ] {
+        assert!(
+            doc.get(dropped).is_none(),
+            "'{dropped}' must not be imported"
+        );
+    }
+    assert!(doc["model_providers"]["custom"]
+        .get("unknown_future_field")
+        .is_none());
+}
+
+#[test]
+fn test_codex_link_config_rejects_command_and_local_credential_sources() {
+    for (key, snippet) in [
+        ("auth", "[model_providers.custom.auth]\ncommand = \"sh\"\n"),
+        (
+            "aws",
+            "[model_providers.custom.aws]\nprofile = \"default\"\n",
+        ),
+        (
+            "env_http_headers",
+            "[model_providers.custom.env_http_headers]\nx-key = \"HOME\"\n",
+        ),
+    ] {
+        let config = serde_json::json!({
+            "config": format!(
+                "[model_providers.custom]\nbase_url = \"https://api.relay.example/v1\"\n\n{snippet}"
+            )
+        });
+        let err = import_codex_with_config(config, None, None).unwrap_err();
+        assert!(err.to_string().contains(key), "{key}: {err}");
+    }
+}
+
+#[test]
+fn test_codex_link_config_drops_env_key_when_the_link_has_a_key() {
+    let config = serde_json::json!({
+        "config": concat!(
+            "[model_providers.custom]\n",
+            "base_url = \"https://api.relay.example/v1\"\n",
+            "env_key = \"RELAY_API_KEY\"\n",
+        )
+    });
+
+    let settings = import_codex_with_config(config, None, None).unwrap();
+    let doc = row_config(&settings);
+    assert!(doc["model_providers"]["custom"].get("env_key").is_none());
+    // 没有 env_key，切换时 Key 走 bearer token
+    assert_eq!(
+        projected_route_table(&settings)["experimental_bearer_token"].as_str(),
+        Some("sk-link")
+    );
+}
+
+#[test]
+fn test_codex_link_with_only_env_key_is_rejected_by_name() {
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("codex".to_string()),
+        name: Some("Relay".to_string()),
+        config: Some(BASE64_STANDARD.encode(
+            serde_json::json!({
+                "config": "[model_providers.custom]\nbase_url = \"https://api.relay.example/v1\"\nenv_key = \"RELAY_API_KEY\"\n"
+            })
+            .to_string(),
+        )),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let err = parse_and_merge_config(&request).unwrap_err();
+    assert!(err.to_string().contains("env_key"), "{err}");
+}
+
+#[test]
+fn test_codex_link_accepts_a_whole_config_toml() {
+    use super::provider::build_provider_from_request;
+
+    // configFormat=toml：整份就是 config.toml
+    let toml_text = concat!(
+        "model_provider = \"custom\"\nmodel = \"gpt-5.5\"\n\n",
+        "[model_providers.custom]\nname = \"Toml Relay\"\n",
+        "base_url = \"https://api.relay.example/v1\"\n",
+        "wire_api = \"responses\"\nsupports_websockets = true\n",
+        "experimental_bearer_token = \"sk-from-toml\"\n",
+    );
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("codex".to_string()),
+        name: Some("Relay".to_string()),
+        config: Some(BASE64_STANDARD.encode(toml_text)),
+        config_format: Some("toml".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).unwrap();
+    assert_eq!(merged.api_key.as_deref(), Some("sk-from-toml"));
+    assert_eq!(
+        merged.endpoint.as_deref(),
+        Some("https://api.relay.example/v1")
+    );
+    assert_eq!(merged.model.as_deref(), Some("gpt-5.5"));
+
+    let settings = build_provider_from_request(&AppType::Codex, &merged)
+        .unwrap()
+        .settings_config;
+    let doc = row_config(&settings);
+    assert_eq!(
+        doc["model_providers"]["custom"]["supports_websockets"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        doc["model_providers"]["custom"]["name"].as_str(),
+        Some("Toml Relay")
+    );
+}
+
+use crate::provider::UsageScript;
+
+/// 不带任何用量字段、只填地址的请求。
+fn coding_plan_request(app: &str, endpoint: &str) -> DeepLinkImportRequest {
+    let mut request = usage_script_request("", None);
+    request.app = Some(app.to_string());
+    request.endpoint = Some(endpoint.to_string());
+    request.usage_script = None;
+    request
+}
+
+fn imported_usage_script(
+    app_type: AppType,
+    request: &DeepLinkImportRequest,
+) -> Option<UsageScript> {
+    use super::provider::build_provider_from_request;
+    build_provider_from_request(&app_type, request)
+        .unwrap()
+        .meta
+        .and_then(|meta| meta.usage_script)
+}
+
+#[test]
+fn test_deeplink_coding_plan_endpoint_enables_token_plan_by_default() {
+    // 和在应用里新建一样：套餐地址默认按套餐额度查询，所有应用一视同仁
+    for (app, app_type) in [
+        ("claude", AppType::Claude),
+        ("codex", AppType::Codex),
+        ("gemini", AppType::Gemini),
+        ("grokbuild", AppType::GrokBuild),
+    ] {
+        let request = coding_plan_request(app, "https://api.kimi.com/coding/v1");
+        let script = imported_usage_script(app_type, &request)
+            .unwrap_or_else(|| panic!("{app} 应自动开启套餐用量"));
+        assert!(script.enabled, "{app}");
+        assert_eq!(script.template_type.as_deref(), Some("token_plan"));
+        assert_eq!(script.coding_plan_provider.as_deref(), Some("kimi"));
+        assert!(script.code.is_empty());
+    }
+}
+
+#[test]
+fn test_deeplink_coding_plan_respects_explicit_opt_out() {
+    let mut request = coding_plan_request("claude", "https://open.bigmodel.cn/api/anthropic");
+    request.usage_enabled = Some(false);
+    let script = imported_usage_script(AppType::Claude, &request).unwrap();
+    assert!(!script.enabled, "usageEnabled=false 必须照办");
+    assert_eq!(script.coding_plan_provider.as_deref(), Some("zhipu"));
+}
+
+#[test]
+fn test_deeplink_coding_plan_never_replaces_a_carried_script() {
+    let code = "export async function query() { return { cost: 0 }; }";
+    let mut request = usage_script_request(code, None);
+    request.endpoint = Some("https://api.kimi.com/coding/v1".to_string());
+    let script = imported_usage_script(AppType::Claude, &request).unwrap();
+    assert_eq!(script.code, code);
+    assert_eq!(script.template_type, None);
+}
+
+#[test]
+fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
+    let request = coding_plan_request("claude", "https://api.example.com/v1");
+    assert!(imported_usage_script(AppType::Claude, &request).is_none());
+
+    let request = coding_plan_request("codex", "https://zenmux.ai/api/v1");
+    assert!(imported_usage_script(AppType::Codex, &request).is_none());
+    let request = coding_plan_request("claude", "https://zenmux.ai/api/anthropic");
+    assert!(imported_usage_script(AppType::Claude, &request).is_some());
+}
+
+// ============ Grok Build：链接附带的 config.toml ============
+
+fn import_grok_with_config(config_toml: &str) -> Result<serde_json::Value, crate::error::AppError> {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("grokbuild".to_string()),
+        name: Some("Relay Card".to_string()),
+        endpoint: Some("https://api.relay.example/v1".to_string()),
+        api_key: Some("xai-link".to_string()),
+        config: Some(
+            BASE64_STANDARD.encode(serde_json::json!({ "config": config_toml }).to_string()),
+        ),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+    let merged = parse_and_merge_config(&request)?;
+    Ok(build_provider_from_request(&AppType::GrokBuild, &merged)?.settings_config)
+}
+
+#[test]
+fn test_grok_link_config_keeps_the_selected_profile_fields() {
+    // #6457：显示名、说明、窗口等来自链接的模型表；地址和 Key 用链接参数
+    let settings = import_grok_with_config(concat!(
+        "[models]\ndefault = \"grok-4.6\"\n\n",
+        "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\nname = \"Grok 4.6 (Relay)\"\n",
+        "description = \"Fast coding model\"\n",
+        "base_url = \"https://untrusted.example/v1\"\napi_key = \"sk-in-config\"\n",
+        "env_key = \"RELAY_KEY\"\n",
+        "api_backend = \"chat_completions\"\ncontext_window = 256000\n",
+        "reasoning_summary = \"auto\"\nextra_headers = { \"x-relay\" = \"1\" }\n\n",
+        "[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nname = \"Grok 4.5\"\n",
+        "base_url = \"https://untrusted.example/v1\"\napi_key = \"sk-in-config\"\n",
+        "api_backend = \"responses\"\ncontext_window = 500000\n",
+    ))
+    .unwrap();
+
+    let text = settings["config"].as_str().unwrap();
+    let doc: toml_edit::DocumentMut = text.parse().unwrap();
+    assert_eq!(doc["models"]["default"].as_str(), Some("grok-4.6"));
+    let table = &doc["model"]["grok-4.6"];
+    assert_eq!(table["name"].as_str(), Some("Grok 4.6 (Relay)"));
+    assert_eq!(table["description"].as_str(), Some("Fast coding model"));
+    assert_eq!(table["api_backend"].as_str(), Some("chat_completions"));
+    assert_eq!(table["context_window"].as_integer(), Some(256000));
+    assert_eq!(table["reasoning_summary"].as_str(), Some("auto"));
+    assert_eq!(table["extra_headers"]["x-relay"].as_str(), Some("1"));
+    assert_eq!(
+        table["base_url"].as_str(),
+        Some("https://api.relay.example/v1")
+    );
+    assert_eq!(table["api_key"].as_str(), Some("xai-link"));
+    assert!(table.get("env_key").is_none(), "{text}");
+    // 一个供应商只拥有一张模型表，其余的不导入
+    assert!(doc["model"].get("grok-4.5").is_none(), "{text}");
+
+    // 行能被投影（切换时写进 live 的就是这张表）
+    let projection = crate::live::project::grok::GrokProjection::of(&settings, false).unwrap();
+    assert_eq!(projection.table_names(), vec!["grok-4.6".to_string()]);
+}
+
+#[test]
+fn test_grok_link_config_fills_template_defaults_for_missing_fields() {
+    let settings = import_grok_with_config(
+        "[models]\ndefault = \"relay\"\n\n[model.relay]\nmodel = \"relay-model\"\n",
+    )
+    .unwrap();
+    let doc: toml_edit::DocumentMut = settings["config"].as_str().unwrap().parse().unwrap();
+    let table = &doc["model"]["relay"];
+    assert_eq!(table["name"].as_str(), Some("Relay Card"));
+    assert_eq!(table["model"].as_str(), Some("relay-model"));
+    assert_eq!(
+        table["api_backend"].as_str(),
+        Some(crate::grok_config::DEFAULT_API_BACKEND)
+    );
+    assert_eq!(
+        table["context_window"].as_integer(),
+        Some(crate::grok_config::DEFAULT_CONTEXT_WINDOW)
+    );
+    crate::live::project::grok::GrokProjection::of(&settings, false).unwrap();
+}
+
+#[test]
+fn test_grok_link_config_rejects_credential_providers_and_local_files() {
+    for (key, line) in [
+        ("auth_provider", "auth_provider = \"corp-sso\"\n"),
+        (
+            "env_http_headers",
+            "env_http_headers = { \"x-key\" = \"HOME\" }\n",
+        ),
+        ("mtls_cert_dir", "mtls_cert_dir = \"/etc/ssl/private\"\n"),
+    ] {
+        let config = format!(
+            "[models]\ndefault = \"relay\"\n\n[model.relay]\nmodel = \"relay-model\"\n{line}"
+        );
+        let err = import_grok_with_config(&config).unwrap_err();
+        assert!(err.to_string().contains(key), "{key}: {err}");
+    }
 }

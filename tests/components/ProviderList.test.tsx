@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactElement } from "react";
@@ -376,5 +376,140 @@ describe("ProviderList Component", () => {
 
     rerender(ui(false));
     expect(screen.getByTestId("provider-card-other")).toBeInTheDocument();
+  });
+  it("renders the search field into the mode row slot instead of the list", async () => {
+    const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [alpha],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const slot = document.createElement("div");
+    document.body.appendChild(slot);
+    try {
+      const { container } = renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ alpha }}
+          appId="codex"
+          switchMode={switchMode()}
+          searchSlot={slot}
+        />,
+      );
+
+      fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+      const input = screen.getByRole("textbox", { name: "Search providers" });
+      expect(slot).toContainElement(input);
+      expect(container).not.toContainElement(input);
+      await waitFor(() => expect(input).toHaveFocus());
+    } finally {
+      slot.remove();
+    }
+  });
+
+  it("renders nothing for a mode row slot that is not mounted yet", () => {
+    const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [alpha],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ alpha }}
+        appId="codex"
+        switchMode={switchMode()}
+        searchSlot={null}
+        searchOpen
+      />,
+    );
+
+    expect(
+      screen.queryByRole("textbox", { name: "Search providers" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+  });
+
+  it("puts the search field beside the first section title and keeps it while no provider matches", async () => {
+    const member = createProvider({ id: "member", name: "Member Labs" });
+    const other = createProvider({ id: "other", name: "Other Works" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [member, other],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ member, other }}
+        appId="claude"
+        switchMode={switchMode({
+          active: "stack",
+          view: "stack",
+          routeId: "member",
+          stackMembers: new Map([["member", 2]]),
+        })}
+      />,
+    );
+
+    const heading = await screen.findByRole("heading", {
+      name: "providerCard.section.stackDefault",
+    });
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const input = screen.getByRole("textbox", { name: "Search providers" });
+    // 同一行：标题和搜索框共用列表的第一行，第一个分组里不再重复画标题
+    const header = input.closest("div.min-h-8");
+    expect(header).toContainElement(heading);
+    expect(
+      screen.getAllByRole("heading", {
+        name: "providerCard.section.stackDefault",
+      }),
+    ).toHaveLength(1);
+    await waitFor(() => expect(input).toHaveFocus());
+
+    fireEvent.change(input, { target: { value: "nothing-matches" } });
+    expect(screen.getByText("No providers match your search.")).toBeVisible();
+    // 结果清空时输入框还是同一个节点，焦点不丢
+    expect(screen.getByRole("textbox", { name: "Search providers" })).toBe(
+      input,
+    );
+    expect(input).toHaveFocus();
+  });
+
+  it("adds the search row only while searching when the list has no section title", async () => {
+    const desk = createProvider({ id: "desk", name: "Desk Relay" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [desk],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    const { container } = renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ desk }}
+        appId="claude-desktop"
+      />,
+    );
+
+    const list = container.firstElementChild!;
+    expect(list.firstElementChild).toContainElement(
+      screen.getByTestId("provider-card-desk"),
+    );
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const input = screen.getByRole("textbox", { name: "Search providers" });
+    expect(list.firstElementChild).toContainElement(input);
+    expect(list.firstElementChild?.nextElementSibling).toContainElement(
+      screen.getByTestId("provider-card-desk"),
+    );
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(input).not.toBeInTheDocument());
+    expect(list.firstElementChild).toContainElement(
+      screen.getByTestId("provider-card-desk"),
+    );
   });
 });
