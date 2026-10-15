@@ -151,6 +151,16 @@ fn toml_str(value: Option<&toml::Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 绝对 token 数 → 窗口百分比（四舍五入，至少 1）。统一供应商只存百分比，
+/// 编辑时按所选模型的窗口重算，所以这里必须落在 1-100 内。
+///
+/// 乘 100 用饱和运算：阈值来自用户手写的 config.toml，没有上界，溢出在 debug
+/// 构建里会 panic（迁移发生在启动路径上，不能因为一个荒唐的数字挂掉）。
+fn compact_percent(limit: i64, window: i64) -> u32 {
+    let percent = (limit.saturating_mul(100).saturating_add(window / 2)) / window;
+    u32::try_from(percent.clamp(1, 100)).unwrap_or(100)
+}
+
 /// 把 `model[1M]` 拆成 (模型名, 是否声明 1M)。
 fn split_one_m(raw: Option<String>) -> (Option<String>, Option<bool>) {
     match raw {
@@ -210,12 +220,22 @@ fn model_config_for(app: &AppType, settings: &Value) -> Option<UniversalProvider
             let mut codex = CodexModelConfig {
                 model: toml_str(doc.get("model")),
                 reasoning_effort: toml_str(doc.get("model_reasoning_effort")),
-                auto_compact_limit: doc
-                    .get("model_auto_compact_token_limit")
-                    .and_then(|v| v.as_integer())
-                    .and_then(|v| u32::try_from(v).ok()),
                 ..Default::default()
             };
+            // 压缩阈值在旧行里是绝对 token 数，统一供应商存的是窗口的百分比：拿同一份
+            // 配置里的顶层 `model_context_window` 反算（旧表单只在勾了 1M 时才允许填
+            // 阈值，那时窗口一定在）。算不出来就丢掉——倒推百分比只能靠猜，而 Codex
+            // 自己的默认就是窗口的 90%，丢掉等于回到默认，写错才是真出事。
+            if let Some(limit) = doc
+                .get("model_auto_compact_token_limit")
+                .and_then(|v| v.as_integer())
+            {
+                codex.auto_compact_percent = doc
+                    .get("model_context_window")
+                    .and_then(|v| v.as_integer())
+                    .filter(|window| *window > 0)
+                    .map(|window| compact_percent(limit, window));
+            }
             if let Some(agents) = doc.get("agents") {
                 codex.subagent_model = toml_str(agents.get("default_subagent_model"));
                 codex.subagent_reasoning_effort =
@@ -267,7 +287,6 @@ fn model_config_for(app: &AppType, settings: &Value) -> Option<UniversalProvider
             let entry = grok_default_entry(&doc)?;
             models.grokbuild = Some(GrokBuildModelConfig {
                 model: Some(profile.to_string()),
-                upstream_model: toml_str(entry.get("model")),
                 api_backend: toml_str(entry.get("api_backend")),
             });
         }
@@ -1016,6 +1035,68 @@ mod tests {
                     .is_some_and(|id| id.starts_with("universal-codex-")),
                 "当前指针应挪到子卡，实际 {current:?}"
             );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn converts_codex_absolute_compact_limit_to_window_percent() {
+        with_state(|state| {
+            // 旧 per-app 行的压缩阈值是绝对 token 数；统一供应商存窗口百分比，
+            // 窗口取同一份配置里的顶层 `model_context_window`。
+            let mut settings = codex_settings("https://gw.example/v1", "sk-1", "gpt-5.6-sol");
+            settings["config"] = json!(
+                "model_provider = \"custom\"\nmodel = \"gpt-5.6-sol\"\n\
+                 model_reasoning_effort = \"high\"\nmodel_context_window = 1000000\n\
+                 model_auto_compact_token_limit = 900000\n\
+                 \n[model_providers.custom]\nname = \"GW\"\n\
+                 base_url = \"https://gw.example/v1\"\nwire_api = \"responses\"\n\
+                 requires_openai_auth = false\n"
+            );
+            insert(state, AppType::Codex, "codex-pct", "GW", settings);
+
+            migrate_per_app_to_universal(state).expect("migrate");
+
+            let universal = state.db.get_all_universal_providers().expect("load");
+            let codex = universal
+                .values()
+                .next()
+                .expect("one")
+                .models
+                .codex
+                .as_ref()
+                .expect("codex block");
+            assert_eq!(codex.auto_compact_percent, Some(90));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn drops_codex_compact_limit_without_any_window() {
+        with_state(|state| {
+            // 配置和模型目录里都没有窗口：百分比倒推不出来，丢掉而不是猜。
+            let mut settings = codex_settings("https://gw.example/v1", "sk-1", "gpt-5.6-sol");
+            settings["config"] = json!(
+                "model_provider = \"custom\"\nmodel = \"gpt-5.6-sol\"\n\
+                 model_auto_compact_token_limit = 900000\n\
+                 \n[model_providers.custom]\nname = \"GW\"\n\
+                 base_url = \"https://gw.example/v1\"\nwire_api = \"responses\"\n\
+                 requires_openai_auth = false\n"
+            );
+            insert(state, AppType::Codex, "codex-nowindow", "GW", settings);
+
+            migrate_per_app_to_universal(state).expect("migrate");
+
+            let universal = state.db.get_all_universal_providers().expect("load");
+            let codex = universal
+                .values()
+                .next()
+                .expect("one")
+                .models
+                .codex
+                .as_ref()
+                .expect("codex block");
+            assert_eq!(codex.auto_compact_percent, None);
         });
     }
 

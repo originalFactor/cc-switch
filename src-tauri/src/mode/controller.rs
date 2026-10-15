@@ -467,9 +467,12 @@ fn write_direct(
         }
         AppType::GrokBuild => {
             let projection = attached.then(|| {
-                direct_or_empty(app, direct.as_ref(), grok_direct::projection, || {
-                    GrokProjection { table: None }
-                })
+                direct_or_empty(
+                    app,
+                    direct.as_ref(),
+                    grok_direct::projection,
+                    GrokProjection::empty,
+                )
             });
             grok_direct::run(
                 &state.db,
@@ -4653,6 +4656,74 @@ model_provider = "c"
         );
         official.category = Some("official".to_string());
         official
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn grok_universal_provider_writes_every_available_model_table() {
+        // 端到端：统一供应商的可用模型列表 → Grok 的 live 里每个模型一张表，
+        // 用户自己的表原样保留，切走时 CC Switch 写的表全删。
+        let _home = Home::new();
+        seed_grok(GROK_USER_LIVE);
+        let state = state_with(AppType::GrokBuild, &[grok_official()], "grok-official").await;
+
+        let mut universal = crate::provider::UniversalProvider::new(
+            "gw".into(),
+            "GW".into(),
+            "https://gw.example".into(),
+            "sk-gw".into(),
+        );
+        universal.apps.grokbuild = true;
+        universal.models.grokbuild = Some(crate::provider::GrokBuildModelConfig {
+            model: Some("grok-4.6".into()),
+            api_backend: Some("responses".into()),
+        });
+        universal.available_models = vec![
+            crate::provider::AvailableModel {
+                id: "grok-4.5".into(),
+                display_name: None,
+                context_window: Some(500_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+            crate::provider::AvailableModel {
+                id: "grok-4.6".into(),
+                display_name: None,
+                context_window: Some(2_000_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+        ];
+        state.db.save_universal_provider(&universal).unwrap();
+        ProviderService::sync_universal_to_apps(&state, "gw").unwrap();
+
+        let child = "universal-grokbuild-gw";
+        ProviderService::switch(&state, AppType::GrokBuild, child).expect("switch to the child");
+
+        let doc = grok_doc();
+        assert_eq!(doc["models"]["default"].as_str(), Some("grok-4.6"));
+        // 两张表 + 用户自己的 mine，各写各的窗口
+        assert_eq!(grok_tables(), vec!["grok-4.5", "grok-4.6", "mine"]);
+        assert_eq!(
+            doc["model"]["grok-4.5"]["context_window"].as_integer(),
+            Some(500_000)
+        );
+        assert_eq!(
+            doc["model"]["grok-4.6"]["context_window"].as_integer(),
+            Some(2_000_000)
+        );
+        assert_eq!(
+            doc["model"]["grok-4.6"]["base_url"].as_str(),
+            Some("https://gw.example")
+        );
+        // 用户自己的表没被碰
+        assert_eq!(doc["model"]["mine"]["model"].as_str(), Some("m"));
+
+        // 切回官方：CC Switch 写的两张表都删掉，用户的表留下。
+        ProviderService::switch(&state, AppType::GrokBuild, "grok-official").expect("to official");
+        assert_eq!(grok_tables(), vec!["mine"], "{}", grok_text());
     }
 
     #[tokio::test]

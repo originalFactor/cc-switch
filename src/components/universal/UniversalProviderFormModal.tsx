@@ -45,7 +45,12 @@ import JsonEditor from "@/components/JsonEditor";
 import { ModelSelect } from "./ModelSelect";
 import { AvailableModelsEditor } from "./AvailableModelsEditor";
 import { universalProvidersApi } from "@/lib/api";
-import { EFFORT_PRESETS } from "@/utils/universalProvider";
+import { compactLimitFrom, effortOptionsFor } from "@/utils/universalProvider";
+import {
+  GROK_BUILD_DEFAULT_API_BACKEND,
+  GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
+  GROK_BUILD_DEFAULT_MODEL,
+} from "@/utils/grokBuildConfig";
 import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import type {
@@ -81,6 +86,9 @@ export interface UniversalProviderFormModalProps {
 
 const EMPTY_OVERRIDES = { headers: "", body: "" };
 
+/** Radix Select 不接受空 value：子代理推理档位的「不设置」用哨兵值映射成 undefined。 */
+const SUBAGENT_EFFORT_UNSET = "__unset__";
+
 /** Claude Desktop 的角色档位，与后端 DEFAULT_PROXY_ROUTES / 单应用表单同 id。 */
 const DESKTOP_ROLE_ROUTES: { id: string; label: string }[] = [
   { id: "claude-sonnet-5", label: "Sonnet" },
@@ -92,7 +100,6 @@ const DESKTOP_ROLE_ROUTES: { id: string; label: string }[] = [
 type DesktopRouteRow = {
   routeId: string;
   model: string;
-  labelOverride: string;
 };
 
 /** 默认四档（模型映射模式）：档位固定，上游模型留空由用户填。 */
@@ -100,7 +107,6 @@ const defaultDesktopRouteRows = (): DesktopRouteRow[] =>
   DESKTOP_ROLE_ROUTES.map(({ id }) => ({
     routeId: id,
     model: "",
-    labelOverride: "",
   }));
 
 /** 预设/已存的路由表 → 可编辑行；没有就用固定四档。 */
@@ -112,8 +118,9 @@ const desktopRowsOrDefault = (
 };
 
 /**
- * 取路由表。新形状优先；旧版（4.0.8 及更早）只存了三个扁平档位和共用的菜单显示名，
- * 这里迁移成三档角色路由，编辑老供应商时不会看起来「什么都没配」。
+ * 取路由表。新形状优先；旧版（4.0.8 及更早）只存了三个扁平档位，这里迁移成三档
+ * 角色路由，编辑老供应商时不会看起来「什么都没配」。旧版共用的菜单显示名不再搬：
+ * 显示名已改为按所选模型的元数据自动生成（见 `desktopMenuLabel`）。
  */
 const desktopRoutesOf = (
   config: ClaudeDesktopModelConfig | undefined,
@@ -122,14 +129,10 @@ const desktopRoutesOf = (
   if (config.routes && Object.keys(config.routes).length > 0) {
     return config.routes;
   }
-  const label = config.labelOverride?.trim() || undefined;
   const legacy: Record<string, ClaudeDesktopModelRoute> = {};
   const add = (routeId: string, model?: string) => {
     if (!model?.trim()) return;
-    legacy[routeId] = {
-      model: model.trim(),
-      ...(label ? { labelOverride: label } : {}),
-    };
+    legacy[routeId] = { model: model.trim() };
   };
   add("claude-sonnet-5", config.sonnetModel);
   add("claude-opus-5", config.opusModel);
@@ -144,8 +147,20 @@ const desktopRouteRowsFrom = (
   Object.entries(routes ?? {}).map(([routeId, route]) => ({
     routeId,
     model: route.model ?? "",
-    labelOverride: route.labelOverride ?? "",
   }));
+
+/**
+ * 某一档在 Claude Desktop 菜单里的显示名：所选模型在可用模型列表里的 displayName
+ * （models.dev 的名称）。没有对应模型或该行没有显示名时不写 labelOverride，由
+ * Desktop 自己回退成模型名。
+ */
+const desktopMenuLabel = (
+  availableModels: AvailableModel[],
+  modelId: string,
+): string | undefined =>
+  availableModels
+    .find((model) => model.id === modelId.trim())
+    ?.displayName?.trim() || undefined;
 
 /**
  * 角色档位的显示名。模型映射模式下档位就是固定的四个角色；直连模式的 route 是
@@ -424,16 +439,44 @@ export function UniversalProviderFormModal({
 
   // Codex effort 下拉的选项：跟 Codex 卡所选模型那一行的档位（拉取时由
   // models.dev 补全，模型列表编辑器里可改）；该行没声明时退回预置全集。
-  const codexEffortOptions = useMemo(() => {
-    const modelId = models.codex?.model?.trim();
-    const efforts = modelId
-      ? (availableModels.find((model) => model.id === modelId)?.efforts ?? [])
-      : [];
-    if (efforts.length > 0) {
-      return EFFORT_PRESETS.filter((preset) => efforts.includes(preset));
-    }
-    return [...EFFORT_PRESETS];
-  }, [models.codex, availableModels]);
+  const codexEffortOptions = useMemo(
+    () =>
+      effortOptionsFor(
+        availableModels,
+        models.codex?.model,
+        models.codex?.reasoningEffort,
+      ),
+    [models.codex?.model, models.codex?.reasoningEffort, availableModels],
+  );
+
+  // 子代理推理档位跟子代理模型那一行：没选子代理模型时 Codex 用主模型跑子代理，
+  // 于是退回主模型的档位（和上面那个下拉同一份元数据规则）。
+  const subagentEffortOptions = useMemo(
+    () =>
+      effortOptionsFor(
+        availableModels,
+        models.codex?.subagentModel || models.codex?.model,
+        models.codex?.subagentReasoningEffort,
+      ),
+    [
+      models.codex?.subagentModel,
+      models.codex?.model,
+      models.codex?.subagentReasoningEffort,
+      availableModels,
+    ],
+  );
+
+  // Codex 压缩阈值的实际写入值：所选模型行的上下文窗口 × 输入的百分比。没窗口元数据
+  // 或没填百分比时是 undefined（整条不写）。预览与输入框下的提示都读它。
+  const compactLimit = useMemo(
+    () =>
+      compactLimitFrom(
+        availableModels.find((row) => row.id === models.codex?.model?.trim())
+          ?.contextWindow,
+        models.codex?.autoCompactPercent,
+      ),
+    [availableModels, models.codex?.model, models.codex?.autoCompactPercent],
+  );
 
   // Codex 的上下文窗口 / 最大输出自动值：跟 Codex 卡所选模型行的元数据。
   // 字段留空 = 用自动值（保存时后端同规则兜底）；手填值优先。
@@ -599,15 +642,17 @@ model = "${model}"
 model_reasoning_effort = "${reasoningEffort}"
 disable_response_storage = true`;
     // 顶层字段写在表头之前：TOML 里表头之后的键属于那张表。
-    // 上下文窗口跟所选模型行的元数据（models.dev limit.context）；压缩阈值自填。
+    // 上下文窗口跟所选模型行的元数据（models.dev limit.context）；压缩阈值存的是
+    // 百分比，按同一个窗口换算成绝对 token 数（和后端 to_codex_provider 同规则）。
     const contextWindow = availableModels.find(
       (row) => row.id === model,
     )?.contextWindow;
     if (contextWindow) {
       configToml += `\nmodel_context_window = ${contextWindow}`;
     }
-    if (m.autoCompactLimit) {
-      configToml += `\nmodel_auto_compact_token_limit = ${m.autoCompactLimit}`;
+    const compactLimit = compactLimitFrom(contextWindow, m.autoCompactPercent);
+    if (compactLimit !== undefined) {
+      configToml += `\nmodel_auto_compact_token_limit = ${compactLimit}`;
     }
     configToml += `
 
@@ -700,8 +745,10 @@ requires_openai_auth = true`;
         // 映射模式下没填上游模型的档位后端会丢掉，预览保持一致
         if (!row.model.trim()) continue;
         const entry: Record<string, unknown> = { model: row.model.trim() };
-        if (row.labelOverride.trim()) {
-          entry.labelOverride = row.labelOverride.trim();
+        // 菜单显示名跟所选模型行的 displayName（后端投影同规则）
+        const label = desktopMenuLabel(availableModels, row.model);
+        if (label) {
+          entry.labelOverride = label;
         }
         // 1M 声明跟随所选模型的上下文窗口元数据
         if (
@@ -737,28 +784,47 @@ requires_openai_auth = true`;
   ]);
 
   // 计算 Grok Build 配置 TOML 预览
+  //
+  // 预览必须和后端投影 `to_grokbuild_provider` 生成的 config.toml 逐字节一致：
+  // 它把供应商的整份可用模型列表写成一个 [model."<id>"] 表（每个模型一行），
+  // 卡片上的「默认模型」只决定 [models].default 指向哪个表。
   const grokbuildConfigJson = useMemo(() => {
     const grok = models.grokbuild ?? {};
-    const profile = grok.model?.trim() || "grok-4.5";
-    const upstreamModel = grok.upstreamModel?.trim() || profile;
-    const apiBackend = grok.apiBackend?.trim() || "responses";
-    // 窗口跟所选模型行（上游模型优先，退回配置档位）的元数据；取不到用保守默认。
-    const windowModelId = grok.upstreamModel?.trim() || grok.model?.trim();
-    const contextWindow =
-      (windowModelId
-        ? availableModels.find((model) => model.id === windowModelId)
-            ?.contextWindow
-        : undefined) ?? 500000;
-    const config = `[models]
-default = "${profile}"
+    const requestedModel = grok.model?.trim();
+    const apiBackend =
+      grok.apiBackend?.trim() || GROK_BUILD_DEFAULT_API_BACKEND;
+    const baseUrlTrimmed = baseUrl.trim().replace(/\/+$/, "");
 
-[model."${profile}"]
-model = "${upstreamModel}"
-base_url = "${baseUrl}"
+    // ids：可用模型列表里所有非空 id，按列表顺序去重；默认模型不在其中时追加。
+    const ids = Array.from(
+      new Set(availableModels.map((model) => model.id.trim()).filter(Boolean)),
+    );
+    if (requestedModel && !ids.includes(requestedModel))
+      ids.push(requestedModel);
+    if (ids.length === 0) ids.push(GROK_BUILD_DEFAULT_MODEL);
+
+    // default：默认模型在 id 列表里就用它，否则用第一个。
+    const defaultId =
+      requestedModel && ids.includes(requestedModel) ? requestedModel : ids[0];
+
+    const tables = ids.map((id) => {
+      const contextWindow =
+        availableModels.find((model) => model.id.trim() === id)
+          ?.contextWindow ?? GROK_BUILD_DEFAULT_CONTEXT_WINDOW;
+      return `[model."${id}"]
+model = "${id}"
+base_url = "${baseUrlTrimmed}"
 name = "${name}"
 api_key = "${apiKey}"
 api_backend = "${apiBackend}"
 context_window = ${contextWindow}`;
+    });
+
+    const config = `[models]
+default = "${defaultId}"
+
+${tables.join("\n\n")}
+`;
     return { config };
   }, [baseUrl, apiKey, name, models.grokbuild, availableModels]);
 
@@ -946,8 +1012,10 @@ context_window = ${contextWindow}`;
           const entry: ClaudeDesktopModelRoute = {
             model: row.model.trim(),
           };
-          if (row.labelOverride.trim()) {
-            entry.labelOverride = row.labelOverride.trim();
+          // 显示名跟随所选模型，总是重算（表单里已经没有这个输入）
+          const label = desktopMenuLabel(availableModels, row.model);
+          if (label) {
+            entry.labelOverride = label;
           }
           if (
             (availableModels.find((model) => model.id === row.model.trim())
@@ -1710,21 +1778,46 @@ context_window = ${contextWindow}`;
                 <div className="space-y-1">
                   <Label className="text-xs">
                     {t("codexConfig.autoCompactLimit", {
-                      defaultValue: "压缩阈值",
+                      defaultValue: "压缩阈值 (%)",
                     })}
                   </Label>
                   <Input
                     inputMode="numeric"
-                    value={models.codex?.autoCompactLimit?.toString() ?? ""}
-                    onChange={(e) =>
+                    value={models.codex?.autoCompactPercent?.toString() ?? ""}
+                    onChange={(e) => {
+                      const digits = e.target.value.replace(/\D/g, "");
+                      const percent = Math.min(100, Number(digits));
                       updateModel(
                         "codex",
-                        "autoCompactLimit",
-                        e.target.value.replace(/\D/g, ""),
-                      )
-                    }
-                    placeholder="900000"
+                        "autoCompactPercent",
+                        // 0 等于没填（换算不出阈值）：清掉这个键，别存个 0 进去
+                        digits === "" || percent === 0 ? "" : String(percent),
+                      );
+                    }}
+                    placeholder="90"
+                    title={t("codexConfig.autoCompactLimitHint", {
+                      defaultValue:
+                        "按所选模型上下文窗口的百分比换算成 model_auto_compact_token_limit；模型没有窗口元数据时不写",
+                    })}
                   />
+                  {/* 百分比只是输入形态：写进 config.toml 的是算出来的绝对 token 数，
+                      这里把结果显出来，和下面的预览对得上。填了百分比却没有窗口元数据
+                      时说明白为什么不写，而不是留一句换算不出来的提示。 */}
+                  {compactLimit !== undefined ? (
+                    <p className="text-xs text-fg-3">
+                      {t("codexConfig.autoCompactLimitResolved", {
+                        value: compactLimit,
+                        defaultValue: "= {{value}} tokens",
+                      })}
+                    </p>
+                  ) : models.codex?.autoCompactPercent !== undefined ? (
+                    <p className="text-xs text-fg-3">
+                      {t("codexConfig.autoCompactLimitNoWindow", {
+                        defaultValue:
+                          "所选模型没有上下文窗口元数据，不写该字段",
+                      })}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">
@@ -1819,17 +1912,36 @@ context_window = ${contextWindow}`;
                       defaultValue: "子代理推理档位",
                     })}
                   </Label>
-                  <Input
-                    value={models.codex?.subagentReasoningEffort || ""}
-                    onChange={(e) =>
+                  <Select
+                    value={
+                      models.codex?.subagentReasoningEffort?.trim() ||
+                      SUBAGENT_EFFORT_UNSET
+                    }
+                    onValueChange={(value) =>
                       updateModel(
                         "codex",
                         "subagentReasoningEffort",
-                        e.target.value,
+                        value === SUBAGENT_EFFORT_UNSET ? "" : value,
                       )
                     }
-                    placeholder="low"
-                  />
+                  >
+                    <SelectTrigger aria-label="子代理推理档位">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {/* 空 = 不写 `default_subagent_reasoning_effort`，由 Codex 自己决定 */}
+                      <SelectItem value={SUBAGENT_EFFORT_UNSET}>
+                        {t("codexConfig.subagentReasoningEffortDefault", {
+                          defaultValue: "不设置",
+                        })}
+                      </SelectItem>
+                      {subagentEffortOptions.map((level: string) => (
+                        <SelectItem key={level} value={level}>
+                          {level}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">
@@ -2169,7 +2281,7 @@ context_window = ${contextWindow}`;
                   <p className="text-xs leading-relaxed text-fg-2">
                     {t("claudeDesktop.routeMapHint", {
                       defaultValue:
-                        "为 Sonnet、Opus、Haiku 三档分别填写实际请求模型；菜单显示名可写 DeepSeek、Kimi 等品牌名。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
+                        "为 Sonnet、Opus、Haiku 三档分别选择实际请求模型；菜单显示名按所选模型在可用模型列表里的名称自动生成。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
                     })}
                   </p>
 
@@ -2200,18 +2312,16 @@ context_window = ${contextWindow}`;
                         <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
                           {desktopRoleLabel(row.routeId)}
                         </div>
-                        <Input
+                        {/* 显示名按所选模型的元数据自动生成，不再手填 */}
+                        <div
                           aria-label={t("claudeDesktop.labelOverrideLabel", {
                             defaultValue: "菜单显示名",
                           })}
-                          value={row.labelOverride}
-                          onChange={(e) =>
-                            updateDesktopRoute(index, {
-                              labelOverride: e.target.value,
-                            })
-                          }
-                          placeholder="DeepSeek V4 Pro"
-                        />
+                          className="flex h-8 items-center truncate rounded-control border border-border-strong bg-surface px-2.5 text-body text-fg-3"
+                          title={desktopMenuLabel(availableModels, row.model)}
+                        >
+                          {desktopMenuLabel(availableModels, row.model) ?? "—"}
+                        </div>
                         <ModelSelect
                           models={availableModels}
                           value={row.model}
@@ -2249,8 +2359,8 @@ context_window = ${contextWindow}`;
               <div className="grid gap-3 pt-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs">
-                    {t("universalProvider.grokProfile", {
-                      defaultValue: "配置档位",
+                    {t("universalProvider.grokDefaultModel", {
+                      defaultValue: "默认模型",
                     })}
                   </Label>
                   <ModelSelect
@@ -2259,24 +2369,7 @@ context_window = ${contextWindow}`;
                     onChange={(value) =>
                       updateModel("grokbuild", "model", value)
                     }
-                    label={t("modelLabel", { defaultValue: "配置档位" })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">
-                    {t("universalProvider.grokUpstreamModel", {
-                      defaultValue: "上游模型",
-                    })}
-                  </Label>
-                  <ModelSelect
-                    models={availableModels}
-                    value={models.grokbuild?.upstreamModel || ""}
-                    onChange={(value) =>
-                      updateModel("grokbuild", "upstreamModel", value)
-                    }
-                    label={t("universalProvider.grokUpstreamModel", {
-                      defaultValue: "上游模型",
-                    })}
+                    label={t("modelLabel", { defaultValue: "默认模型" })}
                   />
                 </div>
                 <div className="space-y-1">

@@ -35,7 +35,6 @@ describe("Grok Build config", () => {
   it("reads values back from a generated config", () => {
     const config = buildGrokBuildConfig({
       model: "custom-model",
-      upstreamModel: "upstream-model",
       baseUrl: "https://api.example.com",
       name: "Custom",
       apiKey: "key",
@@ -46,7 +45,6 @@ describe("Grok Build config", () => {
 
     expect(parseGrokBuildConfig(config)).toEqual({
       model: "custom-model",
-      upstreamModel: "upstream-model",
       baseUrl: "https://api.example.com",
       name: "Custom",
       apiKey: "key",
@@ -121,7 +119,6 @@ context_window = 500000
   it("renames the selected profile without leaving the old table behind", () => {
     const original = buildGrokBuildConfig({
       model: "old-profile",
-      upstreamModel: "grok-upstream",
       baseUrl: "https://api.example.com/v1",
       name: "Relay",
       apiKey: "secret",
@@ -136,7 +133,8 @@ context_window = 500000
     const parsed = parseToml(renamed) as any;
 
     expect(parsed.models.default).toBe("new-profile");
-    expect(parsed.model["new-profile"].model).toBe("grok-upstream");
+    // 表名就是模型 id：没有单独的上游模型字段了
+    expect(parsed.model["new-profile"].model).toBe("new-profile");
     expect(parsed.model).not.toHaveProperty("old-profile");
   });
 });

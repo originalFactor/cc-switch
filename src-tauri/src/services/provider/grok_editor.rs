@@ -93,43 +93,44 @@ pub fn view(
         .cloned()
         .unwrap_or_else(Map::new);
     settings.insert("config".to_string(), Value::String(doc.to_string()));
-    let row_table = row_table_name(settings_config);
+    // 行和显示里 CC Switch 写的表都算「随切换生效」，不算全局设置：行的表名按行解析，
+    // 显示的按投影（两者通常相同，重命名时才是两张）。
+    let mut cc_tables = row_table_names(settings_config);
+    cc_tables.extend(projection.table_names());
     Ok(EditorView {
-        inactive: inactive_fields(
-            config_text(settings_config),
-            &doc,
-            row_table.as_deref(),
-            projection.table_name(),
-        ),
+        inactive: inactive_fields(config_text(settings_config), &doc, &cc_tables),
         settings: Value::Object(settings),
     })
 }
 
-/// 行里 CC Switch 的表名（按投影的规则解析；解析不了按 `models.default`）。
-fn row_table_name(settings: &Value) -> Option<String> {
+/// 行里 CC Switch 写的表名（按投影的规则解析；解析不了按 `models.default`）。
+fn row_table_names(settings: &Value) -> Vec<String> {
     if let Ok(projection) = GrokProjection::of(settings, false) {
-        return projection.table_name().map(str::to_string);
+        return projection.table_names();
     }
     config_text(settings)
         .parse::<DocumentMut>()
-        .ok()?
-        .get("models")?
-        .get("default")?
-        .as_str()
-        .map(str::to_string)
+        .ok()
+        .and_then(|doc| {
+            doc.get("models")?
+                .get("default")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .into_iter()
+        .collect()
 }
 
 /// 行里保存着、但不随切换生效的全局设置。
 fn inactive_fields(
     row_text: &str,
     display: &DocumentMut,
-    row_table: Option<&str>,
-    shown_table: Option<&str>,
+    cc_tables: &[String],
 ) -> Vec<InactiveField> {
     let Ok(row) = row_text.parse::<DocumentMut>() else {
         return Vec::new();
     };
-    let cc_tables: Vec<&str> = row_table.into_iter().chain(shown_table).collect();
+    let cc_tables: Vec<&str> = cc_tables.iter().map(String::as_str).collect();
     editor_toml::inactive_fields(entries(&row, &cc_tables), display)
 }
 
@@ -150,14 +151,24 @@ pub(crate) fn plan_save(
 ) -> Result<GrokEditorPlan, AppError> {
     let edited_doc = parse_text(config_text(edited), "edited")?;
     let base_doc = parse_text(config_text(base), "base")?;
-    let projection = GrokProjection::of(edited, official)?;
-    let base_table = GrokProjection::of(base, official)
-        .ok()
-        .and_then(|base| base.table_name().map(str::to_string));
-    let cc_tables: Vec<&str> = [projection.table_name(), base_table.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect();
+    // 归属只看行里已经有的表：显示是 live 和行的合并，用户自己的 `[model.*]` 也在里面，
+    // 把它们当 CC Switch 的会让全局设置被悄悄吞掉。官方卡没有模型表，不解析。
+    let row_names = stored_row.map(row_table_names).unwrap_or_default();
+    let projection = if official {
+        GrokProjection::empty()
+    } else {
+        GrokProjection::from_display(config_text(edited), &row_names)?
+    };
+    let base_projection = if official {
+        None
+    } else {
+        GrokProjection::from_display(config_text(base), &row_names).ok()
+    };
+    let mut cc_tables = projection.table_names();
+    if let Some(base_projection) = base_projection.as_ref() {
+        cc_tables.extend(base_projection.table_names());
+    }
+    let cc_tables: Vec<&str> = cc_tables.iter().map(String::as_str).collect();
     let edits = TomlEdits::between(
         &entries(&base_doc, &cc_tables),
         &entries(&edited_doc, &cc_tables),
@@ -186,9 +197,9 @@ fn store_into_row(
     let mut row = edited.clone();
     let stored_text = stored_row.map(config_text).unwrap_or("");
     let mut doc = parse_text(stored_text, "stored")?;
-    let retired: Vec<String> = stored_row.and_then(row_table_name).into_iter().collect();
+    let retired: Vec<String> = stored_row.map(row_table_names).unwrap_or_default();
     let patch = GrokConfigPatch {
-        target: projection.table.clone(),
+        target: projection.models.clone(),
         retired,
         placeholder: None,
     };

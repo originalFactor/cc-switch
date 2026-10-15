@@ -824,8 +824,12 @@ export interface CodexModelConfig {
   apiKeyField?: ClaudeApiKeyField;
   /** 地址是完整 API 端点 */
   isFullUrl?: boolean;
-  /** 顶层 `model_auto_compact_token_limit`（压缩阈值） */
-  autoCompactLimit?: number;
+  /**
+   * 压缩阈值：所选模型上下文窗口的百分比（1-100）。写 live 时按
+   * `model_context_window × 百分比` 算出 `model_auto_compact_token_limit`；
+   * 模型没有窗口元数据时整条不写（交给 Codex 默认）。
+   */
+  autoCompactPercent?: number;
   /** 远程压缩：把 `[model_providers.<id>].name` 写成 OpenAI */
   remoteCompaction?: boolean;
   /** 走 Chat Completions 时的思考能力声明 */
@@ -858,10 +862,8 @@ export interface GeminiModelConfig {
 
 // Grok Build 模型配置
 export interface GrokBuildModelConfig {
-  /** 客户端侧 profile 名（[models].default） */
+  /** 默认模型：[models].default，也是它指向的 [model."<id>"] 表名 */
   model?: string;
-  /** 实际发给上游的模型名 */
-  upstreamModel?: string;
   /** 上游协议：responses / chat_completions / anthropic_messages */
   apiBackend?: string;
 }

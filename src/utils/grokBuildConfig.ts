@@ -5,10 +5,8 @@ export const GROK_BUILD_DEFAULT_API_BACKEND = "responses";
 export const GROK_BUILD_DEFAULT_CONTEXT_WINDOW = 500000;
 
 export interface GrokBuildConfigValues {
-  /** Client-visible profile selected by [models].default. */
+  /** Default model: the [models].default table name, and its table's `model` value. */
   model: string;
-  /** Real model sent to the upstream provider. */
-  upstreamModel?: string;
   baseUrl: string;
   name: string;
   apiKey: string;
@@ -31,7 +29,6 @@ export function parseGrokBuildConfig(
 ): GrokBuildConfigValues {
   const fallback: GrokBuildConfigValues = {
     model: GROK_BUILD_DEFAULT_MODEL,
-    upstreamModel: GROK_BUILD_DEFAULT_MODEL,
     baseUrl: "",
     name: fallbackName,
     apiKey: "",
@@ -51,7 +48,6 @@ export function parseGrokBuildConfig(
 
     return {
       model: defaultModel,
-      upstreamModel: asString(selectedModel?.model, defaultModel),
       baseUrl: asString(selectedModel?.base_url),
       name: asString(selectedModel?.name, fallbackName),
       apiKey: asString(selectedModel?.api_key),
@@ -81,7 +77,6 @@ export function updateGrokBuildConfig(
   values: GrokBuildConfigValues,
 ): string {
   const profile = values.model.trim() || GROK_BUILD_DEFAULT_MODEL;
-  const upstreamModel = values.upstreamModel?.trim() || profile;
   let config: Record<string, unknown> = {};
 
   try {
@@ -104,7 +99,7 @@ export function updateGrokBuildConfig(
     values.envKey?.trim() || asString(existingSelected.env_key).trim();
   const updatedSelected: Record<string, unknown> = {
     ...existingSelected,
-    model: upstreamModel,
+    model: profile,
     base_url: values.baseUrl.trim(),
     name: values.name.trim(),
     api_backend: values.apiBackend.trim() || GROK_BUILD_DEFAULT_API_BACKEND,

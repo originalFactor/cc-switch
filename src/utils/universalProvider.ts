@@ -7,6 +7,7 @@
  */
 
 import type { AppId } from "@/lib/api";
+import type { AvailableModel } from "@/types";
 
 /** 应用段全集。解析时按「最长优先」匹配，避免 `claude-` 吃掉 `claude-desktop-`。 */
 const APP_IDS: readonly AppId[] = [
@@ -88,6 +89,43 @@ export const EFFORT_PRESETS = [
   "max",
   "ultra",
 ] as const;
+
+/**
+ * 压缩阈值：把「上下文窗口的百分比」换算成 Codex 的绝对 token 数（整数除法，和
+ * 后端 `to_codex_provider` 同规则）。窗口或百分比缺一就算不出来，返回 `undefined`
+ * ——那种情况整条 `model_auto_compact_token_limit` 不写，交给 Codex 自己的默认。
+ */
+export function compactLimitFrom(
+  contextWindow: number | undefined,
+  percent: number | undefined,
+): number | undefined {
+  if (!contextWindow || !percent || percent <= 0) return undefined;
+  return Math.floor((contextWindow * percent) / 100);
+}
+
+/**
+ * effort 下拉的选项：模型行声明的档位（models.dev reasoning_options 的并集，拉取时补全、
+ * 模型列表编辑器里可改）与预置全集求交集；该行没声明档位时退回预置全集。
+ *
+ * 已存的值不在结果里时（旧记录的手填值，或模型撤下了这个档）补到末尾，免得下拉因为
+ * 找不到对应项而显示成空白——那样看起来像配置丢了。
+ */
+export function effortOptionsFor(
+  availableModels: AvailableModel[],
+  modelId: string | undefined,
+  current?: string,
+): string[] {
+  const id = modelId?.trim();
+  const efforts = id
+    ? (availableModels.find((model) => model.id === id)?.efforts ?? [])
+    : [];
+  const options: string[] =
+    efforts.length > 0
+      ? EFFORT_PRESETS.filter((preset) => efforts.includes(preset))
+      : [...EFFORT_PRESETS];
+  const value = current?.trim();
+  return value && !options.includes(value) ? [...options, value] : options;
+}
 
 /**
  * 触发器标签：相邻 ≥3 个的连续预置档位压成「首 → 末」（跳过 minimal 时是

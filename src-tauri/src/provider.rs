@@ -794,9 +794,11 @@ pub struct CodexModelConfig {
     /// 地址是完整 API 端点
     #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
     pub is_full_url: Option<bool>,
-    /// 顶层 `model_auto_compact_token_limit`
-    #[serde(rename = "autoCompactLimit", skip_serializing_if = "Option::is_none")]
-    pub auto_compact_limit: Option<u32>,
+    /// 压缩阈值：所选模型上下文窗口的百分比（1-100）。投影时按
+    /// `model_context_window × 百分比` 算出顶层 `model_auto_compact_token_limit`；
+    /// 模型没有窗口元数据时不写（交给 Codex 默认的 90%）。
+    #[serde(rename = "autoCompactPercent", skip_serializing_if = "Option::is_none")]
+    pub auto_compact_percent: Option<u32>,
     /// 远程压缩：`[model_providers.<id>].name = "OpenAI"`
     #[serde(rename = "remoteCompaction", skip_serializing_if = "Option::is_none")]
     pub remote_compaction: Option<bool>,
@@ -968,12 +970,9 @@ fn default_desktop_routes(
 /// Grok Build 模型配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GrokBuildModelConfig {
-    /// 客户端侧 profile 名（`[models].default`）
+    /// 默认模型：`[models].default`，也是它指向的 `[model."<id>"]` 表名
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// 实际发给上游的模型名
-    #[serde(rename = "upstreamModel", skip_serializing_if = "Option::is_none")]
-    pub upstream_model: Option<String>,
     /// 上游协议：responses / chat_completions / anthropic_messages
     #[serde(rename = "apiBackend", skip_serializing_if = "Option::is_none")]
     pub api_backend: Option<String>,
@@ -1324,18 +1323,24 @@ model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
 disable_response_storage = true"#
         );
-        // 上下文窗口：跟随所选模型行的元数据（models.dev limit.context），填了才写
-        // （交给 Codex 默认）。压缩阈值仍是自填数字：填了才写。
-        if let Some(window) = models.and_then(|m| m.model.clone()).and_then(|model| {
+        // 上下文窗口跟随所选模型行的元数据（models.dev limit.context），有才写
+        // （交给 Codex 默认）。压缩阈值存的是百分比，按同一个窗口换算成绝对
+        // token 数；没有窗口元数据时算不出来，整条不写。
+        let context_window = models.and_then(|m| m.model.clone()).and_then(|model| {
             self.available_models
                 .iter()
                 .find(|row| row.id.trim() == model.trim())
                 .and_then(|row| row.context_window)
-        }) {
+        });
+        if let Some(window) = context_window {
             config_toml.push_str(&format!("\nmodel_context_window = {window}"));
         }
-        if let Some(limit) = models.and_then(|m| m.auto_compact_limit) {
-            config_toml.push_str(&format!("\nmodel_auto_compact_token_limit = {limit}"));
+        if let Some(percent) = models.and_then(|m| m.auto_compact_percent) {
+            if let Some(window) = context_window {
+                // 百分比来自存下来的记录，可能是手改的 JSON：饱和乘法避免溢出
+                let limit = window.saturating_mul(u64::from(percent)) / 100;
+                config_toml.push_str(&format!("\nmodel_auto_compact_token_limit = {limit}"));
+            }
         }
         config_toml.push_str(&format!(
             r#"
@@ -1557,6 +1562,8 @@ requires_openai_auth = true"#
         };
         // 映射模式下没存 1M 声明的档（统一供应商新表单不再手勾），按所选上游模型
         // 的上下文窗口元数据判定；显式存了 true / false 的照旧（老数据兼容）。
+        // 菜单显示名同理：没存 labelOverride 时取所选模型行的 displayName
+        // （models.dev 的名称），取不到就不写，由 Desktop 回退成模型名。
         if !direct {
             for route in routes.values_mut() {
                 if route.supports_1m.is_none() {
@@ -1567,6 +1574,15 @@ requires_openai_auth = true"#
                         .and_then(|model| model.context_window)
                         .is_some_and(|window| window >= 1_000_000)
                         .then_some(true);
+                }
+                if route.label_override.is_none() {
+                    route.label_override = self
+                        .available_models
+                        .iter()
+                        .find(|model| model.id.trim() == route.model.trim())
+                        .and_then(|model| model.display_name.clone())
+                        .map(|name| name.trim().to_string())
+                        .filter(|name| !name.is_empty());
                 }
             }
         }
@@ -1618,51 +1634,66 @@ requires_openai_auth = true"#
         }
 
         let models = self.models.grokbuild.as_ref();
-        let profile = models
-            .and_then(|m| m.model.clone())
-            .filter(|m| !m.trim().is_empty())
-            .unwrap_or_else(|| "grok-4.5".to_string());
-        let upstream_model = models
-            .and_then(|m| m.upstream_model.clone())
-            .filter(|m| !m.trim().is_empty())
-            .unwrap_or_else(|| profile.clone());
         let api_backend = models
             .and_then(|m| m.api_backend.clone())
             .filter(|m| !m.trim().is_empty())
-            .unwrap_or_else(|| "responses".to_string());
+            .unwrap_or_else(|| crate::grok_config::DEFAULT_API_BACKEND.to_string());
 
-        // 上下文窗口：跟随 Grok 卡所选模型行（上游模型优先，退回配置档位）的
-        // 元数据（models.dev limit.context）；取不到用保守默认 500_000。
-        let selected_row = models
-            .and_then(|m| m.upstream_model.clone().or_else(|| m.model.clone()))
-            .and_then(|model| {
-                self.available_models
-                    .iter()
-                    .find(|row| row.id.trim() == model.trim())
-            });
-        let context_window = selected_row
-            .and_then(|row| row.context_window)
-            .unwrap_or(500_000);
-        let config = format!(
-            r#"[models]
-default = "{profile}"
+        // 模型表：可用模型列表里的每个 id 一张 `[model."<id>"]`（去重保序），默认模型不在
+        // 列表里时补上（用户手填过、或列表还没拉取）；列表为空时用内置默认模型兜底。
+        let mut ids: Vec<String> = Vec::with_capacity(self.available_models.len() + 1);
+        for model in &self.available_models {
+            let id = model.id.trim();
+            if id.is_empty() || ids.iter().any(|existing| existing == id) {
+                continue;
+            }
+            ids.push(id.to_string());
+        }
+        let configured = models
+            .and_then(|m| m.model.clone())
+            .map(|model| model.trim().to_string())
+            .filter(|model| !model.is_empty());
+        if let Some(configured) = configured.as_ref() {
+            if !ids.iter().any(|id| id == configured) {
+                ids.push(configured.clone());
+            }
+        }
+        if ids.is_empty() {
+            ids.push(crate::grok_config::DEFAULT_MODEL.to_string());
+        }
+        // 默认模型：配置里那个在列表里就用它，否则退回第一张表。
+        let default = configured
+            .filter(|configured| ids.iter().any(|id| id == configured))
+            .unwrap_or_else(|| ids[0].clone());
 
-[model."{profile}"]
-model = "{upstream_model}"
+        let base_url = self.base_url.trim_end_matches('/');
+        let window_of = |id: &str| {
+            self.available_models
+                .iter()
+                .find(|row| row.id.trim() == id)
+                .and_then(|row| row.context_window)
+                .unwrap_or(crate::grok_config::DEFAULT_CONTEXT_WINDOW as u64)
+        };
+        let mut config = format!("[models]\ndefault = \"{default}\"\n");
+        for id in &ids {
+            config.push_str(&format!(
+                r#"
+[model."{id}"]
+model = "{id}"
 base_url = "{base_url}"
 name = "{name}"
 api_key = "{api_key}"
 api_backend = "{api_backend}"
 context_window = {context_window}
 "#,
-            profile = profile,
-            upstream_model = upstream_model,
-            base_url = self.base_url.trim_end_matches('/'),
-            name = self.name,
-            api_key = self.api_key,
-            api_backend = api_backend,
-            context_window = context_window,
-        );
+                id = id,
+                base_url = base_url,
+                name = self.name,
+                api_key = self.api_key,
+                api_backend = api_backend,
+                context_window = window_of(id),
+            ));
+        }
 
         let settings_config = serde_json::json!({
             "config": config
@@ -2684,18 +2715,36 @@ mod tests {
 
     #[test]
     fn universal_provider_to_grokbuild_provider_builds_config_toml() {
-        let universal = universal_with_apps(
+        // 模型表按可用模型列表一家一张；默认模型指向配置里选的那张。
+        let mut universal = universal_with_apps(
             "u1",
             |apps| apps.grokbuild = true,
             |models| {
                 models.grokbuild = Some(GrokBuildModelConfig {
-                    model: Some("grok-profile".to_string()),
-                    upstream_model: Some("grok-upstream".to_string()),
+                    model: Some("grok-4.6".to_string()),
                     api_backend: Some("chat_completions".to_string()),
                     ..Default::default()
                 })
             },
         );
+        universal.available_models = vec![
+            AvailableModel {
+                id: "grok-4.5".into(),
+                display_name: None,
+                context_window: Some(500_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+            AvailableModel {
+                id: "grok-4.6".into(),
+                display_name: None,
+                context_window: Some(2_000_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+        ];
 
         let provider = universal
             .to_grokbuild_provider()
@@ -2707,9 +2756,15 @@ mod tests {
             .get("config")
             .and_then(|item| item.as_str())
             .expect("config toml");
-        assert!(config.contains("[models]"), "{config}");
-        assert!(config.contains("default = \"grok-profile\""), "{config}");
-        assert!(config.contains("model = \"grok-upstream\""), "{config}");
+        assert!(
+            config.contains("[models]\ndefault = \"grok-4.6\""),
+            "{config}"
+        );
+        // 列表里的每个模型一张表，窗口各取各的元数据
+        assert!(config.contains("[model.\"grok-4.5\"]"), "{config}");
+        assert!(config.contains("[model.\"grok-4.6\"]"), "{config}");
+        assert!(config.contains("context_window = 500000"), "{config}");
+        assert!(config.contains("context_window = 2000000"), "{config}");
         assert!(
             config.contains("base_url = \"https://api.example.com\""),
             "{config}"
@@ -2719,14 +2774,37 @@ mod tests {
             "{config}"
         );
         assert!(config.contains("api_key = \"api-key\""), "{config}");
+        // 逐字节锁住形状：前端预览（`grokbuildConfigJson`）按同一条规则生成，两边必须一致。
+        assert_eq!(
+            config,
+            r#"[models]
+default = "grok-4.6"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://api.example.com"
+name = "Universal"
+api_key = "api-key"
+api_backend = "chat_completions"
+context_window = 500000
+
+[model."grok-4.6"]
+model = "grok-4.6"
+base_url = "https://api.example.com"
+name = "Universal"
+api_key = "api-key"
+api_backend = "chat_completions"
+context_window = 2000000
+"#
+        );
         // 后端自己的校验器要能读回去（和前端的 parseGrokBuildConfig 同一形状）
         crate::grok_config::validate_config_toml(config).expect("valid grok config");
         let model_config =
             crate::grok_config::extract_model_config(config).expect("extract model config");
-        assert_eq!(model_config.model, "grok-upstream");
+        assert_eq!(model_config.model, "grok-4.6");
         assert_eq!(model_config.base_url, "https://api.example.com");
         assert_eq!(model_config.api_backend, "chat_completions");
-        assert!(model_config.context_window > 0);
+        assert_eq!(model_config.context_window, 2_000_000);
         assert_eq!(
             crate::grok_config::extract_credentials(config),
             // (base_url, api_key)
@@ -3070,7 +3148,8 @@ mod tests {
             |models| {
                 models.codex = Some(CodexModelConfig {
                     model: Some("gpt-5.6-sol".into()),
-                    auto_compact_limit: Some(900_000),
+                    // 压缩阈值存百分比，投影时按窗口换算成绝对 token 数
+                    auto_compact_percent: Some(90),
                     remote_compaction: Some(true),
                     impersonate_claude_code: Some(true),
                     prompt_cache_routing: Some("enabled".into()),
@@ -3097,7 +3176,8 @@ mod tests {
         let toml = provider.settings_config["config"]
             .as_str()
             .expect("toml string");
-        // 远程压缩把供应商表名写成 OpenAI；窗口写顶层（跟模型元数据）和压缩阈值
+        // 远程压缩把供应商表名写成 OpenAI；窗口写顶层（跟模型元数据），压缩阈值由
+        // 窗口 × 百分比算出（1,000,000 × 90% = 900000）
         assert!(toml.contains(r#"name = "OpenAI""#), "{toml}");
         assert!(toml.contains("model_context_window = 1000000"), "{toml}");
         assert!(
@@ -3145,6 +3225,28 @@ mod tests {
         // max_output_tokens 跟所选模型行的元数据（此测试的行没有 max_output）
         assert_eq!(meta.max_output_tokens, None);
         assert_eq!(meta.prompt_cache_routing.as_deref(), Some("enabled"));
+    }
+
+    #[test]
+    fn universal_codex_provider_skips_compact_limit_without_window_metadata() {
+        // 压缩阈值是窗口的百分比：所选模型行没有 contextWindow 时换算不出来，
+        // 整条 `model_auto_compact_token_limit` 不写（写了只能是瞎猜的绝对值）。
+        let universal = universal_with_apps(
+            "codex-percent-nowindow",
+            |apps| apps.codex = true,
+            |models| {
+                models.codex = Some(CodexModelConfig {
+                    model: Some("gpt-5.6-sol".into()),
+                    auto_compact_percent: Some(90),
+                    ..Default::default()
+                });
+            },
+        );
+
+        let provider = universal.to_codex_provider().unwrap();
+        let toml = provider.settings_config["config"].as_str().unwrap();
+        assert!(!toml.contains("model_context_window"), "{toml}");
+        assert!(!toml.contains("model_auto_compact_token_limit"), "{toml}");
     }
 
     #[test]
@@ -3207,6 +3309,90 @@ mod tests {
             .claude_desktop_model_routes;
         assert_eq!(routes["claude-opus-5"].supports_1m, Some(true));
         assert_eq!(routes["claude-sonnet-5"].supports_1m, None);
+    }
+
+    #[test]
+    fn universal_desktop_provider_derives_menu_label_from_model_metadata() {
+        // 菜单显示名没存时取所选模型行的 displayName（models.dev 的名称）；
+        // 该行没有名字时留空，由 Desktop 回退成模型名。显式存的值优先。
+        let mut universal = universal_with_apps(
+            "desktop-label",
+            |apps| apps.claude_desktop = true,
+            |models| {
+                models.claude_desktop = Some(ClaudeDesktopModelConfig {
+                    routes: HashMap::from([
+                        (
+                            "claude-sonnet-5".to_string(),
+                            ClaudeDesktopModelRoute {
+                                model: "deepseek-v4-pro".to_string(),
+                                label_override: None,
+                                supports_1m: None,
+                            },
+                        ),
+                        (
+                            "claude-opus-5".to_string(),
+                            ClaudeDesktopModelRoute {
+                                model: "no-name-model".to_string(),
+                                label_override: None,
+                                supports_1m: None,
+                            },
+                        ),
+                        (
+                            "claude-haiku-4-5".to_string(),
+                            ClaudeDesktopModelRoute {
+                                model: "glm-5.3-flash".to_string(),
+                                label_override: Some("Custom Label".to_string()),
+                                supports_1m: None,
+                            },
+                        ),
+                    ]),
+                    ..Default::default()
+                });
+            },
+        );
+        universal.available_models = vec![
+            AvailableModel {
+                id: "deepseek-v4-pro".to_string(),
+                display_name: Some("DeepSeek V4 Pro".to_string()),
+                context_window: Some(128_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+            AvailableModel {
+                id: "no-name-model".to_string(),
+                display_name: None,
+                context_window: Some(128_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+            AvailableModel {
+                id: "glm-5.3-flash".to_string(),
+                display_name: Some("GLM-5.3 Flash".to_string()),
+                context_window: Some(200_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+        ];
+
+        let routes = universal
+            .to_claude_desktop_provider()
+            .unwrap()
+            .meta
+            .unwrap()
+            .claude_desktop_model_routes;
+        assert_eq!(
+            routes["claude-sonnet-5"].label_override.as_deref(),
+            Some("DeepSeek V4 Pro")
+        );
+        assert_eq!(routes["claude-opus-5"].label_override, None);
+        // 手填的值不覆盖
+        assert_eq!(
+            routes["claude-haiku-4-5"].label_override.as_deref(),
+            Some("Custom Label")
+        );
     }
 
     #[test]
@@ -3304,34 +3490,47 @@ mod tests {
 
     #[test]
     fn universal_grokbuild_context_window_falls_back_to_model_row() {
-        // 上游模型行有元数据时自动补；仍没有才用保守默认 500_000。
+        // 每张表的窗口取自己那行的元数据；取不到才用保守默认 500_000。
         let mut universal = universal_with_apps(
             "grok-auto",
             |apps| apps.grokbuild = true,
             |models| {
                 models.grokbuild = Some(GrokBuildModelConfig {
                     model: Some("grok-4.5".into()),
-                    upstream_model: Some("grok-4.5-auto".into()),
                     ..Default::default()
                 });
             },
         );
-        universal.available_models = vec![AvailableModel {
-            id: "grok-4.5-auto".into(),
-            display_name: None,
-            context_window: Some(2_000_000),
-            efforts: Vec::new(),
-            default_effort: None,
-            max_output: None,
-        }];
+        universal.available_models = vec![
+            AvailableModel {
+                id: "grok-4.5".into(),
+                display_name: None,
+                context_window: Some(2_000_000),
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+            AvailableModel {
+                id: "grok-4.6".into(),
+                display_name: None,
+                context_window: None,
+                efforts: Vec::new(),
+                default_effort: None,
+                max_output: None,
+            },
+        ];
 
         let config = universal.to_grokbuild_provider().unwrap().settings_config["config"]
             .as_str()
             .unwrap()
             .to_string();
+        assert!(config.contains("[model.\"grok-4.5\"]"), "{config}");
         assert!(config.contains("context_window = 2000000"), "{config}");
+        // 没有元数据的行用默认窗口
+        assert!(config.contains("[model.\"grok-4.6\"]"), "{config}");
+        assert!(config.contains("context_window = 500000"), "{config}");
 
-        // 两处都取不到 → 默认 500_000
+        // 没有可用模型列表：只写默认模型那一张表，窗口用默认值
         let mut empty = universal_with_apps(
             "grok-none",
             |apps| apps.grokbuild = true,
@@ -3347,6 +3546,16 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
+        assert!(config.contains("default = \"unknown-model\""), "{config}");
+        assert!(config.contains("[model.\"unknown-model\"]"), "{config}");
         assert!(config.contains("context_window = 500000"), "{config}");
+        // 列表为空且没配默认模型：退回内置默认模型
+        let bare = universal_with_apps("grok-bare", |apps| apps.grokbuild = true, |_| {});
+        let config = bare.to_grokbuild_provider().unwrap().settings_config["config"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(config.contains("default = \"grok-4.5\""), "{config}");
+        assert!(config.contains("[model.\"grok-4.5\"]"), "{config}");
     }
 }

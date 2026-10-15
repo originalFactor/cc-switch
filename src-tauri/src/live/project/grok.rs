@@ -22,22 +22,41 @@ use crate::live::patch::{KeyPath, LiveWriteError};
 /// 代理契约写进模型表的接口类型（本地代理只提供 Responses）。
 pub const PROXY_API_BACKEND: &str = "responses";
 
+/// 一个供应商在 `config.toml` 里拥有的模型表：`models.default` 指向的表名，以及 CC Switch
+/// 写的全部 `[model.*]` 表（统一供应商按可用模型列表一家一张）。官方卡没有（Grok 回落到
+/// 内置模型和自带的 xAI 登录）。
+#[derive(Debug, Clone)]
+pub struct GrokModelTables {
+    pub default: String,
+    pub tables: Vec<(String, Table)>,
+}
+
+impl GrokModelTables {
+    /// 表名集合，按写入顺序。
+    pub fn names(&self) -> Vec<String> {
+        self.tables.iter().map(|(name, _)| name.clone()).collect()
+    }
+}
+
 /// 一个供应商在 `config.toml` 里拥有的东西。
 #[derive(Debug, Clone)]
 pub struct GrokProjection {
-    /// `models.default` 指向的表名和整张表；官方卡没有（Grok 回落到内置模型和自带的
-    /// xAI 登录）。
-    pub table: Option<(String, Table)>,
+    pub models: Option<GrokModelTables>,
 }
 
 impl GrokProjection {
+    /// 官方卡：不写模型表，Grok 回落到内置模型和自带的 xAI 登录。
+    pub fn empty() -> Self {
+        Self { models: None }
+    }
+
     /// 从供应商行取出要写的模型表。`official` 由调用方按分类判定。
     ///
     /// 行里的 `models.default` 指不到表时（旧版回填存进了用户在 Grok 里选的内置模型），
     /// 取行里唯一的那张 `[model.*]` 表；有多张时报错，让用户在编辑器里选。
     pub fn of(settings: &Value, official: bool) -> Result<Self, AppError> {
         if official {
-            return Ok(Self { table: None });
+            return Ok(Self::empty());
         }
         let text = settings
             .get("config")
@@ -56,27 +75,102 @@ impl GrokProjection {
                 format!("Invalid Grok Build config.toml: {error}"),
             )
         })?;
-        let name = resolve_table_name(&doc)?;
-        let table = doc
+        let default = resolve_table_name(&doc)?;
+        let tables: Vec<(String, Table)> = doc
             .get("model")
             .and_then(Item::as_table_like)
-            .and_then(|models| models.get(&name))
-            .and_then(fresh_table)
+            .map(|models| {
+                models
+                    .iter()
+                    .filter_map(|(name, item)| {
+                        fresh_table(item).map(|table| (name.to_string(), table))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let selected = tables
+            .iter()
+            .find(|(name, _)| *name == default)
+            .map(|(_, table)| table)
             .expect("resolve_table_name 只返回存在的表");
 
         // 形状校验沿用现有规则（model、base_url、name、api_key / env_key、api_backend、
-        // context_window），对象是归一化后的这一张表。
-        crate::grok_config::validate_config_toml(&normalized_text(&name, &table))?;
+        // context_window），对象是 `models.default` 指的那张表。
+        crate::grok_config::validate_config_toml(&normalized_text(&default, selected))?;
         Ok(Self {
-            table: Some((name, table)),
+            models: Some(GrokModelTables { default, tables }),
         })
     }
 
-    pub fn table_name(&self) -> Option<&str> {
-        self.table.as_ref().map(|(name, _)| name.as_str())
+    /// 编辑器保存时用的投影：行里已有的表名，加上显示里 `models.default` 指的那张。
+    ///
+    /// 编辑器显示是 live 和行的合并，用户自己的 `[model.*]` 表也在里面；只有这两个来源能
+    /// 证明是 CC Switch 写的，其余一律当用户自己的（当全局设置处理）。用户重命名默认表后
+    /// 行里还是旧名，所以显示里的默认表也要算进来，写回行时旧名按 `retired` 删掉。
+    pub fn from_display(text: &str, row_names: &[String]) -> Result<Self, AppError> {
+        let doc = text.parse::<DocumentMut>().map_err(|error| {
+            AppError::localized(
+                "provider.grokbuild.config.invalid_toml",
+                format!("Grok Build config.toml 格式错误: {error}"),
+                format!("Invalid Grok Build config.toml: {error}"),
+            )
+        })?;
+        let display_default = doc
+            .get("models")
+            .and_then(|models| models.get("default"))
+            .and_then(Item::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        let mut names: Vec<String> = row_names.to_vec();
+        if let Some(default) = display_default.as_ref() {
+            if !names.iter().any(|name| name == default) {
+                names.push(default.clone());
+            }
+        }
+        let model_tables = doc.get("model").and_then(Item::as_table_like);
+        let tables: Vec<(String, Table)> = names
+            .iter()
+            .filter_map(|name| {
+                let item = model_tables?.get(name)?;
+                Some((name.clone(), fresh_table(item)?))
+            })
+            .collect();
+        if tables.is_empty() {
+            return Err(AppError::localized(
+                "provider.grokbuild.model.missing",
+                "Grok Build 配置缺少 [model.<name>]",
+                "Grok Build configuration is missing [model.<name>]",
+            ));
+        }
+        let default = display_default
+            .filter(|default| tables.iter().any(|(name, _)| name == default))
+            .unwrap_or_else(|| tables[0].0.clone());
+        let selected = tables
+            .iter()
+            .find(|(name, _)| *name == default)
+            .map(|(_, table)| table)
+            .expect("default 取自 tables");
+        crate::grok_config::validate_config_toml(&normalized_text(&default, selected))?;
+        Ok(Self {
+            models: Some(GrokModelTables { default, tables }),
+        })
     }
 
-    /// 代理契约：路由供应商的表，地址、Key、接口类型换成本地代理的。`env_key` 原样保留：
+    /// 行里 `models.default` 指的表名。
+    pub fn default_name(&self) -> Option<&str> {
+        self.models.as_ref().map(|models| models.default.as_str())
+    }
+
+    /// 行里 CC Switch 写的全部表名。
+    pub fn table_names(&self) -> Vec<String> {
+        self.models
+            .as_ref()
+            .map(GrokModelTables::names)
+            .unwrap_or_default()
+    }
+
+    /// 代理契约：每张模型表的地址、Key、接口类型换成本地代理的。`env_key` 原样保留：
     /// Grok 优先用表里的 `api_key`。官方卡没有模型表，不能作为路由（xAI 登录不经本地
     /// 代理）。
     pub fn proxy_contract(
@@ -84,33 +178,50 @@ impl GrokProjection {
         proxy_base_url: &str,
         placeholder: &str,
     ) -> Result<Self, AppError> {
-        let (name, table) = route.table.as_ref().ok_or_else(|| {
+        let models = route.models.as_ref().ok_or_else(|| {
             AppError::localized(
                 "provider.grokbuild.proxy.official",
                 "Grok Build 官方账号不能经本地路由使用",
                 "The official Grok Build account cannot be used through local routing",
             )
         })?;
-        let mut table = table.clone();
-        table.insert("base_url", toml_edit::value(proxy_base_url));
-        table.insert("api_key", toml_edit::value(placeholder));
-        table.insert("api_backend", toml_edit::value(PROXY_API_BACKEND));
+        let tables = models
+            .tables
+            .iter()
+            .map(|(name, table)| {
+                let mut table = table.clone();
+                table.insert("base_url", toml_edit::value(proxy_base_url));
+                table.insert("api_key", toml_edit::value(placeholder));
+                table.insert("api_backend", toml_edit::value(PROXY_API_BACKEND));
+                (name.clone(), table)
+            })
+            .collect();
         Ok(Self {
-            table: Some((name.clone(), table)),
+            models: Some(GrokModelTables {
+                default: models.default.clone(),
+                tables,
+            }),
         })
     }
 
     /// 摘要用的规范形式。
     pub fn to_value(&self) -> Value {
-        match &self.table {
-            Some((name, table)) => json!({"table": name, "toml": normalized_text(name, table)}),
+        match &self.models {
+            Some(models) => json!({
+                "default": models.default,
+                "tables": models
+                    .tables
+                    .iter()
+                    .map(|(name, table)| json!({"table": name, "toml": normalized_text(name, table)}))
+                    .collect::<Vec<_>>(),
+            }),
             None => Value::Null,
         }
     }
 
     /// 写入记录里的表名。
     pub fn written_tables(&self) -> Vec<String> {
-        self.table_name().map(str::to_string).into_iter().collect()
+        self.table_names()
     }
 }
 
@@ -205,11 +316,12 @@ fn copy_table(source: &dyn TableLike) -> Table {
     table
 }
 
-/// 补丁：`models.default` 换成目标的表名（官方卡删掉），按写入记录删上一家的表，写目标
-/// 的整张表。
+/// 补丁：`models.default` 换成目标的默认表名（官方卡删掉），按写入记录删上一家的表，写目标
+/// 的每一张模型表。
 #[derive(Debug, Clone, Default)]
 pub struct GrokConfigPatch {
-    pub target: Option<(String, Table)>,
+    /// 目标的 `models.default` 和它的全部模型表。
+    pub target: Option<GrokModelTables>,
     /// 上次写入记录里的表。目标自己的表不删，由整表替换覆盖。
     pub retired: Vec<String>,
     /// 这个值作为 `api_key` 的表都是 CC Switch 的代理契约留下的，一律删（目标自己的
@@ -220,14 +332,25 @@ pub struct GrokConfigPatch {
 impl GrokConfigPatch {
     pub fn direct(target: &GrokProjection, retired: Vec<String>, placeholder: &str) -> Self {
         Self {
-            target: target.table.clone(),
+            target: target.models.clone(),
             retired,
             placeholder: Some(placeholder.to_string()),
         }
     }
 
     pub fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
-        let target_name = self.target.as_ref().map(|(name, _)| name.as_str());
+        let target_name = self.target.as_ref().map(|target| target.default.as_str());
+        let target_tables: Vec<&str> = self
+            .target
+            .as_ref()
+            .map(|target| {
+                target
+                    .tables
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
         let root = doc.as_table_mut();
 
         match target_name {
@@ -256,7 +379,7 @@ impl GrokConfigPatch {
             let doomed: Vec<String> = tables
                 .iter()
                 .filter(|(name, item)| {
-                    Some(*name) != target_name
+                    !target_tables.contains(name)
                         && (self.retired.iter().any(|retired| retired == name)
                             || placeholder.is_some_and(|placeholder| {
                                 item.as_table_like()
@@ -272,21 +395,23 @@ impl GrokConfigPatch {
             }
         }
 
-        if let Some((name, table)) = &self.target {
+        if let Some(target) = &self.target {
             let tables = table_mut(path, root, "model", true)?.expect("created");
-            let mut table = table.clone();
-            match tables.get_mut(name) {
-                Some(slot) => {
-                    if let Item::Table(old) = slot {
-                        *table.decor_mut() = old.decor().clone();
-                        if let Some(position) = old.position() {
-                            table.set_position(position);
+            for (name, source) in &target.tables {
+                let mut table = source.clone();
+                match tables.get_mut(name) {
+                    Some(slot) => {
+                        if let Item::Table(old) = slot {
+                            *table.decor_mut() = old.decor().clone();
+                            if let Some(position) = old.position() {
+                                table.set_position(position);
+                            }
                         }
+                        *slot = Item::Table(table);
                     }
-                    *slot = Item::Table(table);
-                }
-                None => {
-                    tables.insert(name, Item::Table(table));
+                    None => {
+                        tables.insert(name, Item::Table(table));
+                    }
                 }
             }
         }
@@ -385,7 +510,7 @@ context_window = 200000
     fn a_default_that_points_nowhere_falls_back_to_the_only_table() {
         let polluted = ROW_A.replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
         let projection = GrokProjection::of(&row(&polluted), false).unwrap();
-        assert_eq!(projection.table_name(), Some("grok-4.5"));
+        assert_eq!(projection.default_name(), Some("grok-4.5"));
 
         let two = format!("{polluted}\n[model.other]\nmodel = \"x\"\n");
         let err = GrokProjection::of(&row(&two), false).unwrap_err();
@@ -468,8 +593,14 @@ api_key = "PROXY_MANAGED"
         let contract =
             GrokProjection::proxy_contract(&b, "http://127.0.0.1:15721/grokbuild/v1", PLACEHOLDER)
                 .unwrap();
-        let (name, table) = contract.table.unwrap();
-        assert_eq!(name, "b");
+        let models = contract.models.unwrap();
+        assert_eq!(models.default, "b");
+        let table = models
+            .tables
+            .iter()
+            .find(|(name, _)| name == "b")
+            .map(|(_, table)| table)
+            .expect("b table");
         assert_eq!(table["api_key"].as_str(), Some(PLACEHOLDER));
         assert_eq!(table["env_key"].as_str(), Some("B_KEY"));
         assert_eq!(table["api_backend"].as_str(), Some("responses"));

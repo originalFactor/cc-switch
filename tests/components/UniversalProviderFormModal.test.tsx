@@ -24,7 +24,12 @@ const FETCHED_MODELS = [
     displayName: "Claude Haiku 4.5",
     contextWindow: 200000,
   },
-  { id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", contextWindow: 1000000 },
+  {
+    id: "gpt-5.6-sol",
+    displayName: "GPT-5.6 Sol",
+    contextWindow: 1000000,
+    efforts: ["low", "medium", "high"],
+  },
   {
     id: "gemini-2.5-pro",
     displayName: "Gemini 2.5 Pro",
@@ -178,7 +183,12 @@ const editingProvider: UniversalProvider = {
       displayName: "Claude Sonnet 5",
       contextWindow: 200000,
     },
-    { id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", contextWindow: 1000000 },
+    {
+      id: "gpt-5.6-sol",
+      displayName: "GPT-5.6 Sol",
+      contextWindow: 1000000,
+      efforts: ["low", "medium", "high"],
+    },
     { id: "gpt-5.6-mini", displayName: "GPT-5.6 Mini", contextWindow: 200000 },
     {
       id: "gemini-2.5-pro",
@@ -292,12 +302,23 @@ describe("UniversalProviderFormModal", () => {
       "relay/1.0",
     );
 
-    // Codex：压缩阈值、远程压缩（上下文窗口跟模型元数据，无输入框）
+    // Codex：主模型、压缩阈值（填百分比）、远程压缩（上下文窗口跟模型元数据，无输入框）
     const codex = appRow("OpenAI Codex");
+    await pickModel(user, "模型", "gpt-5.6-sol");
     await user.click(
       within(codex).getByRole("checkbox", { name: LABEL.remoteCompaction }),
     );
-    await user.type(within(codex).getByPlaceholderText("900000"), "800000");
+    await user.type(within(codex).getByPlaceholderText("90"), "90");
+    // 预览里的 config.toml 写的是换算后的绝对值（1,000,000 × 90%），不是百分比
+    expect(
+      within(codex)
+        .getAllByLabelText("json-editor")
+        .some((editor) =>
+          (editor as HTMLTextAreaElement).value.includes(
+            "model_auto_compact_token_limit = 900000",
+          ),
+        ),
+    ).toBe(true);
 
     // Gemini：.env 块（JSON 里的花括号会被 user-event 当成按键描述符，直接改值）
     const gemini = appRow("Gemini CLI");
@@ -314,7 +335,11 @@ describe("UniversalProviderFormModal", () => {
     await user.click(
       await screen.findByRole("option", { name: /gpt-5\.6-sol/ }),
     );
-    await user.type(within(codexCard).getByPlaceholderText("low"), "medium");
+    // 子代理推理档位是下拉：选项来自子代理模型那行的 effort 元数据
+    await user.click(
+      within(codexCard).getByRole("combobox", { name: "子代理推理档位" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "medium" }));
     // 覆盖输入框按占位符挑：卡片尾部还有预览用的 textarea，不能按位置取
     const codexOverrides = within(codexCard)
       .getAllByRole("textbox")
@@ -332,10 +357,10 @@ describe("UniversalProviderFormModal", () => {
     await user.click(
       await screen.findByRole("option", { name: /deepseek-v4-pro/ }),
     );
-    await user.type(
+    // 菜单显示名不再是输入框：跟着所选模型在可用列表里的名称自动生成
+    expect(
       within(desktop).getAllByLabelText("菜单显示名")[0],
-      "DeepSeek V4 Pro",
-    );
+    ).toHaveTextContent("DeepSeek V4 Pro");
     await user.click(
       within(desktop).getByRole("combobox", { name: "上游格式" }),
     );
@@ -357,7 +382,8 @@ describe("UniversalProviderFormModal", () => {
     expect(saved.models.claude?.apiFormat).toBe("openai_responses");
     expect(saved.models.claude?.customUserAgent).toBe("relay/1.0");
     expect(saved.models.codex?.remoteCompaction).toBe(true);
-    expect(saved.models.codex?.autoCompactLimit).toBe(800000);
+    // 压缩阈值存百分比：写 live 时按所选模型的窗口（gpt-5.6-sol = 1,000,000）换算
+    expect(saved.models.codex?.autoCompactPercent).toBe(90);
     expect(saved.models.gemini?.env).toEqual({
       GEMINI_CLI_CUSTOM_HEADERS: "X-A: 1",
     });
@@ -477,9 +503,10 @@ describe("UniversalProviderFormModal", () => {
     expect(
       within(desktop).getAllByRole("combobox", { name: "实际请求模型" })[0],
     ).toHaveTextContent("old-sonnet");
-    expect(within(desktop).getAllByLabelText("菜单显示名")[0]).toHaveValue(
-      "OldGateway",
-    );
+    // 显示名不再手填也不再从旧版共用值搬：模型不在可用列表里就没有名字可显示
+    expect(
+      within(desktop).getAllByLabelText("菜单显示名")[0],
+    ).toHaveTextContent("—");
 
     await user.click(screen.getByRole("button", { name: LABEL.saveAndSync }));
     const confirm = screen.getByRole("dialog");
@@ -488,18 +515,137 @@ describe("UniversalProviderFormModal", () => {
     );
 
     const saved = onSaveAndSync.mock.calls[0][0] as UniversalProvider;
-    // 保存后只剩新形状：旧字段不再写回。1M 声明按可用列表的上下文窗口判定，
-    // 旧值模型不在列表里 → 三档都不声明。
+    // 保存后只剩新形状：旧字段不再写回。1M 声明和菜单显示名都按可用列表的模型
+    // 元数据判定，旧值模型不在列表里 → 三档都不声明、都不写显示名。
     expect(saved.models.claudeDesktop?.routes).toEqual({
-      "claude-sonnet-5": {
-        model: "old-sonnet",
-        labelOverride: "OldGateway",
-      },
-      "claude-opus-5": { model: "old-opus", labelOverride: "OldGateway" },
-      "claude-haiku-4-5": { model: "old-haiku", labelOverride: "OldGateway" },
+      "claude-sonnet-5": { model: "old-sonnet" },
+      "claude-opus-5": { model: "old-opus" },
+      "claude-haiku-4-5": { model: "old-haiku" },
     });
     expect(saved.models.claudeDesktop?.sonnetModel).toBeUndefined();
     expect(saved.models.claudeDesktop?.labelOverride).toBeUndefined();
+  }, 20000);
+
+  it("Grok Build 只留默认模型与上游协议，预览写出整份可用模型列表", async () => {
+    const user = userEvent.setup();
+    // 重复 id 与空 id 都是草稿行：去重后只留一个，空 id 直接丢掉
+    const grokProvider: UniversalProvider = {
+      ...editingProvider,
+      baseUrl: "https://old.example.com/",
+      models: { grokbuild: { model: "grok-4.5", apiBackend: "responses" } },
+      availableModels: [
+        { id: "grok-4.5", displayName: "Grok 4.5", contextWindow: 500000 },
+        { id: "grok-4.6", displayName: "Grok 4.6", contextWindow: 200000 },
+        { id: " grok-4.5 ", displayName: "Grok 4.5", contextWindow: 500000 },
+        { id: "   ", displayName: "空行", contextWindow: 1000 },
+      ],
+    };
+    const { onSaveAndSync } = renderModal({ editingProvider: grokProvider });
+
+    const grok = appRow("Grok Build");
+    // 只剩两个控件：默认模型 + 上游协议（上游模型那一格已删）
+    expect(within(grok).getAllByRole("combobox")).toHaveLength(2);
+    expect(
+      within(grok).queryByRole("combobox", { name: "上游模型" }),
+    ).toBeNull();
+    expect(
+      within(grok).getByRole("combobox", { name: "默认模型" }),
+    ).toHaveTextContent("Grok 4.5");
+
+    const previewEditor = within(grok).getAllByLabelText(
+      "json-editor",
+    )[0] as HTMLTextAreaElement;
+
+    // 每个模型一张表，顺序照可用列表；base_url 去掉结尾斜杠，窗口取该行元数据
+    expect(previewEditor.value).toBe(`[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://old.example.com"
+name = "Existing"
+api_key = "sk-old"
+api_backend = "responses"
+context_window = 500000
+
+[model."grok-4.6"]
+model = "grok-4.6"
+base_url = "https://old.example.com"
+name = "Existing"
+api_key = "sk-old"
+api_backend = "responses"
+context_window = 200000
+`);
+
+    // 换默认模型只动 [models].default，表还是那两张
+    await pickModel(user, "默认模型", "grok-4.6");
+    expect(previewEditor.value).toContain('default = "grok-4.6"');
+    expect(previewEditor.value).toContain('[model."grok-4.5"]');
+
+    await user.click(screen.getByRole("button", { name: LABEL.saveAndSync }));
+    const confirm = screen.getByRole("dialog");
+    await user.click(
+      within(confirm).getByRole("button", { name: LABEL.saveAndSync }),
+    );
+
+    const saved = onSaveAndSync.mock.calls[0][0] as UniversalProvider;
+    // 没有 upstreamModel 了：只存默认模型与协议
+    expect(saved.models.grokbuild).toEqual({
+      model: "grok-4.6",
+      apiBackend: "responses",
+    });
+  }, 20000);
+
+  it("Grok Build 默认模型不在可用列表里时补成一张表，协议照原样写", async () => {
+    const customDefault: UniversalProvider = {
+      ...editingProvider,
+      models: {
+        grokbuild: { model: "grok-4.7", apiBackend: "chat_completions" },
+      },
+      availableModels: [],
+    };
+    renderModal({ editingProvider: customDefault });
+
+    const grok = appRow("Grok Build");
+    expect(
+      (within(grok).getAllByLabelText("json-editor")[0] as HTMLTextAreaElement)
+        .value,
+    ).toBe(`[models]
+default = "grok-4.7"
+
+[model."grok-4.7"]
+model = "grok-4.7"
+base_url = "https://old.example.com"
+name = "Existing"
+api_key = "sk-old"
+api_backend = "chat_completions"
+context_window = 500000
+`);
+  }, 20000);
+
+  it("Grok Build 没选默认模型又没有可用列表时落到 grok-4.5", async () => {
+    const empty: UniversalProvider = {
+      ...editingProvider,
+      models: { grokbuild: {} },
+      availableModels: [],
+    };
+    renderModal({ editingProvider: empty });
+
+    const grok = appRow("Grok Build");
+    expect(
+      (within(grok).getAllByLabelText("json-editor")[0] as HTMLTextAreaElement)
+        .value,
+    ).toBe(`[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://old.example.com"
+name = "Existing"
+api_key = "sk-old"
+api_backend = "responses"
+context_window = 500000
+`);
   }, 20000);
 
   it("编辑时载入已存端点，保存并同步写回端点与自动选择开关", async () => {
