@@ -3267,7 +3267,21 @@
     "subagentModel": "Subagent model",
     "effortLevelsLabel": "Effort levels",
     "effortLevelsFollowModel": "Follow model metadata",
-    "effortLevelsFollowModelHelp": "Build catalog levels from the selected model on models.dev"
+    "effortLevelsFollowModelHelp": "Build catalog levels from the selected model on models.dev",
+    "quickConfig": "Quick config",
+    "quickConfigModel": "Pick the model to configure",
+    "quickConfigApiFormat": "API type",
+    "quickConfigApiFormatUnset": "API type: not set",
+    "apiFormatAnthropic": "Anthropic Messages",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions",
+    "apiFormatOpenAIResponses": "OpenAI Responses",
+    "apiFormatGeminiNative": "Google Gemini",
+    "quickConfigEffort": "Reasoning Effort",
+    "quickConfigEffortUnset": "Not set",
+    "quickConfigApply": "Apply to all apps",
+    "quickConfigApplied": "Applied {{model}} to all apps",
+    "quickConfigHint": "Writes the picked model into every app's model slots: Claude Code's four tiers and main model, Claude Desktop's routes, Codex's main and subagent models, Gemini, and Grok Build.",
+    "quickConfigHintDirect": "Writes the picked model into every app's model slots: Claude Code's four tiers and main model, Codex's main and subagent models, Gemini, and Grok Build. Claude Desktop is in direct mode — its routes are generated from the available-models list."
   },
   "subscription": {
     "title": "Subscription Quota",

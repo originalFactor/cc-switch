@@ -93,8 +93,12 @@ export function ReasoningLevelsEditor({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const selected = (levels ?? []).filter((level) =>
-    (REASONING_LEVELS as readonly string[]).includes(level),
+  // 拉取的档位来自 models.dev 的声明顺序（merge_efforts 保持首现顺序），可能不是预置
+  // 升序。读侧同样按预置序规范化：触发器标签、默认档下拉、勾选集合都以它为准，和写入侧
+  // （toggleLevel）的排序一致。非预置值会被过滤——列表本来就是从预置里勾的，存进库的
+  // 也一定是预置；万一混进未知值，过滤只是不显示它，不丢数据。
+  const selected = (REASONING_LEVELS as readonly string[]).filter((level) =>
+    (levels ?? []).includes(level),
   );
 
   const toggleLevel = (level: string) => {

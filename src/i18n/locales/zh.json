@@ -3267,7 +3267,21 @@
     "subagentModel": "Subagent 模型",
     "effortLevelsLabel": "思考等级",
     "effortLevelsFollowModel": "跟随模型元数据",
-    "effortLevelsFollowModelHelp": "按所选模型在 models.dev 声明的档位生成目录"
+    "effortLevelsFollowModelHelp": "按所选模型在 models.dev 声明的档位生成目录",
+    "quickConfig": "快速配置",
+    "quickConfigModel": "选择要配置的模型",
+    "quickConfigApiFormat": "API 类型",
+    "quickConfigApiFormatUnset": "API 类型：不设置",
+    "apiFormatAnthropic": "Anthropic Messages",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions",
+    "apiFormatOpenAIResponses": "OpenAI Responses",
+    "apiFormatGeminiNative": "Google Gemini",
+    "quickConfigEffort": "Reasoning Effort",
+    "quickConfigEffortUnset": "不设置",
+    "quickConfigApply": "应用到所有应用",
+    "quickConfigApplied": "已将 {{model}} 应用到所有应用",
+    "quickConfigHint": "把所选模型一键写入所有应用的模型槽位：Claude Code 四档与主模型、Claude Desktop 路由、Codex 主模型与子代理、Gemini、Grok Build。",
+    "quickConfigHintDirect": "把所选模型一键写入所有应用的模型槽位：Claude Code 四档与主模型、Codex 主模型与子代理、Gemini、Grok Build。Claude Desktop 是直连模式，路由由可用模型列表自动生成。"
   },
   "subscription": {
     "title": "订阅额度",

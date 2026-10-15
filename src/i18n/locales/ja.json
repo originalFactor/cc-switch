@@ -3267,7 +3267,21 @@
     "subagentModel": "Subagent モデル",
     "effortLevelsLabel": "思考レベル",
     "effortLevelsFollowModel": "モデルのメタデータに従う",
-    "effortLevelsFollowModelHelp": "選択したモデルの models.dev 宣告に従ってカタログを生成"
+    "effortLevelsFollowModelHelp": "選択したモデルの models.dev 宣告に従ってカタログを生成",
+    "quickConfig": "クイック設定",
+    "quickConfigModel": "設定するモデルを選択",
+    "quickConfigApiFormat": "API タイプ",
+    "quickConfigApiFormatUnset": "API タイプ：未設定",
+    "apiFormatAnthropic": "Anthropic Messages",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions",
+    "apiFormatOpenAIResponses": "OpenAI Responses",
+    "apiFormatGeminiNative": "Google Gemini",
+    "quickConfigEffort": "Reasoning Effort",
+    "quickConfigEffortUnset": "未設定",
+    "quickConfigApply": "すべてのアプリに適用",
+    "quickConfigApplied": "{{model}} をすべてのアプリに適用しました",
+    "quickConfigHint": "選択したモデルをすべてのアプリのモデル欄に一括で書き込みます：Claude Code の四段とメインモデル、Claude Desktop のルート、Codex のメインとサブエージェントモデル、Gemini、Grok Build。",
+    "quickConfigHintDirect": "選択したモデルをすべてのアプリのモデル欄に一括で書き込みます：Claude Code の四段とメインモデル、Codex のメインとサブエージェントモデル、Gemini、Grok Build。Claude Desktop は直接接続モードのため、ルートは利用可能モデル一覧から自動生成されます。"
   },
   "subscription": {
     "title": "サブスクリプションクォータ",

@@ -7,7 +7,13 @@
  */
 
 import type { AppId } from "@/lib/api";
-import type { AvailableModel } from "@/types";
+import type {
+  AvailableModel,
+  ClaudeDesktopMode,
+  ClaudeDesktopModelRoute,
+  CodexApiFormat,
+  UniversalProviderModels,
+} from "@/types";
 
 /** 应用段全集。解析时按「最长优先」匹配，避免 `claude-` 吃掉 `claude-desktop-`。 */
 const APP_IDS: readonly AppId[] = [
@@ -127,36 +133,172 @@ export function effortOptionsFor(
   return value && !options.includes(value) ? [...options, value] : options;
 }
 
-/**
- * 触发器标签：相邻 ≥3 个的连续预置档位压成「首 → 末」（跳过 minimal 时是
- * "none, low → max"）。范围不会跨过未选档位，所以不会暗示没选的档。
- * 非预置顺序保持原样列表。
- */
-export function formatReasoningLevelsLabel(levels: string[]): string {
-  const canonical = EFFORT_PRESETS as readonly string[];
-  const positions = levels.map((level) => canonical.indexOf(level));
-  const ordered = positions.every(
-    (position, index) =>
-      position >= 0 && (index === 0 || position > positions[index - 1]),
-  );
-  if (!ordered) return levels.join(", ");
+/** Claude Desktop 映射模式的四个角色档位（与表单 DESKTOP_ROLE_ROUTES 同序）。 */
+export const DESKTOP_QUICK_ROLES = [
+  "claude-sonnet-5",
+  "claude-opus-5",
+  "claude-fable-5",
+  "claude-haiku-4-5",
+] as const;
 
-  const parts: string[] = [];
-  let runStart = 0;
-  for (let index = 1; index <= levels.length; index++) {
-    if (
-      index < levels.length &&
-      positions[index] === positions[index - 1] + 1
-    ) {
-      continue;
-    }
-    const run = levels.slice(runStart, index);
-    if (run.length >= 3) {
-      parts.push(`${run[0]} → ${run[run.length - 1]}`);
-    } else {
-      parts.push(...run);
-    }
-    runStart = index;
+/** 表单里的 Claude 四档模型字段（模型字段名 → 归一化槽位键）。 */
+const CLAUDE_TIERS = [
+  ["sonnetModel", "sonnet"],
+  ["opusModel", "opus"],
+  ["fableModel", "fable"],
+  ["haikuModel", "haiku"],
+] as const;
+
+export type QuickModelSlot = "sonnet" | "opus" | "fable" | "haiku" | "default";
+
+/**
+ * 快速配置的 API 类型（用户视角的四种）。各应用字段的值集不同，这里归一成一份，
+ * 写的时候按下面的映射转成各应用自己的值；应用不支持的组合直接跳过（不报错）。
+ */
+export type QuickApiFormat =
+  | "anthropic"
+  | "openai_chat"
+  | "openai_responses"
+  | "gemini_native";
+
+/** 快速配置 API 类型 → 各应用字段值。Claude 系两个字段同名同值。 */
+const QUICK_API_FORMAT_TO_CODEX: Record<
+  QuickApiFormat,
+  CodexApiFormat | undefined
+> = {
+  anthropic: "anthropic",
+  openai_chat: "openai_chat",
+  openai_responses: "openai_responses",
+  gemini_native: undefined, // Codex 不认 Gemini 上游
+};
+
+const QUICK_API_FORMAT_TO_GROK: Record<
+  QuickApiFormat,
+  string | undefined
+> = {
+  anthropic: "anthropic_messages",
+  openai_chat: "chat_completions",
+  openai_responses: "responses",
+  gemini_native: undefined,
+};
+
+export interface QuickModelInput {
+  /** 表单当前各应用的模型配置（不会改动传入对象）。 */
+  models: UniversalProviderModels;
+  /** 所有档位一键设为这个模型 id（可用模型列表里的 id）。 */
+  modelId: string;
+  /**
+   * Claude 四档各自的覆盖。没列出的槽位缺省都填所选模型；列出来的槽位：
+   * 非空串 = 覆盖成那个模型，`""` / `undefined` = 清空该档（不填）。
+   */
+  slots?: Partial<Record<QuickModelSlot, string | undefined>>;
+  /** Claude Desktop 接入方式：映射模式下填四档路由，直连模式不动（后端自己生成）。 */
+  desktopMode?: ClaudeDesktopMode;
+  /** Codex 的 reasoning effort（所选模型在列表行声明过档位时才有意义）。 */
+  reasoningEffort?: string | undefined;
+  /** Codex 子代理的 reasoning effort；缺省不写（子代理跟主模型同档位才需要）。 */
+  subagentReasoningEffort?: string | undefined;
+  /**
+   * API 类型：一键写进所有支持该类型的应用（Claude Code / Desktop / Codex /
+   * Grok Build）。不支持的组合（如 Gemini 上游对 Codex）跳过；不传 = 不动任何
+   * apiFormat / apiBackend。
+   */
+  apiFormat?: QuickApiFormat;
+}
+
+/**
+ * 一键把选中的模型填进所有应用的所有模型槽位：Claude Code 四档 + 主模型 + 子代理、
+ * Claude Desktop 四档路由、Codex 主模型 + 子代理、Gemini、Grok Build。
+ *
+ * 规则：
+ * - 主模型（`default`）缺省跟随所选模型；`slots.default = ""` 时不写主模型。
+ * - Claude 四档缺省都填同一个模型，逐档可覆盖；填过的开关（思考能力等）不动。
+ * - Desktop 只在映射模式下填路由（直连模式的路由由后端从可用模型列表生成）。
+ * - Codex 的 effort 只在明确传了非空值时写；没声明档位的模型不写 effort。
+ * - 只改模型相关字段，不改 apiFormat / 请求覆盖 / 思考开关等其余设置。
+ */
+export function applyQuickModel(
+  input: QuickModelInput,
+): UniversalProviderModels {
+  const { models, modelId } = input;
+  const id = modelId.trim();
+  if (id === "") return models;
+
+  const slotValue = (slot: QuickModelSlot): string | undefined => {
+    if (!input.slots) return id;
+    if (!(slot in input.slots)) return id;
+    const override = input.slots[slot];
+    // 在 slots 里点名的档：非空串 = 覆盖成该模型；"" 或 undefined = 清空该档。
+    // 没点名的档（键不存在）跟着缺省走：四档全填所选模型。
+    return override?.trim() || undefined;
+  };
+
+  const next: UniversalProviderModels = { ...models };
+
+  // Claude Code：四档 + 主模型 + 子代理。缺省四档都跟随所选模型，逐档可覆盖。
+  const claude = { ...(next.claude ?? {}) };
+  for (const [field, slot] of CLAUDE_TIERS) {
+    const value = slotValue(slot);
+    if (value) claude[field] = value;
+    else delete claude[field];
   }
-  return parts.join(", ");
+  const mainValue = slotValue("default");
+  if (mainValue) claude.model = mainValue;
+  else delete claude.model;
+  // 子代理跟主模型走：一家供应商通常一个主力模型跑子代理；主模型都清掉时子代理也清。
+  if (mainValue) claude.subagentModel = mainValue;
+  else delete claude.subagentModel;
+  next.claude = claude;
+
+  // Claude Desktop：只有映射模式有可填的路由表；直连模式不碰（后端按可用模型列表生成）。
+  if (input.desktopMode === "proxy") {
+    const routes: Record<string, ClaudeDesktopModelRoute> = {};
+    for (const role of DESKTOP_QUICK_ROLES) {
+      routes[role] = { model: id };
+    }
+    next.claudeDesktop = {
+      ...(next.claudeDesktop ?? {}),
+      mode: "proxy",
+      routes,
+    };
+  }
+
+  // Codex：主模型 + 子代理模型；effort 只在传了非空值时写。
+  const codex = { ...(next.codex ?? {}) };
+  codex.model = id;
+  codex.subagentModel = id;
+  const effort = input.reasoningEffort?.trim();
+  if (effort) codex.reasoningEffort = effort;
+  else delete codex.reasoningEffort;
+  const subEffort = input.subagentReasoningEffort?.trim();
+  if (subEffort) codex.subagentReasoningEffort = subEffort;
+  else delete codex.subagentReasoningEffort;
+  next.codex = codex;
+
+  // Gemini CLI / Grok Build：各一个模型槽。
+  next.gemini = { ...(next.gemini ?? {}), model: id };
+  next.grokbuild = { ...(next.grokbuild ?? {}), model: id };
+
+  // API 类型：一键写进所有支持的应用。不支持的组合跳过（Gemini 上游对 Codex /
+  // Grok 无对应值，Gemini CLI 本身只走原生协议、没有这个字段）。
+  if (input.apiFormat) {
+    const fmt = input.apiFormat;
+    next.claude = { ...next.claude, apiFormat: fmt };
+    if (input.desktopMode === "proxy") {
+      next.claudeDesktop = {
+        ...(next.claudeDesktop ?? {}),
+        apiFormat: fmt,
+      };
+    }
+    const codexFmt = QUICK_API_FORMAT_TO_CODEX[fmt];
+    if (codexFmt) {
+      next.codex = { ...next.codex, apiFormat: codexFmt };
+    }
+    const grokFmt = QUICK_API_FORMAT_TO_GROK[fmt];
+    if (grokFmt) {
+      next.grokbuild = { ...next.grokbuild, apiBackend: grokFmt };
+    }
+  }
+
+  return next;
 }

@@ -216,4 +216,75 @@ describe("AvailableModelsEditor — 逐模型思考等级", () => {
     const last = onChange.mock.calls.at(-1)![0] as AvailableModel[];
     expect(last[0].efforts).toEqual(["none", "low", "high", "max"]);
   });
+
+  it("声明顺序乱掉的档位按预置升序显示", async () => {
+    // 拉取的档位来自 models.dev 的声明顺序（同名模型跨供应商并集保持首现序），
+    // 可能是乱的。触发器标签必须按预置序重排，不是照抄输入顺序。
+    const user = userEvent.setup();
+    render(
+      <AvailableModelsEditor
+        models={[{ id: "kimi-k2.6", efforts: ["max", "high", "low"] }]}
+        onChange={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+    await expand(user);
+    const trigger = screen
+      .getAllByRole("combobox")
+      .find((combo) => combo.textContent?.includes("max"))!;
+    // low < medium < high：三个不相邻预置档位不压缩成范围，逐项列出且按预置序
+    expect(trigger).toHaveTextContent("low, high, max");
+  });
+});
+
+describe("AvailableModelsEditor — 快速配置", () => {
+  it("没传 onQuickApply 时不显示快速配置行", () => {
+    setup();
+    expect(screen.queryByText(/快速配置/)).toBeNull();
+  });
+
+  it("选了模型点应用，把模型 id 回传给表单", async () => {
+    const user = userEvent.setup();
+    const onQuickApply = vi.fn();
+    setup({ onQuickApply, desktopMode: "proxy" });
+    await expand(user);
+    // 打开快速配置的模型下拉，选 glm-5.3
+    await user.click(
+      screen.getByRole("combobox", { name: /选择要配置的模型/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByText("glm-5.3"));
+    await user.click(screen.getByRole("button", { name: /应用到所有应用/ }));
+    // API 类型没选时第三个参数是 undefined（不设置 = 不动任何应用的格式字段）
+    expect(onQuickApply).toHaveBeenCalledWith("glm-5.3", undefined, undefined);
+  });
+
+  it("选了 API 类型后随应用一起回传", async () => {
+    const user = userEvent.setup();
+    const onQuickApply = vi.fn();
+    setup({ onQuickApply, desktopMode: "proxy" });
+    await expand(user);
+    await user.click(
+      screen.getByRole("combobox", { name: /选择要配置的模型/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByText("glm-5.3"));
+    // 选 API 类型：Anthropic Messages（Select 渲染成 listbox 而不是 dialog）
+    await user.click(screen.getByRole("combobox", { name: /API 类型/ }));
+    const apiListbox = screen.getByRole("listbox");
+    await user.click(within(apiListbox).getByText("Anthropic Messages"));
+    await user.click(screen.getByRole("button", { name: /应用到所有应用/ }));
+    expect(onQuickApply).toHaveBeenCalledWith(
+      "glm-5.3",
+      undefined,
+      "anthropic",
+    );
+  });
+
+  it("没选模型时应用按钮不可用", () => {
+    setup({ onQuickApply: vi.fn(), desktopMode: "proxy" });
+    expect(
+      screen.getByRole("button", { name: /应用到所有应用/ }),
+    ).toBeDisabled();
+  });
 });

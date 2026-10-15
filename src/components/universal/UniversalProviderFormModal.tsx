@@ -51,7 +51,13 @@ import JsonEditor from "@/components/JsonEditor";
 import { ModelSelect } from "./ModelSelect";
 import { AvailableModelsEditor } from "./AvailableModelsEditor";
 import { universalProvidersApi } from "@/lib/api";
-import { compactLimitFrom, effortOptionsFor } from "@/utils/universalProvider";
+import {
+  applyQuickModel,
+  compactLimitFrom,
+  DESKTOP_QUICK_ROLES,
+  effortOptionsFor,
+  type QuickApiFormat,
+} from "@/utils/universalProvider";
 import {
   GROK_BUILD_DEFAULT_API_BACKEND,
   GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
@@ -590,6 +596,38 @@ export function UniversalProviderFormModal({
       });
     },
     [],
+  );
+
+  // 快速配置：一键把选中的模型写进所有应用的所有模型槽位（四档 + 主模型 +
+  // 子代理 + Desktop 路由 + Codex/Gemini/Grok Build）。纯函数在 utils 里，
+  // 这里只负责接上表单状态。
+  const handleQuickApply = useCallback(
+    (modelId: string, reasoningEffort?: string, apiFormat?: string) => {
+      // 主模型与子代理同档位：快速配置里 effort 是整家供应商的默认档，两个都写。
+      const next = applyQuickModel({
+        models: models,
+        modelId,
+        reasoningEffort,
+        subagentReasoningEffort: reasoningEffort,
+        apiFormat: apiFormat as QuickApiFormat | undefined,
+        desktopMode,
+      });
+      setModels(next);
+      // Desktop 的路由行是表单自己的可编辑状态，buildProvider 保存时从它重建
+      // 路由表：快速配置写进去的 routes 必须同步成行，否则保存时被空行顶掉。
+      if (desktopMode === "proxy") {
+        setDesktopRoutes(
+          DESKTOP_QUICK_ROLES.map((routeId) => ({ routeId, model: modelId })),
+        );
+      }
+      toast.success(
+        t("universalProvider.quickConfigApplied", {
+          defaultValue: `已将 ${modelId} 应用到所有应用`,
+          model: modelId,
+        }),
+      );
+    },
+    [desktopMode, models, t],
   );
 
   // 计算 Claude 配置 JSON 预览
@@ -1431,6 +1469,10 @@ ${tables.join("\n\n")}
           onRefresh={() => void handleFetchModels()}
           refreshing={modelsLoading}
           fetched={fetchedModels}
+          onQuickApply={handleQuickApply}
+          desktopMode={desktopMode}
+          quickModel={models.codex?.model}
+          quickEffort={models.codex?.reasoningEffort}
         />
 
         {/* 各应用的专属字段。统一供应商始终同步到全部五个应用，没有开关。
@@ -2198,8 +2240,14 @@ ${tables.join("\n\n")}
                   <Select
                     value={desktopMode}
                     onValueChange={(value) => {
-                      setDesktopMode(value as ClaudeDesktopMode);
-                      setDesktopRoutes([]);
+                      const next = value as ClaudeDesktopMode;
+                      // 直连不用路由表（后端按可用模型列表生成），但切回来时必须还在：
+                      // 只在「当前是直连、之前有行」时清空——即首次进入直连前的空表。
+                      // 有行的表跨模式切换保留，模型映射切回来照原样编辑。
+                      if (next === "direct" && desktopRoutes.length === 0) {
+                        setDesktopRoutes([]);
+                      }
+                      setDesktopMode(next);
                     }}
                   >
                     <SelectTrigger

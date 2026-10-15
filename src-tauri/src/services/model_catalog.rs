@@ -261,6 +261,10 @@ pub(crate) fn best_models_dev_match<'a>(
 }
 
 /// 把 ids 逐条补上 models.dev 的名称、上下文窗口和 effort 档位。
+///
+/// effort 档位按预置升序（none…ultra）写出，不管 models.dev 的声明顺序（同名模型跨供应商
+/// 并集时是首现序）。目录写入、代理查表钳制、UI 勾选集合都假设这个顺序；未知档位保留在
+/// 末尾（旧数据可能带非预置值，下游过滤不丢数据）。
 pub(crate) fn enrich_with_models_dev(
     ids: Vec<String>,
     table: &BTreeMap<String, ModelsDevEntry>,
@@ -274,11 +278,50 @@ pub(crate) fn enrich_with_models_dev(
                     .filter(|name| !name.trim().is_empty()),
                 context_window: hit.and_then(|entry| entry.context_window),
                 max_output: hit.and_then(|entry| entry.max_output),
-                efforts: hit.map(|entry| entry.efforts.clone()).unwrap_or_default(),
+                efforts: hit
+                    .map(|entry| canonical_efforts(&entry.efforts))
+                    .unwrap_or_default(),
                 default_effort: None,
                 id,
             }
         })
+        .collect()
+}
+
+/// 预置 effort 升序（none < minimal < … < ultra），与前端 REASONING_LEVELS / EFFORT_PRESETS
+/// 和 Codex 目录的 CODEX_REASONING_LEVEL_DESCRIPTIONS 同序。已知档位按此序排列，未知档位
+/// （models.dev 的扩展值或旧数据）按字典序殿后，绝不静默丢弃。
+const CANONICAL_EFFORTS: &[&str] = &[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
+
+fn canonical_efforts(efforts: &[String]) -> Vec<String> {
+    let mut known: Vec<&str> = Vec::with_capacity(efforts.len());
+    let mut unknown: Vec<String> = Vec::new();
+    for effort in efforts {
+        let effort = effort.trim();
+        if effort.is_empty() {
+            continue;
+        }
+        if CANONICAL_EFFORTS.contains(&effort) {
+            if !known.contains(&effort) {
+                known.push(effort);
+            }
+        } else if !unknown.iter().any(|existing| existing == effort) {
+            unknown.push(effort.to_string());
+        }
+    }
+    known.sort_by_key(|effort| {
+        CANONICAL_EFFORTS
+            .iter()
+            .position(|preset| preset == effort)
+            .expect("known effort is in the presets")
+    });
+    unknown.sort();
+    known
+        .into_iter()
+        .map(str::to_string)
+        .chain(unknown)
         .collect()
 }
 
@@ -372,6 +415,51 @@ mod tests {
             enrich_with_models_dev(vec!["glm-5".to_string(), "gpt-reserve".to_string()], &table);
         assert_eq!(out[0].efforts, vec!["low", "high"]);
         assert!(out[1].efforts.is_empty(), "未收录的模型没有档位");
+    }
+
+    #[test]
+    fn enrich_writes_efforts_in_preset_order_not_declaration_order() {
+        // 同名模型跨供应商并集（flatten_models_dev 的 merge_efforts 保持首现序）：
+        // 声明顺序可能是乱的，写出的档位必须是预置升序——UI 勾选集合、Codex 目录、
+        // 代理查表钳制都按这个顺序读。
+        let mut table = BTreeMap::new();
+        let mut entry_ = entry(Some("Kimi K2.6"), None);
+        entry_.efforts = vec![
+            "none".to_string(),
+            "high".to_string(),
+            "minimal".to_string(),
+            "low".to_string(),
+            "medium".to_string(),
+            "xhigh".to_string(),
+            "max".to_string(),
+        ];
+        table.insert("moonshot/kimi-k2.6".to_string(), entry_);
+
+        let out = enrich_with_models_dev(vec!["kimi-k2.6".to_string()], &table);
+        assert_eq!(
+            out[0].efforts,
+            vec!["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+        );
+    }
+
+    #[test]
+    fn enrich_keeps_unknown_efforts_after_the_known_ones() {
+        // models.dev 的扩展档位 / 旧数据的非预置值不能丢：排在已知档位之后，下游
+        // 会过滤但数据还在。
+        let mut table = BTreeMap::new();
+        let mut entry_ = entry(Some("Custom"), None);
+        entry_.efforts = vec![
+            "max".to_string(),
+            "turbo".to_string(),
+            "low".to_string(),
+            "lite".to_string(),
+            "max".to_string(),
+            "".to_string(),
+        ];
+        table.insert("custom/model".to_string(), entry_);
+
+        let out = enrich_with_models_dev(vec!["model".to_string()], &table);
+        assert_eq!(out[0].efforts, vec!["low", "max", "lite", "turbo"]);
     }
 
     #[test]
