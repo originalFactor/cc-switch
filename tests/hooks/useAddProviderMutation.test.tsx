@@ -152,14 +152,7 @@ describe("useAddProviderMutation", () => {
         name: "OpenAI Official",
         settingsConfig: { auth: {}, config: "" },
         category: "official",
-        meta: {
-          providerType: "codex_oauth",
-          authBinding: {
-            source: "managed_account",
-            authProvider: "codex_oauth",
-            accountId: "acct-managed",
-          },
-        },
+        meta: {},
       }),
     );
 
@@ -168,14 +161,7 @@ describe("useAddProviderMutation", () => {
       expect.objectContaining({
         id: "generated-uuid",
         category: "official",
-        meta: {
-          providerType: "codex_oauth",
-          authBinding: {
-            source: "managed_account",
-            authProvider: "codex_oauth",
-            accountId: "acct-managed",
-          },
-        },
+        meta: {},
       }),
       "codex",
       undefined,
@@ -184,11 +170,6 @@ describe("useAddProviderMutation", () => {
     expect(persistedProvider).toEqual(
       expect.objectContaining({
         id: "generated-uuid",
-        meta: expect.objectContaining({
-          authBinding: expect.objectContaining({
-            accountId: "acct-managed",
-          }),
-        }),
       }),
     );
   });

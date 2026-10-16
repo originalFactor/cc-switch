@@ -10,7 +10,6 @@ use crate::model_capabilities::{image_input_capability_from_modalities, ImageInp
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 #[cfg(not(test))]
 use once_cell::sync::OnceCell;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::process::{Command, Stdio};
@@ -156,58 +155,6 @@ pub(crate) fn codex_model_rejects_web_search(model: &str) -> bool {
         .any(|prefix| model.starts_with(prefix))
 }
 
-const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CodexManagedOAuthLiveAuthMarker {
-    version: u32,
-    /// cc-switch 本地托管账号 ID，用于区分同一 ChatGPT workspace 下的登录。
-    account_id: String,
-    /// 原生 auth.json 的 `tokens.account_id`，即 ChatGPT workspace ID。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    chatgpt_account_id: Option<String>,
-    /// id_token 中跨刷新稳定的用户身份，防止同 workspace 的原生登录串号。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    user_identity: Option<String>,
-}
-
-pub(crate) struct CodexManagedLiveRefresh {
-    pub(crate) refresh_token: String,
-    pub(crate) id_token: Option<String>,
-    pub(crate) last_refresh_ms: Option<i64>,
-    pub(crate) chatgpt_account_id: String,
-}
-
-/// 测试用：Codex live 的四个文件（auth、config、模型目录、托管账号标记）的字节，用来断言
-/// 「被拒的操作没有改动任何文件」。
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CodexLiveStateSnapshot {
-    files: Vec<(PathBuf, Option<Vec<u8>>)>,
-}
-
-#[cfg(test)]
-impl CodexLiveStateSnapshot {
-    pub(crate) fn capture() -> Result<Self, AppError> {
-        let paths = [
-            get_codex_auth_path(),
-            get_codex_config_path(),
-            get_codex_model_catalog_path(),
-            get_codex_managed_oauth_live_auth_marker_path(),
-        ];
-        let mut files = Vec::with_capacity(paths.len());
-        for path in paths {
-            let bytes = match fs::read(&path) {
-                Ok(bytes) => Some(bytes),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-                Err(err) => return Err(AppError::io(&path, err)),
-            };
-            files.push((path, bytes));
-        }
-        Ok(Self { files })
-    }
-}
-
 /// Which Codex tool surface the generated model catalog should target.
 ///
 /// - `ProxyChat`: cc-switch's proxy takes over and converts Responses<->Chat,
@@ -220,10 +167,6 @@ impl CodexLiveStateSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexCatalogToolProfile {
     ProxyChat,
-    /// Copilot selects Responses or Chat per model, but both paths run through
-    /// the local proxy. Keep proxy-compatible tools while disabling Codex's
-    /// hosted web-search endpoint, which Copilot does not expose.
-    Copilot,
     NativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
@@ -280,69 +223,6 @@ pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
 }
 
-pub(crate) fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
-    crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
-}
-
-#[cfg(test)]
-pub(crate) fn codex_managed_oauth_live_auth_marker_exists() -> bool {
-    get_codex_managed_oauth_live_auth_marker_path().exists()
-}
-
-/// 从 live/备份的 Codex `auth` 中提取上游 ChatGPT workspace ID。
-///
-/// 仅接受 ChatGPT 登录形状（`auth_mode == "chatgpt"`、`OPENAI_API_KEY` 可清空）。
-/// 托管账号写入的完整 bundle 会额外带 `tokens.refresh_token` 与顶层 `last_refresh`，
-/// 这里一并容忍。Codex CLI 自刷新会轮换 access_token，因此短期 token 指纹不能
-/// 作为稳定的所有权谓词；cc-switch 的本地账号 ID 单独记录在 marker 中。
-fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
-    let auth_obj = auth.as_object()?;
-
-    if auth_obj.keys().any(|key| {
-        !matches!(
-            key.as_str(),
-            "auth_mode" | "OPENAI_API_KEY" | "tokens" | "last_refresh"
-        )
-    }) {
-        return None;
-    }
-
-    if auth.get("auth_mode").and_then(|value| value.as_str()) != Some("chatgpt") {
-        return None;
-    }
-
-    let api_key_is_clearable = auth
-        .get("OPENAI_API_KEY")
-        .is_none_or(|value| value.is_null() || value.as_str() == Some("PROXY_MANAGED"));
-    if !api_key_is_clearable {
-        return None;
-    }
-
-    let tokens = auth.get("tokens").and_then(|value| value.as_object())?;
-
-    if tokens.keys().any(|key| {
-        !matches!(
-            key.as_str(),
-            "access_token" | "account_id" | "id_token" | "refresh_token"
-        )
-    }) {
-        return None;
-    }
-
-    let account_id = tokens
-        .get("account_id")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|id| !id.is_empty())?;
-    tokens
-        .get("access_token")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|token| !token.is_empty())?;
-
-    Some(account_id.to_string())
-}
-
 /// 从原生 auth.json 的 id_token 提取跨刷新稳定的用户身份。
 pub(crate) fn extract_codex_auth_user_identity(auth: &Value) -> Option<String> {
     let id_token = auth.pointer("/tokens/id_token")?.as_str()?;
@@ -389,443 +269,6 @@ pub(crate) fn test_codex_id_token(subject: &str) -> String {
     let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
     let payload = URL_SAFE_NO_PAD.encode(json!({ "sub": subject }).to_string());
     format!("{header}.{payload}.")
-}
-
-/// Build the native-shaped ChatGPT auth bundle shared by cc-switch and Codex CLI.
-pub fn codex_managed_oauth_auth_value(
-    account_id: &str,
-    access_token: &str,
-    id_token: Option<&str>,
-    refresh_token: &str,
-    last_refresh: &str,
-) -> Value {
-    let mut tokens = serde_json::Map::new();
-    if let Some(id_token) = id_token {
-        tokens.insert("id_token".to_string(), Value::String(id_token.to_string()));
-    }
-    tokens.insert(
-        "access_token".to_string(),
-        Value::String(access_token.to_string()),
-    );
-    tokens.insert(
-        "refresh_token".to_string(),
-        Value::String(refresh_token.to_string()),
-    );
-    tokens.insert(
-        "account_id".to_string(),
-        Value::String(account_id.to_string()),
-    );
-    json!({
-        "auth_mode": "chatgpt",
-        "OPENAI_API_KEY": null,
-        "tokens": Value::Object(tokens),
-        "last_refresh": last_refresh,
-    })
-}
-
-/// 托管账号登录标记的内容（和 [`record_codex_managed_oauth_live_auth`] 写的一样），给切换
-/// 操作放进同一次提交用。`auth` 不是托管账号的登录形状时返回 `None`。
-pub(crate) fn codex_managed_oauth_marker_bytes(
-    auth: &Value,
-    managed_account_id: &str,
-) -> Result<Option<Vec<u8>>, AppError> {
-    let managed_account_id = managed_account_id.trim();
-    let Some(chatgpt_account_id) = extract_codex_managed_oauth_account_id(auth) else {
-        return Ok(None);
-    };
-    if managed_account_id.is_empty() {
-        return Ok(None);
-    }
-    let user_identity = extract_codex_auth_user_identity(auth).ok_or_else(|| {
-        AppError::Message(
-            "Codex 托管 OAuth auth.json 的 id_token 缺少稳定用户身份，无法安全记录账号所有权"
-                .to_string(),
-        )
-    })?;
-    let marker = CodexManagedOAuthLiveAuthMarker {
-        version: 3,
-        account_id: managed_account_id.to_string(),
-        chatgpt_account_id: Some(chatgpt_account_id),
-        user_identity: Some(user_identity),
-    };
-    serde_json::to_vec_pretty(&marker)
-        .map(Some)
-        .map_err(|e| AppError::Message(format!("序列化 Codex 托管账号标记失败: {e}")))
-}
-
-pub fn record_codex_managed_oauth_live_auth(
-    auth: &Value,
-    managed_account_id: &str,
-) -> Result<(), AppError> {
-    let managed_account_id = managed_account_id.trim();
-    let Some(chatgpt_account_id) = extract_codex_managed_oauth_account_id(auth) else {
-        return Ok(());
-    };
-    if managed_account_id.is_empty() {
-        return Ok(());
-    }
-    let user_identity = extract_codex_auth_user_identity(auth).ok_or_else(|| {
-        AppError::Message(
-            "Codex 托管 OAuth auth.json 的 id_token 缺少稳定用户身份，无法安全记录账号所有权"
-                .to_string(),
-        )
-    })?;
-
-    let marker = CodexManagedOAuthLiveAuthMarker {
-        version: 3,
-        account_id: managed_account_id.to_string(),
-        chatgpt_account_id: Some(chatgpt_account_id),
-        user_identity: Some(user_identity),
-    };
-    crate::config::write_json_file(&get_codex_managed_oauth_live_auth_marker_path(), &marker)
-}
-
-fn migrate_legacy_codex_managed_oauth_live_auth_marker(
-    auth: &Value,
-    managed_account_id: &str,
-    managed_id_token: Option<&str>,
-) -> Result<(), AppError> {
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
-    if !marker_path.exists() {
-        return Ok(());
-    }
-    let marker: CodexManagedOAuthLiveAuthMarker = read_json_file(&marker_path)?;
-    if !matches!(marker.version, 1 | 2) || marker.account_id != managed_account_id {
-        return Ok(());
-    }
-
-    let auth_account_id = extract_codex_managed_oauth_account_id(auth);
-    let auth_user_identity = extract_codex_auth_user_identity(auth);
-    let managed_user_identity = managed_id_token.and_then(extract_codex_id_token_user_identity);
-    if auth_account_id.as_deref() != Some(managed_account_id)
-        || auth_user_identity.as_deref() != managed_user_identity.as_deref()
-        || managed_user_identity.is_none()
-    {
-        return Err(AppError::Message(format!(
-            "旧版 Codex OAuth 账号 {managed_account_id} 无法通过稳定用户身份确认磁盘凭据所有权；为避免覆盖或串用 auth.json，本次操作已取消，请在认证中心重新登录该账号"
-        )));
-    }
-
-    record_codex_managed_oauth_live_auth(auth, managed_account_id)
-}
-
-/// Before removing a manager record, make any legacy live-auth ownership
-/// provable with the manager's persisted user identity. Failure is surfaced so
-/// callers keep the manager record and marker instead of orphaning auth.json.
-pub(crate) fn prepare_codex_live_auth_for_managed_account_removal(
-    managed_account_id: &str,
-    managed_id_token: Option<&str>,
-) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
-    if !auth_path.exists() {
-        return Ok(());
-    }
-    let auth: Value = read_json_file(&auth_path)?;
-    migrate_legacy_codex_managed_oauth_live_auth_marker(&auth, managed_account_id, managed_id_token)
-}
-
-pub fn codex_auth_matches_recorded_managed_oauth(
-    auth: &Value,
-    account_id: &str,
-) -> Result<bool, AppError> {
-    let account_id = account_id.trim();
-    if account_id.is_empty() {
-        return Ok(false);
-    }
-
-    let Some(auth_account_id) = extract_codex_managed_oauth_account_id(auth) else {
-        return Ok(false);
-    };
-    let auth_user_identity = extract_codex_auth_user_identity(auth);
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
-    // No marker is the normal state for a native ChatGPT login (no managed
-    // account ever wrote auth.json, or it was cleaned up when switching away);
-    // only a marker that exists but cannot be read is worth a warning.
-    if !marker_path.exists() {
-        return Ok(false);
-    }
-    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
-        Ok(marker) => marker,
-        Err(err) => {
-            log::warn!(
-                "Failed to read Codex managed OAuth auth marker at {}: {err}",
-                marker_path.display()
-            );
-            return Ok(false);
-        }
-    };
-
-    // v1/v2 markers do not carry a stable user identity. Since multiple users
-    // can share one workspace, those markers cannot safely authorize adopting
-    // or deleting credentials. The next explicit activation replaces them
-    // with a v3 marker.
-    Ok(marker.account_id == account_id
-        && match marker.version {
-            3 => {
-                marker.chatgpt_account_id.as_deref() == Some(auth_account_id.as_str())
-                    && marker
-                        .user_identity
-                        .as_deref()
-                        .is_some_and(|identity| auth_user_identity.as_deref() == Some(identity))
-            }
-            _ => false,
-        })
-}
-
-/// Verify that a proxied Codex request still uses the exact live access token
-/// owned by the selected local account. Workspace IDs alone are not sufficient:
-/// different Team users can share one value.
-pub(crate) fn codex_live_auth_matches_managed_request(
-    account_id: &str,
-    request_access_token: &str,
-) -> Result<bool, AppError> {
-    let auth_path = get_codex_auth_path();
-    if !auth_path.exists() {
-        return Ok(false);
-    }
-    let auth: Value = read_json_file(&auth_path)?;
-    if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
-        return Ok(false);
-    }
-    let live_access_token = auth
-        .pointer("/tokens/access_token")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|token| !token.is_empty());
-    Ok(live_access_token == Some(request_access_token.trim()))
-}
-
-pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account(
-    account_id: &str,
-) -> Result<(), AppError> {
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
-    if !marker_path.exists() {
-        return Ok(());
-    }
-    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
-        Ok(marker) => marker,
-        Err(error) => {
-            log::warn!(
-                "Failed to read Codex managed OAuth auth marker at {} while cleaning account {}: {error}",
-                marker_path.display(),
-                account_id
-            );
-            // A malformed marker cannot establish ownership for any account
-            // and is unusable for rollback/synchronization; remove the stale
-            // bookkeeping file while leaving non-matching live auth untouched.
-            return delete_file(&marker_path);
-        }
-    };
-    if marker.account_id == account_id.trim() {
-        delete_file(&marker_path)?;
-    }
-    Ok(())
-}
-
-/// 切走托管 provider 或从认证中心删除账号时，清理其残留在
-/// `~/.codex/auth.json` 的 ChatGPT 登录。
-///
-/// 删除谓词同时校验 cc-switch marker 中的本地账号 ID 与原生 auth.json 中的
-/// workspace ID，不依赖会被 Codex CLI 自刷新破坏的 access-token 指纹。切换路径必须
-/// 先把盘上轮换后的 refresh token 采纳回 manager，再调用本函数。
-pub fn clear_codex_live_auth_for_managed_account(account_id: &str) -> Result<(), AppError> {
-    clear_codex_live_auth_for_managed_account_if_unchanged(account_id, None)
-}
-
-/// Verify that the outgoing account's live refresh generation has not changed
-/// since it was adopted into the OAuth manager.
-pub fn ensure_codex_live_auth_unchanged_for_managed_account(
-    account_id: &str,
-    expected_refresh_token: &str,
-) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
-    if !auth_path.exists() {
-        return Err(AppError::Message(format!(
-            "Codex CLI 账号 {account_id} 的 live auth 已在切换期间被移除，请重试"
-        )));
-    }
-    let auth: Value = read_json_file(&auth_path)?;
-    let current_refresh_token = auth
-        .pointer("/tokens/refresh_token")
-        .and_then(Value::as_str)
-        .map(str::trim);
-    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id)
-        || current_refresh_token != Some(expected_refresh_token.trim())
-    {
-        return Err(AppError::Message(format!(
-            "Codex CLI 账号 {account_id} 的 live 凭据在切换期间已刷新；为避免覆盖新 refresh token，本次操作已取消，请重试"
-        )));
-    }
-    Ok(())
-}
-
-/// Content-based cleanup with an optional compare-before-delete guard.
-pub fn clear_codex_live_auth_for_managed_account_if_unchanged(
-    account_id: &str,
-    expected_refresh_token: Option<&str>,
-) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
-    let mut removed_matching_auth = false;
-    if auth_path.exists() {
-        let auth: Value = read_json_file(&auth_path)?;
-        if codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
-            if let Some(expected_refresh_token) = expected_refresh_token {
-                let current_refresh_token = auth
-                    .pointer("/tokens/refresh_token")
-                    .and_then(Value::as_str)
-                    .map(str::trim);
-                if current_refresh_token != Some(expected_refresh_token.trim()) {
-                    return Err(AppError::Message(format!(
-                        "Codex CLI 账号 {account_id} 的 live 凭据在切换期间已刷新；为避免删除新 refresh token，本次操作已取消，请重试"
-                    )));
-                }
-            }
-            delete_file(&auth_path)?;
-            removed_matching_auth = true;
-        }
-    }
-
-    if removed_matching_auth {
-        // Once the matching live file is gone, any marker is stale regardless
-        // of version or parseability.
-        delete_file(&get_codex_managed_oauth_live_auth_marker_path())?;
-    } else {
-        clear_codex_managed_oauth_live_auth_marker_for_account(account_id)?;
-    }
-    Ok(())
-}
-
-/// 判断给定的 Codex `auth` 是否属于指定的 cc-switch 本地托管账号。
-///
-/// 原生 `tokens.account_id` 是 workspace ID，可能被多个本地账号共享；因此必须同时
-/// 命中 cc-switch marker 中的本地账号 ID，不能只按 auth.json 内容判断。
-///
-/// 用于 Live 备份剥离：避免把托管账号的可刷新 token 持久化进备份配置。
-pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) -> bool {
-    codex_auth_matches_recorded_managed_oauth(auth, account_id).unwrap_or(false)
-}
-
-/// 读回 Codex CLI 当前 `~/.codex/auth.json` 中属于 `account_id` 的 refresh_token /
-/// id_token（仅当磁盘上的登录账号与之一致时）。
-///
-/// 用于切换回托管 provider 前，采纳 CLI 自行刷新时轮换出的最新 refresh_token，避免
-/// 用陈腐 token 覆盖 CLI 的有效登录（“裸跑 codex” 反复切换场景）。
-pub fn read_codex_live_auth_refresh_for_account(
-    account_id: &str,
-) -> Option<(String, Option<String>, Option<i64>)> {
-    let account_id = account_id.trim();
-    if account_id.is_empty() {
-        return None;
-    }
-    let auth_path = get_codex_auth_path();
-    if !auth_path.exists() {
-        return None;
-    }
-    let auth: Value = read_json_file(&auth_path).ok()?;
-    // 仅在磁盘上确是「该 account_id 的 ChatGPT 登录」时才采纳其 refresh_token，
-    // 避免从非 chatgpt/异常 auth 里误取 token。
-    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
-        return None;
-    }
-    let tokens = auth.get("tokens")?.as_object()?;
-    let refresh_token = tokens.get("refresh_token")?.as_str()?.trim().to_string();
-    if refresh_token.is_empty() {
-        return None;
-    }
-    let id_token = tokens
-        .get("id_token")
-        .and_then(|value| value.as_str())
-        .map(|token| token.to_string());
-    let last_refresh_ms = auth
-        .get("last_refresh")
-        .and_then(Value::as_str)
-        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-        .map(|value| value.timestamp_millis());
-    Some((refresh_token, id_token, last_refresh_ms))
-}
-
-/// Read a managed live credential after safely upgrading a legacy marker.
-/// v1/v2 markers only identify a workspace, so the manager's persisted
-/// id_token must prove the live user's identity before the marker can become
-/// authoritative again.
-pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
-    account_id: &str,
-    managed_id_token: Option<&str>,
-) -> Result<Option<CodexManagedLiveRefresh>, AppError> {
-    let account_id = account_id.trim();
-    if account_id.is_empty() {
-        return Ok(None);
-    }
-    let auth_path = get_codex_auth_path();
-    if !auth_path.exists() {
-        return Ok(None);
-    }
-    let auth: Value = read_json_file(&auth_path)?;
-    migrate_legacy_codex_managed_oauth_live_auth_marker(&auth, account_id, managed_id_token)?;
-    if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
-        return Ok(None);
-    }
-    let Some((refresh_token, id_token, last_refresh_ms)) =
-        read_codex_live_auth_refresh_for_account(account_id)
-    else {
-        return Ok(None);
-    };
-    let chatgpt_account_id = extract_codex_managed_oauth_account_id(&auth)
-        .ok_or_else(|| AppError::Message("Codex live auth 缺少 workspace ID".to_string()))?;
-    Ok(Some(CodexManagedLiveRefresh {
-        refresh_token,
-        id_token,
-        last_refresh_ms,
-        chatgpt_account_id,
-    }))
-}
-
-/// Keep Codex CLI's live auth in the same refresh-token generation after the
-/// manager refreshes a managed account.
-///
-/// The write is compare-and-swap-like: immediately before replacing auth.json,
-/// it verifies that the file still contains the refresh token used for the
-/// network request. Codex CLI does not share cc-switch's process lock, so this
-/// is a best-effort guard that narrows (but cannot make atomic) the cross-process
-/// check-to-replace window.
-/// Ownership is local-account scoped through the marker, while auth.json keeps
-/// the upstream workspace ID required by Codex.
-pub fn sync_codex_managed_oauth_live_auth_after_refresh(
-    account_id: &str,
-    expected_refresh_token: &str,
-    refreshed_auth: &Value,
-) -> Result<bool, AppError> {
-    let account_id = account_id.trim();
-    let expected_refresh_token = expected_refresh_token.trim();
-    if account_id.is_empty() || expected_refresh_token.is_empty() {
-        return Ok(false);
-    }
-
-    let auth_path = get_codex_auth_path();
-    if !auth_path.exists() {
-        return Ok(false);
-    }
-    let current_auth: Value = read_json_file(&auth_path)?;
-    if !codex_live_auth_is_managed_chatgpt_login(&current_auth, account_id) {
-        return Ok(false);
-    }
-    let current_refresh_token = current_auth
-        .pointer("/tokens/refresh_token")
-        .and_then(Value::as_str)
-        .map(str::trim);
-    if current_refresh_token != Some(expected_refresh_token) {
-        return Ok(false);
-    }
-
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
-    let was_recorded_managed = marker_path.exists()
-        && codex_auth_matches_recorded_managed_oauth(&current_auth, account_id)?;
-
-    write_json_file_private(&auth_path, refreshed_auth)?;
-    if was_recorded_managed {
-        record_codex_managed_oauth_live_auth(refreshed_auth, account_id)?;
-    }
-    Ok(true)
 }
 
 /// 获取 Codex config.toml 路径
@@ -1351,10 +794,7 @@ fn codex_catalog_model_entry(
         )),
     );
 
-    if !matches!(
-        profile,
-        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
-    ) {
+    if !matches!(profile, CodexCatalogToolProfile::ProxyChat) {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
         // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
         // emit a custom/freeform tool, and rely on shell_type="shell_command" for
@@ -1387,21 +827,10 @@ fn codex_catalog_model_entry(
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
     }
-    if profile == CodexCatalogToolProfile::Copilot {
-        entry_obj.insert(
-            "supports_parallel_tool_calls".to_string(),
-            json!(spec.supports_parallel_tool_calls.unwrap_or(false)),
-        );
-    }
-
-    if matches!(
-        profile,
-        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
-    ) {
+    if profile == CodexCatalogToolProfile::ProxyChat {
         // Codex's `original` image detail (full-resolution) is rejected by
         // strict Chat gateways with `400 invalid_request_error`, param
-        // `messages.N.content`. Copilot can also select Chat per model, so
-        // neither proxy profile may advertise it; Codex keeps to auto/high.
+        // `messages.N.content`.
         entry_obj.insert("supports_image_detail_original".to_string(), json!(false));
     }
 
@@ -1427,7 +856,7 @@ struct CodexCatalogModelSpec {
     /// entries, which keep the vendor's declared window.
     context_window: Option<u64>,
     /// Per-row override for `supports_parallel_tool_calls` on native and
-    /// Anthropic profiles, and Copilot's conservative false default.
+    /// Anthropic profiles.
     supports_parallel_tool_calls: Option<bool>,
     /// Hidden per-row capability declaration from built-in provider metadata.
     /// When omitted, all catalog profiles consult the shared text-only model
@@ -1955,7 +1384,7 @@ fn codex_native_row_is_valid(row: &Value) -> bool {
     has_slug && has_required && has_instructions
 }
 
-/// 经典工具契约模板：ProxyChat / Copilot 给第三方模型生成目录条目时复制的骨架。取自 Codex
+/// 经典工具契约模板：ProxyChat 给第三方模型生成目录条目时复制的骨架。取自 Codex
 /// 自带的 gpt-5.5 条目，借的是它那套工具形态（freeform apply_patch、unified_exec、没有
 /// `tool_mode` 和 v2 子代理），转换层就是照它写的；名字、窗口、可见性都会被改写，跟调用哪个
 /// 模型无关。只用仓库里这份，不读 `models_cache.json` 也不跑 `codex`：官方改了那边的条目
@@ -2324,22 +1753,20 @@ fn codex_catalog_from_specs_for_row(
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
 
     // Native providers use the bundled clean template (no freeform apply_patch);
-    // ProxyChat and Copilot clone the bundled classic tool template so their
+    // ProxyChat clones the bundled classic tool template so its
     // proxy paths retain custom<->function tool support.
     let template = match profile {
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
             load_codex_native_responses_template()
         }
-        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot => {
-            load_codex_classic_tool_template()
-        }
+        CodexCatalogToolProfile::ProxyChat => load_codex_classic_tool_template(),
     };
     // 命中 OpenAI 官方条目的行照搬官方（写了目录之后 Codex 只认文件里的条目，通用模板
     // 会顶掉 GPT 自己的提示词），其余行照旧按模板生成。Responses→Anthropic 的转换会丢掉
-    // 官方条目里的 custom 工具，这条路不照搬。Copilot 仍按自身的目录配置生成，
+    // 官方条目里的 custom 工具，这条路不照搬。
     // 保留账号模型的上下文窗口和并行工具能力，而不是套用官方 GPT 的能力。
     let official = match profile {
-        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => Vec::new(),
+        CodexCatalogToolProfile::Anthropic => Vec::new(),
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::ProxyChat => {
             codex_openai_official_models()
         }
@@ -2369,7 +1796,7 @@ pub(crate) struct CodexCatalogPlan {
     pub catalog: Option<Value>,
 }
 
-/// 要不要关掉 web_search：Responses→Anthropic 的转换会丢掉这个内置工具，Copilot 也不
+/// 要不要关掉 web_search：Responses→Anthropic 的转换会丢掉这个内置工具，
 /// 提供这个托管工具，两者一律关；原生
 /// Responses 网关按拒收名单判定（MiMo、LongCat、MiniMax 等按域名或模型品牌，Qwen3-Coder
 /// 按模型）；其余保持 Codex 的默认。只在有模型目录时才看名单。
@@ -2379,7 +1806,7 @@ pub(crate) fn codex_disables_web_search(
     profile: CodexCatalogToolProfile,
 ) -> bool {
     match profile {
-        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => true,
+        CodexCatalogToolProfile::Anthropic => true,
         CodexCatalogToolProfile::NativeResponses => {
             !codex_catalog_model_specs(settings).is_empty()
                 && codex_native_gateway_rejects_web_search(config_text)
@@ -3143,92 +2570,6 @@ mod tests {
         }
     }
 
-    #[derive(Debug, PartialEq)]
-    struct CodexLiveTestState {
-        auth_bytes: Vec<u8>,
-        auth_value: Value,
-        config_bytes: Vec<u8>,
-        config_value: toml::Value,
-        catalog_bytes: Vec<u8>,
-        catalog_value: Value,
-        marker_bytes: Vec<u8>,
-        marker_value: Value,
-    }
-
-    fn capture_codex_live_test_state() -> CodexLiveTestState {
-        let auth_bytes = fs::read(get_codex_auth_path()).expect("read live auth bytes");
-        let config_bytes = fs::read(get_codex_config_path()).expect("read live config bytes");
-        let catalog_bytes =
-            fs::read(get_codex_model_catalog_path()).expect("read live catalog bytes");
-        let marker_bytes = fs::read(get_codex_managed_oauth_live_auth_marker_path())
-            .expect("read managed auth marker bytes");
-
-        CodexLiveTestState {
-            auth_value: serde_json::from_slice(&auth_bytes).expect("parse live auth"),
-            config_value: toml::from_str(
-                std::str::from_utf8(&config_bytes).expect("live config must be UTF-8"),
-            )
-            .expect("parse live config"),
-            catalog_value: serde_json::from_slice(&catalog_bytes).expect("parse live catalog"),
-            marker_value: serde_json::from_slice(&marker_bytes).expect("parse managed auth marker"),
-            auth_bytes,
-            config_bytes,
-            catalog_bytes,
-            marker_bytes,
-        }
-    }
-
-    fn seed_rotated_managed_codex_live_state() -> CodexLiveTestState {
-        let id_token = test_codex_id_token("user-a");
-        let auth = codex_managed_oauth_auth_value(
-            "account-a",
-            "access-r1",
-            Some(&id_token),
-            "refresh-r1",
-            "2026-08-06T00:00:01Z",
-        );
-        crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("seed live auth R1");
-        crate::config::write_text_file(
-            &get_codex_config_path(),
-            "# cas-guard-sentinel\nmodel = \"gpt-5.5\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n",
-        )
-        .expect("seed live config");
-        crate::config::write_json_file(
-            &get_codex_model_catalog_path(),
-            &json!({ "models": [{ "slug": "cas-guard-sentinel" }] }),
-        )
-        .expect("seed live catalog");
-        record_codex_managed_oauth_live_auth(&auth, "account-a").expect("seed managed auth marker");
-
-        capture_codex_live_test_state()
-    }
-
-    #[test]
-    #[serial]
-    fn ensure_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
-        let _home = CodexLiveTestHome::new();
-        let before = seed_rotated_managed_codex_live_state();
-
-        let result =
-            ensure_codex_live_auth_unchanged_for_managed_account("account-a", "refresh-r0");
-
-        assert!(result.is_err(), "R1 live auth must reject an expected R0");
-        assert_eq!(capture_codex_live_test_state(), before);
-    }
-
-    #[test]
-    #[serial]
-    fn clear_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
-        let _home = CodexLiveTestHome::new();
-        let before = seed_rotated_managed_codex_live_state();
-
-        let result =
-            clear_codex_live_auth_for_managed_account_if_unchanged("account-a", Some("refresh-r0"));
-
-        assert!(result.is_err(), "R1 live auth must reject an expected R0");
-        assert_eq!(capture_codex_live_test_state(), before);
-    }
-
     #[test]
     fn catalog_tool_profile_from_api_format() {
         assert_eq!(
@@ -3307,182 +2648,6 @@ base_url = "https://leftover.example.com/v1"
 base_url = "https://single.example.com/v1"
 "#;
         assert_eq!(extract_codex_base_url(no_active), None);
-    }
-
-    #[test]
-    #[serial]
-    fn managed_chatgpt_login_matches_local_marker_and_workspace() {
-        let _home = CodexLiveTestHome::new();
-        let shared_chatgpt_user_token = |subject: &str| {
-            let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
-            let payload = URL_SAFE_NO_PAD.encode(
-                json!({
-                    "sub": subject,
-                    "https://api.openai.com/auth": {
-                        "chatgpt_user_id": "shared-team-user-id"
-                    }
-                })
-                .to_string(),
-            );
-            format!("{header}.{payload}.")
-        };
-        // 原生 auth 保留 workspace ID；marker 用本地 ID 区分同 workspace 登录。
-        let full_bundle = json!({
-            "auth_mode": "chatgpt",
-            "OPENAI_API_KEY": null,
-            "tokens": {
-                "id_token": shared_chatgpt_user_token("user-a"),
-                "access_token": "access",
-                "refresh_token": "refresh-secret",
-                "account_id": "workspace-shared"
-            },
-            "last_refresh": "2026-01-02T03:04:05.000000000Z"
-        });
-        record_codex_managed_oauth_live_auth(&full_bundle, "local-account-a")
-            .expect("record managed auth marker");
-        crate::config::write_json_file(&get_codex_auth_path(), &full_bundle)
-            .expect("write managed live auth");
-        assert!(
-            codex_live_auth_matches_managed_request("local-account-a", "access").unwrap(),
-            "the selected account's exact live bearer must match"
-        );
-        assert!(
-            !codex_live_auth_matches_managed_request("local-account-a", "other-access").unwrap(),
-            "another user's bearer in the same workspace must not match"
-        );
-        let managed_id_token = full_bundle
-            .pointer("/tokens/id_token")
-            .and_then(Value::as_str)
-            .expect("managed id token");
-        assert!(
-            codex_live_auth_is_managed_chatgpt_login(&full_bundle, "local-account-a"),
-            "a full refreshable bundle for the managed account must be recognized"
-        );
-        assert!(
-            !codex_live_auth_is_managed_chatgpt_login(&full_bundle, "local-account-b"),
-            "another local login in the same workspace must not match"
-        );
-        let mut other_user = full_bundle.clone();
-        other_user["tokens"]["id_token"] = json!(shared_chatgpt_user_token("user-b"));
-        assert!(
-            !codex_live_auth_is_managed_chatgpt_login(&other_user, "local-account-a"),
-            "a native login for another user in the same workspace must not match"
-        );
-        crate::config::write_json_file(&get_codex_auth_path(), &other_user)
-            .expect("write other user's native login");
-        assert!(
-            read_codex_live_auth_refresh_for_account("local-account-a").is_none(),
-            "another user's refresh token must not be adopted"
-        );
-        clear_codex_live_auth_for_managed_account("local-account-a")
-            .expect("clear stale local ownership marker");
-        assert!(
-            get_codex_auth_path().exists(),
-            "removing local account A must not delete native account B"
-        );
-
-        crate::config::write_json_file(
-            &get_codex_managed_oauth_live_auth_marker_path(),
-            &json!({
-                "version": 2,
-                "account_id": "workspace-shared"
-            }),
-        )
-        .expect("write legacy managed auth marker");
-        assert!(
-            read_codex_live_auth_refresh_for_managed_account(
-                "workspace-shared",
-                Some(managed_id_token),
-            )
-            .is_err(),
-            "a legacy marker must not migrate across users in one workspace"
-        );
-        assert!(
-            !codex_live_auth_is_managed_chatgpt_login(&other_user, "workspace-shared"),
-            "a legacy marker without user identity must not establish ownership"
-        );
-        assert!(
-            read_codex_live_auth_refresh_for_account("workspace-shared").is_none(),
-            "a legacy marker must not authorize refresh-token adoption"
-        );
-        clear_codex_live_auth_for_managed_account("workspace-shared")
-            .expect("clear ambiguous legacy marker");
-        assert!(
-            get_codex_auth_path().exists(),
-            "clearing an ambiguous legacy marker must preserve native auth"
-        );
-
-        // 非 chatgpt 模式（API key）不应命中。
-        let api_key_auth = json!({ "OPENAI_API_KEY": "sk-live" });
-        assert!(!codex_live_auth_is_managed_chatgpt_login(
-            &api_key_auth,
-            "local-account-a"
-        ));
-    }
-
-    /// 原生 ChatGPT 登录没有 marker 是常态：不认所有权，也不算读取失败；marker 坏了同样
-    /// 不认。
-    #[test]
-    #[serial]
-    fn missing_or_malformed_marker_never_establishes_ownership() {
-        let _home = CodexLiveTestHome::new();
-        let id_token = test_codex_id_token("user-a");
-        let auth = codex_managed_oauth_auth_value(
-            "workspace-a",
-            "access",
-            Some(&id_token),
-            "refresh",
-            "2026-01-01T00:00:00Z",
-        );
-        crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("write live auth");
-        let marker = get_codex_managed_oauth_live_auth_marker_path();
-
-        assert!(!marker.exists());
-        assert!(!codex_auth_matches_recorded_managed_oauth(&auth, "local-account-a").unwrap());
-        assert!(!codex_live_auth_matches_managed_request("local-account-a", "access").unwrap());
-
-        crate::config::write_text_file(&marker, "{not json").expect("write malformed marker");
-        assert!(!codex_auth_matches_recorded_managed_oauth(&auth, "local-account-a").unwrap());
-    }
-
-    #[test]
-    #[serial]
-    fn legacy_managed_marker_removal_requires_manager_identity() {
-        let _home = CodexLiveTestHome::new();
-        let id_token = test_codex_id_token("legacy-user");
-        let auth = codex_managed_oauth_auth_value(
-            "legacy-workspace",
-            "access",
-            Some(&id_token),
-            "refresh",
-            "2026-01-01T00:00:00Z",
-        );
-        crate::config::write_json_file(&get_codex_auth_path(), &auth)
-            .expect("write legacy live auth");
-        crate::config::write_json_file(
-            &get_codex_managed_oauth_live_auth_marker_path(),
-            &json!({
-                "version": 2,
-                "account_id": "legacy-workspace"
-            }),
-        )
-        .expect("write legacy marker");
-
-        let other_user = test_codex_id_token("other-user");
-        assert!(prepare_codex_live_auth_for_managed_account_removal(
-            "legacy-workspace",
-            Some(&other_user),
-        )
-        .is_err());
-        assert!(get_codex_auth_path().exists());
-        assert!(get_codex_managed_oauth_live_auth_marker_path().exists());
-
-        prepare_codex_live_auth_for_managed_account_removal("legacy-workspace", Some(&id_token))
-            .expect("prove and migrate legacy ownership");
-        clear_codex_live_auth_for_managed_account("legacy-workspace")
-            .expect("remove proven managed live auth");
-        assert!(!get_codex_auth_path().exists());
-        assert!(!get_codex_managed_oauth_live_auth_marker_path().exists());
     }
 
     #[test]
@@ -4304,7 +3469,6 @@ experimental_bearer_token = "stale-table-key"
 
         for profile in [
             CodexCatalogToolProfile::ProxyChat,
-            CodexCatalogToolProfile::Copilot,
             CodexCatalogToolProfile::NativeResponses,
             CodexCatalogToolProfile::Anthropic,
         ] {
@@ -4567,7 +3731,6 @@ wire_api = "responses"
 
         for profile in [
             CodexCatalogToolProfile::ProxyChat,
-            CodexCatalogToolProfile::Copilot,
             CodexCatalogToolProfile::Anthropic,
         ] {
             assert!(
@@ -4614,24 +3777,24 @@ wire_api = "responses"
         let mut proxy_template = template.clone();
         proxy_template["apply_patch_tool_type"] = json!("freeform");
         proxy_template["supports_image_detail_original"] = json!(true);
-        for profile in [
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &proxy_template,
             CodexCatalogToolProfile::ProxyChat,
-            CodexCatalogToolProfile::Copilot,
-        ] {
-            let catalog = codex_model_catalog_from_specs(&specs, &proxy_template, profile, 128_000);
-            assert_eq!(
-                catalog["models"][0]["apply_patch_tool_type"],
-                json!("freeform")
-            );
-            assert_eq!(
-                catalog["models"][0]["supports_image_detail_original"],
-                json!(false)
-            );
-        }
+            128_000,
+        );
+        assert_eq!(
+            catalog["models"][0]["apply_patch_tool_type"],
+            json!("freeform")
+        );
+        assert_eq!(
+            catalog["models"][0]["supports_image_detail_original"],
+            json!(false)
+        );
     }
 
     #[test]
-    fn catalog_web_search_policy_keeps_copilot_and_anthropic_disabled_without_models() {
+    fn catalog_web_search_policy_keeps_anthropic_disabled_without_models() {
         let config = "model = \"MiniMax-M3\"\n";
         for (settings, has_catalog) in [
             (json!({}), false),
@@ -4641,7 +3804,6 @@ wire_api = "responses"
             ),
         ] {
             for (profile, disabled) in [
-                (CodexCatalogToolProfile::Copilot, true),
                 (CodexCatalogToolProfile::Anthropic, true),
                 (CodexCatalogToolProfile::ProxyChat, false),
                 (CodexCatalogToolProfile::NativeResponses, has_catalog),
@@ -4662,7 +3824,7 @@ wire_api = "responses"
     }
 
     #[test]
-    fn copilot_catalog_preserves_context_and_explicit_parallel_capabilities() {
+    fn proxy_catalog_preserves_context_and_explicit_parallel_capabilities() {
         let settings = json!({
             "modelCatalog": {
                 "models": [
@@ -4677,15 +3839,20 @@ wire_api = "responses"
         let catalog = codex_model_catalog_from_specs(
             &codex_catalog_model_specs(&settings),
             &template,
-            CodexCatalogToolProfile::Copilot,
+            CodexCatalogToolProfile::ProxyChat,
             128_000,
         );
         let models = catalog["models"].as_array().unwrap();
         assert_eq!(models.len(), 3);
         assert_eq!(models[0]["context_window"], json!(400000));
         assert_eq!(models[0]["max_context_window"], json!(400000));
-        for (entry, parallel) in models.iter().zip([false, true, false]) {
-            assert_eq!(entry["supports_parallel_tool_calls"], json!(parallel));
+        // ProxyChat clones the classic template verbatim, so every row inherits
+        // its conservative-parallel default; per-row flags are not consulted.
+        for entry in models {
+            assert_eq!(
+                entry["supports_parallel_tool_calls"],
+                template["supports_parallel_tool_calls"]
+            );
             assert!(entry["base_instructions"].is_string());
             for key in CODEX_CATALOG_PARSER_REQUIRED_FIELDS {
                 assert!(entry.get(*key).is_some(), "{key} is required by Codex");

@@ -1,7 +1,6 @@
 import type { TFunction } from "i18next";
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
-import { isOAuthProviderType } from "@/config/constants";
 import {
   extractCodexWireApi,
   isCodexAnthropicWireApi,
@@ -47,14 +46,6 @@ export function getRoutingReason(
     if (isCopilotProvider) {
       proxyRequiredReason = t("notifications.proxyReasonCopilot", {
         defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
-      });
-    } else if (isOAuthProviderType(provider.meta?.providerType)) {
-      // 托管 OAuth（codex_oauth / xai_oauth 等）：凭据由本地代理注入，
-      // 是否需路由由 providerType 权威决定，不看 apiFormat（后端亦无视，
-      // 见 forwarder.rs）——避免 codex_oauth 被改成 anthropic / 旧数据缺省
-      // apiFormat 时漏判。Claude 下的 Copilot 保留上面的专属文案。
-      proxyRequiredReason = t("notifications.proxyReasonManagedOAuth", {
-        defaultValue: "使用托管 OAuth 登录（令牌由本地路由注入）",
       });
     } else if (provider.meta?.apiFormat === "openai_chat" && app === "claude") {
       proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {

@@ -31,7 +31,7 @@ interface FullScreenPanelProps {
   contentClassName?: string;
   /**
    * 编辑表单：用户改过内容后，从侧栏、托盘、⌘, 离开当前页前会先确认。
-   * 只给编辑页打开；授权中心、测速这类页面不需要。
+   * 只给编辑页打开；测速这类页面不需要。
    */
   trackUnsavedChanges?: boolean;
 }

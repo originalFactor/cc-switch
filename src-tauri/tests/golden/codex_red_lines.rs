@@ -592,43 +592,6 @@ fn requires_openai_auth_follows_login_preservation() {
     );
 }
 
-/// CX-15：结果可以是拒绝，也可以是放行，但放行时路由表绝不要求官方登录。
-#[test]
-fn proxy_injected_oauth_cards_never_carry_the_official_login() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    for provider_type in ["xai_oauth", "github_copilot"] {
-        reset_test_fs();
-        set_login_preservation(true);
-        let card = with_meta(
-            codex(
-                "oauth-card",
-                Some(""),
-                "model_provider = \"custom\"\nmodel = \"grok-4.5\"\n\n[model_providers.custom]\nname = \"xAI\"\nbase_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
-            ),
-            ProviderMeta {
-                provider_type: Some(provider_type.to_string()),
-                ..Default::default()
-            },
-        );
-        let state = setup(vec![card], true);
-        let before = snapshot(&state, "oauth-card");
-
-        match switch(&state, "oauth-card") {
-            Ok(_) => {
-                let doc = live_config();
-                let (_, route) = route(&doc).expect("route");
-                assert_ne!(
-                    flag(route, "requires_openai_auth"),
-                    Some(true),
-                    "{provider_type}: the official ChatGPT login would be sent to api.x.ai"
-                );
-                assert_loadable(&doc);
-            }
-            Err(_) => assert_eq!(before, snapshot(&state, "oauth-card")),
-        }
-    }
-}
-
 /// CX-23
 #[test]
 fn model_catalog_pointer_ownership() {

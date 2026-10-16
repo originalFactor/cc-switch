@@ -83,7 +83,7 @@ function rowCountdown(row: QuotaLine[], now: number) {
 }
 
 /**
- * 额度行后面的「⏱ 2h30m」（卡片、授权中心）：定宽、内容靠左，几行的时钟上下对齐；
+ * 额度行后面的「⏱ 2h30m」（卡片）：定宽、内容靠左，几行的时钟上下对齐；
  * 这一行没有重置时间时留空占位，免得各行右边缘错开
  */
 export function ResetSlot({
@@ -523,7 +523,7 @@ interface QuotaBarsProps {
 
 const BAR_ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
 
-/** 展开的额度条（授权中心、多套餐展开）：条长跟着数值（剩余或已用，见 barPercent） */
+/** 展开的额度条（多套餐展开）：条长跟着数值（剩余或已用，见 barPercent） */
 export function QuotaBars({
   rows,
   title,

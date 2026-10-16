@@ -5,10 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
-import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import {
@@ -27,11 +24,7 @@ import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
-import {
-  TEMPLATE_TYPES,
-  PROVIDER_TYPES,
-  type TemplateType,
-} from "@/config/constants";
+import { TEMPLATE_TYPES, type TemplateType } from "@/config/constants";
 import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
@@ -332,8 +325,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const providerCredentials = getProviderCredentials();
-  const isBoundCodexOfficial =
-    resolveCodexOfficialIdentity(appId, provider) === "managed_account";
   const isOfficialSubscription = isOfficialSubscriptionProvider(
     provider,
     appId,
@@ -347,9 +338,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         isOfficialSubscription &&
         normalizedScript.templateType !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
       ) {
-        return createUsageScript({
-          enabled: isBoundCodexOfficial ? normalizedScript.enabled : false,
-        });
+        return createUsageScript({ enabled: false });
       }
       // 已有配置：如果是 coding_plan 但没有 codingPlanProvider，自动检测填充
       if (
@@ -375,7 +364,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     }
 
     if (isOfficialSubscription) {
-      return createUsageScript({ enabled: isBoundCodexOfficial });
+      return createUsageScript({ enabled: true });
     }
 
     return createUsageScript({
@@ -443,10 +432,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(
     () => {
       const existingScript = provider.meta?.usage_script;
-      // Copilot 供应商默认使用 Copilot 模板
-      if (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT) {
-        return TEMPLATE_TYPES.GITHUB_COPILOT;
-      }
       // 优先使用保存的 templateType
       if (
         existingScript?.templateType &&
@@ -533,15 +518,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       // 官方订阅额度模板使用 CLI/OAuth 凭据和官方 API
       if (selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const accountId = isBoundCodexOfficial
-          ? (resolveManagedAccountId(
-              provider.meta,
-              PROVIDER_TYPES.CODEX_OAUTH,
-            ) ?? null)
-          : null;
-        const quota = isBoundCodexOfficial
-          ? await subscriptionApi.getCodexOauthQuota(accountId)
-          : await subscriptionApi.getQuota(appId);
+        const quota = await subscriptionApi.getQuota(appId);
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -550,12 +527,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             duration: 3000,
             closeButton: true,
           });
-          queryClient.setQueryData(
-            isBoundCodexOfficial
-              ? ["codex_oauth", "quota", accountId ?? "default"]
-              : ["subscription", "quota", appId],
-            quota,
-          );
+          queryClient.setQueryData(["subscription", "quota", appId], quota);
         } else {
           toast.error(
             `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,
@@ -644,38 +616,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             { duration: 5000 },
           );
         }
-        return;
-      }
-
-      // Copilot 模板使用专用 API
-      if (selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT) {
-        const accountId = resolveManagedAccountId(
-          provider.meta,
-          PROVIDER_TYPES.GITHUB_COPILOT,
-        );
-        const usage = accountId
-          ? await copilotGetUsageForAccount(accountId)
-          : await copilotGetUsage();
-        const premium = usage.quota_snapshots.premium_interactions;
-        const used = premium.entitlement - premium.remaining;
-        const summary = `[${usage.copilot_plan}] ${t("usage.remaining")} ${premium.remaining}/${premium.entitlement} (${t("usageScript.resetDate")}: ${usage.quota_reset_date})`;
-        toast.success(`${t("usageScript.testSuccess")}${summary}`, {
-          duration: 3000,
-          closeButton: true,
-        });
-        // 更新缓存
-        queryClient.setQueryData(["usage", provider.id, appId], {
-          success: true,
-          data: [
-            {
-              planName: usage.copilot_plan,
-              remaining: premium.remaining,
-              total: premium.entitlement,
-              used: used,
-              unit: t("usageScript.premiumRequests"),
-            },
-          ],
-        });
         return;
       }
 

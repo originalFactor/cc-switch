@@ -22,18 +22,6 @@ describe("providerNeedsRouting", () => {
       category: "official",
       settingsConfig: { auth: {}, config: "" },
     });
-    const managed = mkProvider({
-      id: "managed-account-card",
-      category: "official",
-      settingsConfig: { auth: {}, config: "" },
-      meta: {
-        authBinding: {
-          source: "managed_account",
-          authProvider: "codex_oauth",
-          accountId: "acct-managed",
-        },
-      },
-    });
     const unbound = mkProvider({
       id: "follow-login",
       category: "official",
@@ -45,32 +33,10 @@ describe("providerNeedsRouting", () => {
         config: "",
       },
     });
-    const fixedManaged = mkProvider({
-      id: "codex-official",
-      category: "official",
-      settingsConfig: { auth: {}, config: "" },
-      meta: {
-        providerType: "codex_oauth",
-        authBinding: {
-          source: "managed_account",
-          authProvider: "codex_oauth",
-          accountId: "acct-fixed-managed",
-        },
-      },
-    });
-
     expect(resolveCodexOfficialIdentity("codex", native)).toBe("native_login");
-    expect(resolveCodexOfficialIdentity("codex", managed)).toBe(
-      "managed_account",
-    );
     expect(resolveCodexOfficialIdentity("codex", unbound)).toBe("native_login");
-    expect(resolveCodexOfficialIdentity("codex", fixedManaged)).toBe(
-      "managed_account",
-    );
-    expect(resolveCodexOfficialIdentity("claude", managed)).toBeNull();
 
     expect(supportsOfficialProxyTakeover("codex", native)).toBe(true);
-    expect(supportsOfficialProxyTakeover("codex", managed)).toBe(true);
     expect(supportsOfficialProxyTakeover("codex", unbound)).toBe(true);
   });
 
@@ -166,29 +132,13 @@ describe("providerNeedsRouting", () => {
         config: 'model_provider = "custom"',
       },
     });
-    const managed = mkProvider({
-      id: "legacy-managed",
-      settingsConfig: { auth: {}, config: null },
-      meta: {
-        authBinding: {
-          source: "managed_account",
-          authProvider: "codex_oauth",
-          accountId: "acct-managed",
-        },
-      },
-    });
-
     expect(resolveCodexOfficialIdentity("codex", fixed)).toBe("native_login");
-    expect(resolveCodexOfficialIdentity("codex", managed)).toBe(
-      "managed_account",
-    );
     expect(resolveCodexOfficialIdentity("codex", fixedApiKey)).toBeNull();
     expect(resolveCodexOfficialIdentity("codex", fixedCustom)).toBeNull();
     expect(providerNeedsRouting("codex", fixed)).toBe(false);
-    expect(providerNeedsRouting("codex", managed)).toBe(false);
   });
 
-  it("官方供应商一律不需要路由（即便 providerType 是 OAuth）", () => {
+  it("官方供应商一律不需要路由", () => {
     const apps: AppId[] = ["claude", "codex", "claude-desktop"];
     for (const app of apps) {
       expect(
@@ -196,77 +146,10 @@ describe("providerNeedsRouting", () => {
           app,
           mkProvider({
             category: "official",
-            meta: { providerType: "xai_oauth" },
           }),
         ),
       ).toBe(false);
     }
-  });
-
-  describe("托管 OAuth：providerType 权威，与 apiFormat 无关（P2）", () => {
-    it("Claude 下 xai_oauth 需要路由", () => {
-      expect(
-        providerNeedsRouting(
-          "claude",
-          mkProvider({
-            meta: { providerType: "xai_oauth", apiFormat: "openai_responses" },
-          }),
-        ),
-      ).toBe(true);
-    });
-
-    it("Claude 下 codex_oauth 即便 apiFormat 被改成 anthropic 仍需路由", () => {
-      expect(
-        providerNeedsRouting(
-          "claude",
-          mkProvider({
-            meta: { providerType: "codex_oauth", apiFormat: "anthropic" },
-          }),
-        ),
-      ).toBe(true);
-    });
-
-    it("Claude 下 codex_oauth 即便 apiFormat 缺省（旧数据）仍需路由", () => {
-      expect(
-        providerNeedsRouting(
-          "claude",
-          mkProvider({ meta: { providerType: "codex_oauth" } }),
-        ),
-      ).toBe(true);
-    });
-
-    it("Claude 下 github_copilot 需要路由", () => {
-      expect(
-        providerNeedsRouting(
-          "claude",
-          mkProvider({
-            meta: { providerType: "github_copilot", apiFormat: "openai_chat" },
-          }),
-        ),
-      ).toBe(true);
-    });
-
-    it("Codex 下 xai_oauth 需要路由（原生 Responses 也要注入 token）", () => {
-      expect(
-        providerNeedsRouting(
-          "codex",
-          mkProvider({
-            meta: { providerType: "xai_oauth", apiFormat: "openai_responses" },
-          }),
-        ),
-      ).toBe(true);
-    });
-
-    it("grokbuild 下 xai_oauth 需要路由", () => {
-      expect(
-        providerNeedsRouting(
-          "grokbuild",
-          mkProvider({
-            meta: { providerType: "xai_oauth", apiFormat: "openai_responses" },
-          }),
-        ),
-      ).toBe(true);
-    });
   });
 
   describe("Claude 非 OAuth 按格式判定", () => {
@@ -363,21 +246,13 @@ describe("providerNeedsRouting", () => {
       ).toBe(true);
     });
 
-    it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
-      "direct 模式的托管 OAuth %s 仍需要路由",
-      (providerType) => {
-        expect(
-          providerNeedsRouting(
-            "claude-desktop",
-            mkProvider({
-              meta: {
-                providerType,
-                claudeDesktopMode: "direct",
-              },
-            }),
-          ),
-        ).toBe(true);
-      },
-    );
+    it("direct 模式不需要路由", () => {
+      expect(
+        providerNeedsRouting(
+          "claude-desktop",
+          mkProvider({ meta: { claudeDesktopMode: "direct" } }),
+        ),
+      ).toBe(false);
+    });
   });
 });

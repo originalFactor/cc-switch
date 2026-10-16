@@ -109,14 +109,6 @@ export interface UsageResult {
   error?: string;
 }
 
-export type AuthBindingSource = "provider_config" | "managed_account";
-
-export interface AuthBinding {
-  source: AuthBindingSource;
-  authProvider?: string;
-  accountId?: string;
-}
-
 export interface ClaudeDesktopModelRoute {
   model: string;
   labelOverride?: string;
@@ -197,8 +189,6 @@ export interface ProviderMeta {
   // Managed Codex Copilot uses this instead of apiFormat. Missing/unknown means auto.
   // Keep the raw string so selections from newer versions survive an edit/save.
   codexCopilotApiFormat?: string;
-  // 通用认证绑定
-  authBinding?: AuthBinding;
   // Claude 认证字段名
   apiKeyField?: ClaudeApiKeyField;
   // 是否将 base_url 视为完整 API 端点（代理直接使用此 URL，不拼接路径）
@@ -224,10 +214,8 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
-  // 供应商类型（用于识别 Copilot 等特殊供应商）
+  // 供应商类型（用于识别特殊供应商）
   providerType?: string;
-  // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
-  githubAccountId?: string;
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
 }

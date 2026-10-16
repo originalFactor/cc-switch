@@ -3,8 +3,6 @@
 //! 切换式应用（Claude Code、Codex、Gemini CLI、Grok Build）的客户端文件只经写入引擎写
 //! （`*_direct.rs`），这里只负责分发；Claude Desktop 仍在这里写。
 
-use std::sync::Arc;
-
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
@@ -12,7 +10,6 @@ use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file};
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::codex_oauth_auth::{CodexLiveAuthSwitchGuard, CodexOAuthManager};
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -369,7 +366,6 @@ pub(crate) fn write_live_for_state(
         // Codex 同理：只替换关键字段和独有字段，不合并片段、不补回 MCP。
         super::codex_direct::write_direct(
             db,
-            &state.codex_oauth_manager,
             crate::mode::state::op::APPLY,
             super::codex_direct::Owner::Provider(provider),
             Some(provider),
@@ -398,97 +394,6 @@ pub(crate) fn write_live_for_state(
     }
 
     write_live_snapshot(app_type, provider)
-}
-
-/// 构建写入托管 Codex `auth.json` 的完整可刷新 auth（含 refresh_token + last_refresh）。
-///
-/// 步骤：
-/// 1. **读回**：若 Codex CLI 已自行刷新并轮换 refresh_token，先采纳盘上最新值，避免
-///    用陈腐 refresh_token 覆盖 CLI 的有效登录（反复切换场景）。
-/// 2. 取有效 token 束（必要时刷新 access_token）。
-/// 3. 按原生浏览器登录形状生成完整 auth。
-///
-/// 不再持有外层锁：manager 内部按账号加锁刷新，网络阻塞不会波及其他账号操作或
-/// token 读取。
-pub(crate) fn get_codex_managed_oauth_live_auth_value(
-    manager: Arc<CodexOAuthManager>,
-    account_id: String,
-) -> Result<Value, AppError> {
-    std::thread::spawn(move || {
-        tauri::async_runtime::block_on(async move {
-            manager
-                .ensure_account_exists(&account_id)
-                .await
-                .map_err(|error| error.to_string())?;
-            let bundle = manager
-                .get_valid_token_bundle_for_account(&account_id)
-                .await
-                .map_err(|err| {
-                    format!(
-                        "Codex OAuth 账号 {account_id} 认证失败，请重新登录 ChatGPT 账号: {err}"
-                    )
-                })?;
-            let id_token = bundle
-                .id_token
-                .as_deref()
-                .filter(|token| !token.trim().is_empty())
-                .ok_or_else(|| {
-                    format!(
-                        "Codex OAuth 账号 {account_id} 缺少 id_token，请在认证中心重新登录后再保存"
-                    )
-                })?;
-
-            Ok::<Value, String>(codex_managed_oauth_live_auth(
-                &bundle.chatgpt_account_id,
-                &bundle.access_token,
-                Some(id_token),
-                &bundle.refresh_token,
-                &bundle.last_refresh,
-            ))
-        })
-    })
-    .join()
-    .map_err(|_| AppError::Message("Codex OAuth token 获取线程异常退出".to_string()))?
-    .map_err(AppError::Message)
-}
-
-/// Before replacing an outgoing managed account's live auth, adopt any Codex
-/// CLI-rotated refresh generation and return the exact disk refresh token for
-/// a compare-before-write check.
-pub(crate) fn prepare_codex_managed_oauth_live_auth_switch_away(
-    manager: Arc<CodexOAuthManager>,
-    account_id: String,
-) -> Result<CodexLiveAuthSwitchGuard, AppError> {
-    std::thread::spawn(move || {
-        tauri::async_runtime::block_on(async move {
-            manager
-                .prepare_live_auth_for_account_switch_away(&account_id)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    })
-    .join()
-    .map_err(|_| AppError::Message("Codex OAuth live 凭据采纳线程异常退出".to_string()))?
-    .map_err(AppError::Message)
-}
-
-pub(crate) fn codex_managed_oauth_live_auth(
-    chatgpt_account_id: &str,
-    access_token: &str,
-    id_token: Option<&str>,
-    refresh_token: &str,
-    last_refresh: &str,
-) -> Value {
-    // 与原生 Codex 浏览器登录的形状对齐：tokens 字段顺序 id_token、access_token、
-    // refresh_token、account_id，并带顶层 last_refresh。**必须**包含 refresh_token，
-    // 否则 Codex CLI 在 access_token 过期后无法自刷新（“裸跑 codex” 会静默失效）。
-    crate::codex_config::codex_managed_oauth_auth_value(
-        chatgpt_account_id,
-        access_token,
-        id_token,
-        refresh_token,
-        last_refresh,
-    )
 }
 
 /// Write live configuration snapshot for a provider
@@ -930,55 +835,6 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
-    }
-
-    #[test]
-    fn codex_managed_oauth_live_auth_matches_codex_cli_shape() {
-        assert_eq!(
-            codex_managed_oauth_live_auth(
-                "acct-managed",
-                "access-token",
-                Some("id-token"),
-                "refresh-token",
-                "2026-01-02T03:04:05.000000000Z",
-            ),
-            json!({
-                "auth_mode": "chatgpt",
-                "OPENAI_API_KEY": null,
-                "tokens": {
-                    "id_token": "id-token",
-                    "access_token": "access-token",
-                    "refresh_token": "refresh-token",
-                    "account_id": "acct-managed"
-                },
-                "last_refresh": "2026-01-02T03:04:05.000000000Z"
-            }),
-            "managed live auth must carry refresh_token + last_refresh so the Codex CLI can self-refresh"
-        );
-    }
-
-    #[test]
-    fn codex_managed_oauth_live_auth_without_id_token_omits_it() {
-        assert_eq!(
-            codex_managed_oauth_live_auth(
-                "acct-managed",
-                "access-token",
-                None,
-                "refresh-token",
-                "2026-01-02T03:04:05.000000000Z",
-            ),
-            json!({
-                "auth_mode": "chatgpt",
-                "OPENAI_API_KEY": null,
-                "tokens": {
-                    "access_token": "access-token",
-                    "refresh_token": "refresh-token",
-                    "account_id": "acct-managed"
-                },
-                "last_refresh": "2026-01-02T03:04:05.000000000Z"
-            }),
-            "without a stored id_token the field is omitted rather than written as null"
-        );
     }
 
     #[test]

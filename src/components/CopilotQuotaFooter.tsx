@@ -1,37 +1,28 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import type { ProviderMeta } from "@/types";
 import { useCopilotQuota } from "@/lib/query/copilot";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { PROVIDER_TYPES } from "@/config/constants";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 import { failedLines, tierLine } from "@/components/quota/quotaRules";
 
 interface CopilotQuotaFooterProps {
-  meta?: ProviderMeta;
   inline?: boolean;
   /** 是否为当前激活的供应商 */
   isCurrent?: boolean;
 }
 
 const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
-  meta,
   inline = false,
   isCurrent = false,
 }) => {
   const { t } = useTranslation();
   const display = useQuotaDisplay();
-  const accountId = resolveManagedAccountId(
-    meta,
-    PROVIDER_TYPES.GITHUB_COPILOT,
-  );
 
   const {
     data: quota,
     isFetching: loading,
     refetch,
-  } = useCopilotQuota(accountId, { enabled: true, autoQuery: isCurrent });
+  } = useCopilotQuota(null, { enabled: true, autoQuery: isCurrent });
 
   if (!quota) return null;
 

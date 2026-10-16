@@ -15,10 +15,9 @@
 //! [`newest_codex_version`]）。一个来源里没有一条能在模型选择器里选的模型（`visibility`
 //! 都不是 `list`）就不算合格：照写的话官方模型全被藏起来，选择器里只剩第三方的（#8014）。
 //!
-//! 凭据取自操作之后 Codex 实际会用的登录（目标登录，见 `codex_direct`）。托管账号的
-//! token 归 CC Switch 管，照常取；其余登录只读、绝不刷新：refresh token 会轮换，CC Switch
-//! 刷新了，Codex 手里那份就作废，用户会被登出。token 过期或被拒时退回自带列表，等 Codex
-//! 自己刷新。
+//! 凭据取自操作之后 Codex 实际会用的登录（目标登录，见 `codex_direct`）。只读、绝不刷新：
+//! refresh token 会轮换，CC Switch 刷新了，Codex 手里那份就作废，用户会被登出。token 过期或被拒时
+//! 退回自带列表，等 Codex 自己刷新。
 //!
 //! 缓存分两个问题：**能不能用**看身份和本机 Codex 版本；**新不新**看 `fetched_at` 是否在
 //! 6 小时内。切换时能用而过期的条目先照用，同时在后台刷新，不在切换锁里等网络；后台另有
@@ -300,6 +299,9 @@ pub(crate) fn keychain_login() -> CodexKeychainLogin {
     (env().keychain)()
 }
 
+// 官方模型列表端点（原生 ChatGPT 登录拉取；原托管账号管理器也用同一 URL）。
+const CODEX_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
+
 fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fetch {
     let version = version.to_string();
     let access_token = login.access_token.clone();
@@ -308,7 +310,7 @@ fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fet
     let run = move || {
         tauri::async_runtime::block_on(async move {
             let mut request = crate::proxy::http_client::get()
-                .get(crate::services::codex_oauth_models::CODEX_OAUTH_MODELS_URL)
+                .get(CODEX_MODELS_URL)
                 .query(&[("client_version", version.as_str())])
                 .header("Authorization", format!("Bearer {access_token}"))
                 .header("ChatGPT-Account-Id", account_id)

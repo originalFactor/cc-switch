@@ -168,16 +168,6 @@ impl LiveNow {
     }
 }
 
-fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
-    if provider.uses_managed_account_auth() {
-        ProxyAuth::Managed {
-            auth_token: !provider.is_github_copilot() || !provider.claude_uses_api_key_field(),
-        }
-    } else {
-        ProxyAuth::FollowRow
-    }
-}
-
 /// `stack` 是发布的 Stack 模型，`stack_default` 是四档别名指向的模型（Stack 模式下默认那家
 /// 列表里的第一个，见 [`stack::claude_route_default`]；路由模式为 `None`）。`others` 是其余
 /// 发布模型的成员，它们的兼容开关按 [`with_member_switches`] 并进契约。
@@ -191,7 +181,7 @@ fn claude_contract(
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
         proxy_url,
-        claude_proxy_auth(route),
+        ProxyAuth::FollowRow,
         stack_default.map(|model| StackRoleModel {
             id: &model.id,
             name: &model.name,
@@ -448,8 +438,7 @@ async fn write_proxy(
                 base_url: &codex_base_url,
                 stack: &members,
             };
-            let mut prepared =
-                codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
+            let mut prepared = codex_direct::Prepared::default();
             codex_direct::prepare_official_rows(&state.db, &owner, &spec, &mut prepared)
                 .await
                 .map_err(err)?;
@@ -527,7 +516,6 @@ fn write_direct(
             let owner = live_now.codex_owner();
             if let Err(error) = codex_direct::write_direct(
                 &state.db,
-                &state.codex_oauth_manager,
                 op_name,
                 owner,
                 target,
@@ -536,15 +524,8 @@ fn write_direct(
                 // 直连供应商写不出来（比如绑定的托管账号已被删除）也不能让客户端一直指着
                 // 代理：退一步只清空关键字段。
                 log::warn!("写回直连的 Codex 配置失败，只清空关键字段: {error}");
-                codex_direct::write_direct(
-                    &state.db,
-                    &state.codex_oauth_manager,
-                    op_name,
-                    owner,
-                    None,
-                    pending_target,
-                )
-                .map_err(err)?;
+                codex_direct::write_direct(&state.db, op_name, owner, None, pending_target)
+                    .map_err(err)?;
             }
         }
         AppType::Gemini => {
@@ -1517,7 +1498,7 @@ fn codex_official_login_now(
         base_url: &base_url,
         stack: &members,
     };
-    let prepared = codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
+    let prepared = codex_direct::Prepared::default();
     codex_direct::predicted_official_login(&state.db, &owner, &spec, &prepared)
         .map(Result::ok)
         .map_err(err)
@@ -1805,7 +1786,6 @@ pub fn take_startup_attach_failures() -> Vec<StartupAttachFailure> {
 mod tests {
     //! 代理契约里的凭据和模型别名（从旧的接管字段测试迁过来：#3784、#4919、#1049）。
     use super::*;
-    use crate::provider::ProviderMeta;
     use serde_json::Map;
     use std::path::Path;
 
@@ -1934,419 +1914,6 @@ mod tests {
             .apply_to(Path::new("settings.json"), &mut doc)
             .expect("apply proxy contract");
         doc
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_uses_auth_token_placeholder() {
-        let mut provider = Provider::with_id(
-            "copilot".to_string(),
-            "GitHub Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
-                    "ANTHROPIC_MODEL": "claude-haiku-4.5"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = provider.settings_config.clone();
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_eq!(
-            env.get("ANTHROPIC_AUTH_TOKEN")
-                .and_then(|value| value.as_str()),
-            Some(PROXY_TOKEN_PLACEHOLDER)
-        );
-        assert!(
-            env.get("ANTHROPIC_API_KEY").is_none(),
-            "API_KEY placeholders trigger Claude Code's custom-key approval prompt (defaults to No), landing users in Not logged in"
-        );
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_sources_copilot_models_from_provider() {
-        let mut provider = Provider::with_id(
-            "copilot".to_string(),
-            "GitHub Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
-                    "ANTHROPIC_MODEL": "claude-sonnet-4.6",
-                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4.5",
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4.6",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4.6",
-                    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4.6[1M]"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://stale.example.com",
-                "ANTHROPIC_API_KEY": "stale-key",
-                "ANTHROPIC_MODEL": "stale-model",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "stale-haiku",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Stale Haiku",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "stale-sonnet",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "stale-opus",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Stale Opus",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_MODEL", None);
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            Some("claude-haiku-5-5"),
-        );
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-            Some("claude-haiku-4.5"),
-        );
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            Some("claude-sonnet-5"),
-        );
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            Some("claude-sonnet-4.6"),
-        );
-        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-5"));
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-            Some("claude-sonnet-4.6"),
-        );
-        assert_env_str(
-            env,
-            "CLAUDE_CODE_SUBAGENT_MODEL",
-            Some("claude-sonnet-4.6[1M]"),
-        );
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_removes_stale_subagent_model_when_provider_omits_it() {
-        let mut provider = Provider::with_id(
-            "codex".to_string(),
-            "Codex".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex",
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "provider-sonnet"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://stale.example.com",
-                "ANTHROPIC_API_KEY": "stale-key",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_env_str(env, "CLAUDE_CODE_SUBAGENT_MODEL", None);
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_sources_codex_models_from_provider() {
-        let mut provider = Provider::with_id(
-            "codex".to_string(),
-            "Codex".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex",
-                    "ANTHROPIC_MODEL": "gpt-5.4",
-                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.4-mini",
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.4",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.4"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://stale.example.com",
-                "ANTHROPIC_AUTH_TOKEN": "stale-token",
-                "ANTHROPIC_MODEL": "stale-model",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "stale-haiku",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Stale Haiku",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "stale-sonnet",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "stale-opus",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Stale Opus"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_MODEL", None);
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            Some("claude-haiku-5-5"),
-        );
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-            Some("gpt-5.4-mini"),
-        );
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            Some("claude-sonnet-5"),
-        );
-        assert_env_str(env, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", Some("gpt-5.4"));
-        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-5"));
-        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", Some("gpt-5.4"));
-        // Codex 系只保留 AUTH_TOKEN；双键会触发 Claude Code 告警（#4919）
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_codex_injects_auth_token_without_preexisting_key() {
-        let mut provider = Provider::with_id(
-            "codex".to_string(),
-            "Codex".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-
-        // 全新安装/热切换形态：传入的 env 没有任何 token 键。
-        let mut live_config = provider.settings_config.clone();
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_xai_keeps_one_auth_key() {
-        let mut provider = Provider::with_id(
-            "xai".to_string(),
-            "xAI".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("xai_oauth".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_AUTH_TOKEN": "old-token",
-                "ANTHROPIC_API_KEY": "old-key",
-                "OPENAI_API_KEY": "old-openai-key"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(Value::as_object)
-            .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-        // Claude Code 不读这个键：不是关键字段，归用户，契约不碰。
-        assert_env_str(env, "OPENAI_API_KEY", Some("old-openai-key"));
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_codex_by_base_url_keeps_auth_token() {
-        // 无 provider_type meta、仅凭 base_url 识别为受管 codex 的供应商，
-        // 也必须保留 AUTH_TOKEN 占位符（与策略选择共用同一判定族）。
-        let provider = Provider::with_id(
-            "codex-url-only".to_string(),
-            "Codex (URL only)".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
-                }
-            }),
-            None,
-        );
-        assert!(provider.uses_managed_account_auth());
-        assert!(!provider.is_codex_oauth());
-
-        let mut live_config = provider.settings_config.clone();
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-    }
-
-    // #4919 复现场景：从第三方 Claude 供应商（live 已有 AUTH_TOKEN）切换到
-    // Codex 受管供应商时，只应保留 AUTH_TOKEN 占位符，不得同时写入 API_KEY。
-    #[test]
-    fn managed_account_claude_takeover_codex_from_third_party_keeps_single_auth_key() {
-        let mut provider = Provider::with_id(
-            "codex".to_string(),
-            "Codex".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-                "ANTHROPIC_AUTH_TOKEN": "sk-third-party"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_copilot_defaults_to_auth_token() {
-        let mut provider = Provider::with_id(
-            "copilot".to_string(),
-            "GitHub Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://stale.example.com",
-                "ANTHROPIC_AUTH_TOKEN": "stale-token",
-                "ANTHROPIC_API_KEY": "stale-key"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        // Default Copilot takeover injects AUTH_TOKEN: the API_KEY placeholder
-        // triggers Claude Code's custom-key approval prompt (defaults to
-        // "No (recommended)"), which lands users in "Not logged in".
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_copilot_honors_api_key_field_choice() {
-        let mut provider = Provider::with_id(
-            "copilot".to_string(),
-            "GitHub Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            api_key_field: Some("ANTHROPIC_API_KEY".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://stale.example.com",
-                "ANTHROPIC_AUTH_TOKEN": "stale-token"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        // Explicit API-key-field choice keeps the API_KEY placeholder to avoid
-        // conflicting with the /login-managed key (#1049).
-        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
     }
 
     #[test]

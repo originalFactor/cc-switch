@@ -67,36 +67,6 @@ impl Provider {
         }
     }
 
-    pub fn is_codex_oauth(&self) -> bool {
-        self.provider_type() == Some("codex_oauth")
-    }
-
-    pub fn is_xai_oauth(&self) -> bool {
-        self.provider_type() == Some("xai_oauth")
-    }
-
-    pub fn is_github_copilot(&self) -> bool {
-        self.provider_type() == Some("github_copilot")
-            || self.claude_base_url_contains("githubcopilot.com")
-    }
-
-    pub fn uses_managed_account_auth(&self) -> bool {
-        self.is_github_copilot()
-            || self.is_codex_oauth()
-            || self.is_xai_oauth()
-            || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
-    }
-
-    /// Third-party managed OAuth (xai_oauth, github_copilot, …): the real
-    /// credential is injected per-request by the local proxy, so the card is
-    /// keyless by design and its stored config is only an upstream snapshot.
-    /// `codex_oauth` is deliberately excluded — the official ChatGPT login
-    /// in auth.json IS its credential, so the `requires_openai_auth = true`
-    /// fallback is its correct shape, never a legacy leftover.
-    pub fn uses_proxy_injected_oauth(&self) -> bool {
-        self.is_xai_oauth() || self.is_github_copilot()
-    }
-
     /// Whether the provider form's "auth field" was explicitly set to
     /// ANTHROPIC_API_KEY. The form only persists `meta.apiKeyField` for the
     /// non-default choice, so `None` means the default ANTHROPIC_AUTH_TOKEN.
@@ -105,18 +75,6 @@ impl Provider {
             .as_ref()
             .and_then(|m| m.api_key_field.as_deref())
             .map(|field| field.eq_ignore_ascii_case("ANTHROPIC_API_KEY"))
-            .unwrap_or(false)
-    }
-
-    fn provider_type(&self) -> Option<&str> {
-        self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
-    }
-
-    fn claude_base_url_contains(&self, needle: &str) -> bool {
-        self.settings_config
-            .pointer("/env/ANTHROPIC_BASE_URL")
-            .and_then(|value| value.as_str())
-            .map(|base_url| base_url.contains(needle))
             .unwrap_or(false)
     }
 
@@ -328,31 +286,6 @@ pub struct UsageResult {
     pub error: Option<String>,
 }
 
-/// 认证绑定来源
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthBindingSource {
-    /// 从 provider 自身配置读取认证信息（默认）
-    #[default]
-    ProviderConfig,
-    /// 使用托管账号认证（如 GitHub Copilot OAuth）
-    ManagedAccount,
-}
-
-/// 通用认证绑定
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AuthBinding {
-    /// 认证来源
-    #[serde(default)]
-    pub source: AuthBindingSource,
-    /// 托管认证供应商标识（如 github_copilot）
-    #[serde(rename = "authProvider", skip_serializing_if = "Option::is_none")]
-    pub auth_provider: Option<String>,
-    /// 托管账号 ID；为空表示跟随该认证供应商的默认账号
-    #[serde(rename = "accountId", skip_serializing_if = "Option::is_none")]
-    pub account_id: Option<String>,
-}
-
 /// Claude Desktop 3P 写入模式。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -373,29 +306,6 @@ pub struct ClaudeDesktopModelRoute {
     /// Claude Desktop 3P 识别的 1M 上下文能力标记。
     #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
     pub supports_1m: Option<bool>,
-}
-
-/// Codex Copilot protocol selection; independent of legacy `apiFormat` metadata.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CodexCopilotApiFormat {
-    #[default]
-    Auto,
-    OpenaiResponses,
-    OpenaiChat,
-}
-
-impl CodexCopilotApiFormat {
-    /// Read the stored selection. The meta field stays a plain string so a value
-    /// written by a newer version survives sync round-trips here instead of
-    /// failing the whole `ProviderMeta` parse; unknown values fall back to auto.
-    pub fn from_meta(meta: Option<&ProviderMeta>) -> Self {
-        match meta.and_then(|meta| meta.codex_copilot_api_format.as_deref()) {
-            Some("openai_responses") => Self::OpenaiResponses,
-            Some("openai_chat") => Self::OpenaiChat,
-            _ => Self::Auto,
-        }
-    }
 }
 
 /// Codex Responses -> Chat Completions 的 reasoning 能力描述。
@@ -495,18 +405,6 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
-    /// Codex Copilot only: absent or auto prefers advertised Responses, then Chat.
-    /// Legacy `apiFormat` does not imply an explicit Copilot protocol override.
-    #[serde(
-        rename = "codexCopilotApiFormat",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub codex_copilot_api_format: Option<String>,
-    /// 通用认证绑定（provider_config / managed_account）
-    ///
-    /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
-    #[serde(rename = "authBinding", skip_serializing_if = "Option::is_none")]
-    pub auth_binding: Option<AuthBinding>,
     /// Claude 认证字段名（"ANTHROPIC_AUTH_TOKEN" 或 "ANTHROPIC_API_KEY"）
     #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
     pub api_key_field: Option<String>,
@@ -558,14 +456,6 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub local_proxy_request_overrides: Option<LocalProxyRequestOverrides>,
-    /// 供应商类型标识（用于特殊供应商检测）
-    /// - "github_copilot": GitHub Copilot 供应商
-    #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
-    pub provider_type: Option<String>,
-    /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
-    /// 用于多账号支持，关联到特定的 GitHub 账号
-    #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
-    pub github_account_id: Option<String>,
     /// Stack 模式下这家 Claude Code 供应商发布的模型（`mode::stack`）。`None` 是没配列表，
     /// 按模型映射（`ANTHROPIC_MODEL` 和各档）发布；空列表是用户清空了，什么都不发布。
     #[serde(
@@ -624,25 +514,6 @@ impl ProviderMeta {
     /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。
     pub fn custom_user_agent_header(&self) -> Result<Option<HeaderValue>, InvalidHeaderValue> {
         parse_custom_user_agent(self.custom_user_agent.as_deref())
-    }
-
-    /// 解析指定托管认证供应商绑定的账号 ID。
-    ///
-    /// 新版优先读取 authBinding，旧版继续兼容 githubAccountId。
-    pub fn managed_account_id_for(&self, auth_provider: &str) -> Option<String> {
-        if let Some(binding) = self.auth_binding.as_ref() {
-            if binding.source == AuthBindingSource::ManagedAccount
-                && binding.auth_provider.as_deref() == Some(auth_provider)
-            {
-                return binding.account_id.clone();
-            }
-        }
-
-        if auth_provider == "github_copilot" {
-            return self.github_account_id.clone();
-        }
-
-        None
     }
 }
 
@@ -1720,36 +1591,12 @@ context_window = {context_window}
 mod tests {
     use super::{
         AvailableModel, ClaudeDesktopMode, ClaudeDesktopModelConfig, ClaudeDesktopModelRoute,
-        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
-        GrokBuildModelConfig, LocalProxyRequestOverrides, Provider, ProviderManager, ProviderMeta,
-        UniversalProvider, UniversalProviderApps, UniversalProviderModels,
+        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, GrokBuildModelConfig,
+        LocalProxyRequestOverrides, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        UniversalProviderApps, UniversalProviderModels,
     };
     use serde_json::json;
     use std::collections::HashMap;
-
-    #[test]
-    fn proxy_injected_oauth_excludes_codex_oauth() {
-        let mut provider = Provider::with_id("p".to_string(), "P".to_string(), json!({}), None);
-        assert!(!provider.uses_proxy_injected_oauth());
-
-        for (provider_type, expected) in [
-            ("xai_oauth", true),
-            ("github_copilot", true),
-            // the official ChatGPT login IS this card's credential — its
-            // auth.json fallback shape must never be neutralized
-            ("codex_oauth", false),
-        ] {
-            provider.meta = Some(ProviderMeta {
-                provider_type: Some(provider_type.to_string()),
-                ..ProviderMeta::default()
-            });
-            assert_eq!(
-                provider.uses_proxy_injected_oauth(),
-                expected,
-                "{provider_type}"
-            );
-        }
-    }
 
     #[test]
     fn provider_meta_serializes_pricing_model_source() {
@@ -1799,65 +1646,6 @@ mod tests {
     fn provider_meta_omits_max_output_tokens_when_none() {
         let value = serde_json::to_value(ProviderMeta::default()).expect("serialize ProviderMeta");
         assert!(value.get("maxOutputTokens").is_none());
-    }
-
-    #[test]
-    fn codex_copilot_api_format_roundtrips_supported_values() {
-        for (wire, expected) in [
-            ("auto", CodexCopilotApiFormat::Auto),
-            ("openai_responses", CodexCopilotApiFormat::OpenaiResponses),
-            ("openai_chat", CodexCopilotApiFormat::OpenaiChat),
-        ] {
-            let value = json!({
-                "apiFormat": "openai_chat",
-                "codexCopilotApiFormat": wire
-            });
-            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
-            assert_eq!(CodexCopilotApiFormat::from_meta(Some(&meta)), expected);
-            assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
-            assert_eq!(serde_json::to_value(meta).unwrap(), value);
-        }
-    }
-
-    #[test]
-    fn codex_copilot_api_format_preserves_legacy_absence() {
-        for value in [
-            json!({}),
-            json!({"apiFormat": "openai_chat"}),
-            json!({"apiFormat": "openai_responses"}),
-        ] {
-            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
-            assert_eq!(meta.codex_copilot_api_format, None);
-            assert_eq!(
-                CodexCopilotApiFormat::from_meta(Some(&meta)),
-                CodexCopilotApiFormat::Auto
-            );
-            assert_eq!(serde_json::to_value(meta).unwrap(), value);
-        }
-        assert_eq!(
-            CodexCopilotApiFormat::from_meta(None),
-            CodexCopilotApiFormat::Auto
-        );
-    }
-
-    /// A value from a newer version must not fail the whole meta parse (the DAO
-    /// would fall back to an empty meta and drop the account binding); it is read
-    /// as auto and written back unchanged.
-    #[test]
-    fn codex_copilot_api_format_keeps_unknown_values_without_losing_meta() {
-        for wire in ["anthropic", "messages", "openai", "unknown", ""] {
-            let value = json!({
-                "providerType": "github_copilot",
-                "codexCopilotApiFormat": wire
-            });
-            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
-            assert_eq!(meta.provider_type.as_deref(), Some("github_copilot"));
-            assert_eq!(
-                CodexCopilotApiFormat::from_meta(Some(&meta)),
-                CodexCopilotApiFormat::Auto
-            );
-            assert_eq!(serde_json::to_value(meta).unwrap(), value);
-        }
     }
 
     #[test]
@@ -1911,53 +1699,6 @@ mod tests {
         assert!(provider.icon.is_none());
         assert!(provider.icon_color.is_none());
         assert!(!provider.in_failover_queue);
-    }
-
-    #[test]
-    fn provider_managed_account_auth_detection_uses_type_or_known_endpoint() {
-        let mut copilot = Provider::with_id(
-            "copilot".to_string(),
-            "Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-                }
-            }),
-            None,
-        );
-        assert!(copilot.is_github_copilot());
-        assert!(copilot.uses_managed_account_auth());
-
-        let mut codex = Provider::with_id(
-            "codex".to_string(),
-            "Codex".to_string(),
-            json!({ "env": {} }),
-            None,
-        );
-        codex.meta = Some(ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-        assert!(codex.is_codex_oauth());
-        assert!(codex.uses_managed_account_auth());
-
-        let codex_endpoint = Provider::with_id(
-            "codex-endpoint".to_string(),
-            "Codex Endpoint".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
-                }
-            }),
-            None,
-        );
-        assert!(codex_endpoint.uses_managed_account_auth());
-
-        copilot.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..Default::default()
-        });
-        assert!(copilot.is_github_copilot());
     }
 
     #[test]

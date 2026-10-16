@@ -220,14 +220,14 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
 /// Chat/Anthropic transform paths already unwrap namespaces, so this only
 /// fires on native Responses passthrough.
 ///
-/// Covers managed xAI OAuth *and* API-key providers whose live upstream is
-/// `api.x.ai` with `wire_api = "responses"`. See farion1231/cc-switch#6815.
+/// Applies to API-key providers whose live upstream is `api.x.ai` with
+/// `wire_api = "responses"`. See farion1231/cc-switch#6815.
 pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
-    provider.is_xai_oauth() || provider_is_xai_native_responses(provider)
+    provider_is_xai_native_responses(provider)
 }
 
 /// True when this Codex provider talks native Responses to first-party xAI
-/// (`api.x.ai`), including API-key Grok cards that are not `xai_oauth`.
+/// (`api.x.ai`), including API-key Grok cards.
 fn provider_is_xai_native_responses(provider: &Provider) -> bool {
     let config_text = provider
         .settings_config
@@ -324,15 +324,6 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
         return false;
     }
 
-    let has_managed_account = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
-        .is_some_and(|account_id| !account_id.trim().is_empty());
-    if has_managed_account {
-        return true;
-    }
-
     let has_stored_api_key = provider
         .settings_config
         .get("auth")
@@ -402,14 +393,6 @@ pub fn resolve_codex_catalog_tool_profile(
     use crate::codex_config::CodexCatalogToolProfile;
     if is_codex_official_provider(provider) {
         return CodexCatalogToolProfile::NativeResponses;
-    }
-    // xAI OAuth pins the native Responses profile regardless of editable
-    // api_format, mirroring the Claude-side managed-provider invariant.
-    if provider.is_xai_oauth() {
-        return CodexCatalogToolProfile::NativeResponses;
-    }
-    if provider.is_github_copilot() {
-        return CodexCatalogToolProfile::Copilot;
     }
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
@@ -539,15 +522,11 @@ pub fn codex_stack_upstream_rejects_web_search(
     provider: &Provider,
     request_model: Option<&str>,
 ) -> bool {
-    if provider.is_github_copilot() {
-        return true;
-    }
-
     let projected =
         crate::live::project::codex::CodexProjection::of(&crate::live::project::codex::RowInput {
             settings: &provider.settings_config,
             official: false,
-            proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
+            proxy_injected_oauth: false,
         })
         .map(|projection| projection.catalog_input_text());
     let config_text = match &projected {
@@ -1027,16 +1006,6 @@ impl ProviderAdapter for CodexAdapter {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
-        if provider.is_github_copilot() {
-            return Ok("https://api.githubcopilot.com".to_string());
-        }
-
-        // xAI OAuth: ignore editable provider base URLs and always use the xAI
-        // API origin associated with the managed token.
-        if provider.is_xai_oauth() {
-            return Ok(super::XAI_API_BASE_URL.to_string());
-        }
-
         // 1. 尝试直接获取 base_url 字段
         if let Some(url) = provider
             .settings_config
@@ -1087,22 +1056,6 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
-        if provider.is_github_copilot() {
-            return Some(AuthInfo::new(
-                "copilot_placeholder".to_string(),
-                AuthStrategy::GitHubCopilot,
-            ));
-        }
-
-        // xAI OAuth (Grok subscription): placeholder credentials only; the real
-        // access_token is resolved per-request by the forwarder via XaiOAuthManager.
-        if provider.is_xai_oauth() {
-            return Some(AuthInfo::new(
-                "xai_oauth_placeholder".to_string(),
-                AuthStrategy::XaiOAuth,
-            ));
-        }
-
         // Anthropic upstream: the auth field is chosen by the user in the UI (meta.apiKeyField).
         //   ANTHROPIC_API_KEY    → x-api-key (AuthStrategy::Anthropic)
         //   ANTHROPIC_AUTH_TOKEN → Authorization: Bearer (default, AuthStrategy::Bearer)
@@ -1164,9 +1117,6 @@ impl ProviderAdapter for CodexAdapter {
         auth: &AuthInfo,
     ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
         use super::adapter::auth_header_value;
-        if auth.strategy == AuthStrategy::GitHubCopilot {
-            return super::copilot_auth::build_copilot_request_headers(&auth.api_key);
-        }
         let bearer = format!("Bearer {}", auth.api_key);
         // Anthropic gateway: send only x-api-key (anthropic-version is filled in by
         // the forwarder). Mutually exclusive with Bearer to avoid a 401 from the
@@ -1187,7 +1137,6 @@ impl ProviderAdapter for CodexAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::ProviderMeta;
     use serde_json::json;
 
     fn create_provider(config: serde_json::Value) -> Provider {
@@ -1204,105 +1153,6 @@ mod tests {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
-        }
-    }
-
-    fn create_copilot_provider() -> Provider {
-        let mut provider = create_provider(json!({}));
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..ProviderMeta::default()
-        });
-        provider
-    }
-
-    #[test]
-    fn codex_adapter_uses_managed_copilot_auth_and_endpoint() {
-        let adapter = CodexAdapter::new();
-        let provider = create_copilot_provider();
-
-        assert_eq!(
-            adapter.extract_base_url(&provider).unwrap(),
-            "https://api.githubcopilot.com"
-        );
-        let auth = adapter.extract_auth(&provider).unwrap();
-        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
-        let headers = adapter.get_auth_headers(&auth).unwrap();
-        assert!(headers
-            .iter()
-            .any(|(name, _)| name.as_str() == "copilot-integration-id"));
-    }
-
-    #[test]
-    fn stack_web_search_rejection_includes_managed_copilot() {
-        let copilot = create_copilot_provider();
-        assert!(codex_stack_upstream_rejects_web_search(&copilot, None));
-
-        let ordinary = create_provider(json!({
-            "config": r#"
-model_provider = "custom"
-[model_providers.custom]
-base_url = "https://relay.example.com/v1"
-wire_api = "responses"
-"#
-        }));
-        assert!(!codex_stack_upstream_rejects_web_search(&ordinary, None));
-        assert!(codex_stack_upstream_rejects_web_search(
-            &ordinary,
-            Some("MiniMaxAI/MiniMax-M3")
-        ));
-    }
-
-    #[test]
-    fn copilot_catalog_profile_survives_live_projection_and_format_overrides() {
-        use crate::codex_config::{codex_disables_web_search, CodexCatalogToolProfile};
-        use crate::live::project::codex::{CodexProjection, RowInput};
-
-        for base_url in ["https://api.githubcopilot.com", "http://localhost:15721/v1"] {
-            let mut provider = create_copilot_provider();
-            provider.settings_config = json!({
-                "auth": {},
-                "config": format!(
-                    "model = \"claude-sonnet-5\"\nmodel_provider = \"copilot\"\n\n[model_providers.copilot]\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
-                )
-            });
-            let projection = CodexProjection::of(&RowInput {
-                settings: &provider.settings_config,
-                official: is_codex_official_provider(&provider),
-                proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
-            })
-            .unwrap();
-            let config = projection.catalog_input_text();
-            let parsed: TomlValue = toml::from_str(&config).unwrap();
-            assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
-            let route = &parsed["model_providers"]["custom"];
-            assert_eq!(route["wire_api"].as_str(), Some("responses"));
-            assert!(route.get("requires_openai_auth").is_none());
-
-            for api_format in [
-                None,
-                Some("openai_chat"),
-                Some("openai_responses"),
-                Some("anthropic"),
-            ] {
-                for transport in [
-                    None,
-                    Some("auto"),
-                    Some("openai_responses"),
-                    Some("openai_chat"),
-                ] {
-                    let meta = provider.meta.as_mut().unwrap();
-                    meta.api_format = api_format.map(str::to_string);
-                    meta.codex_copilot_api_format = transport.map(str::to_string);
-                    let profile = resolve_codex_catalog_tool_profile(&provider);
-                    assert_eq!(profile, CodexCatalogToolProfile::Copilot);
-                    assert!(codex_disables_web_search(
-                        &provider.settings_config,
-                        &config,
-                        profile
-                    ));
-                }
-            }
         }
     }
 
@@ -1364,19 +1214,7 @@ context_window = 500000
         native.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
         assert!(is_codex_official_provider(&native));
 
-        provider.id = "managed-official-account".to_string();
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            auth_binding: Some(crate::provider::AuthBinding {
-                source: crate::provider::AuthBindingSource::ManagedAccount,
-                auth_provider: Some("codex_oauth".to_string()),
-                account_id: Some("acct-managed".to_string()),
-            }),
-            ..Default::default()
-        });
         let adapter = CodexAdapter::new();
-
-        assert!(is_codex_official_provider(&provider));
         assert_eq!(
             adapter
                 .extract_base_url(&provider)
@@ -1429,11 +1267,6 @@ context_window = 500000
         }));
         explicit_openai.category = Some("official".to_string());
         assert!(!is_codex_official_provider(&explicit_openai));
-
-        let mut managed_with_null_config = provider.clone();
-        managed_with_null_config.category = None;
-        managed_with_null_config.settings_config["config"] = JsonValue::Null;
-        assert!(is_codex_official_provider(&managed_with_null_config));
 
         let mut unified_session = create_provider(json!({
             "auth": {},
@@ -1728,12 +1561,6 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&chat),
             CodexCatalogToolProfile::ProxyChat
-        );
-
-        let copilot = create_copilot_provider();
-        assert_eq!(
-            resolve_codex_catalog_tool_profile(&copilot),
-            CodexCatalogToolProfile::Copilot
         );
 
         // Host fallback (#6944): a DB row saved while the Zhipu preset was still
@@ -2410,63 +2237,8 @@ wire_api = "chat"
     }
 
     #[test]
-    fn xai_oauth_invariants_ignore_editable_base_url_and_auth() {
-        let adapter = CodexAdapter::new();
-        let mut provider = create_provider(json!({
-            "auth": { "OPENAI_API_KEY": "user-edited" },
-            "config": r#"
-model = "grok-4.5"
-
-[model_providers.custom]
-name = "xai"
-base_url = "https://attacker.example/v1"
-wire_api = "responses"
-"#
-        }));
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("xai_oauth".to_string()),
-            ..Default::default()
-        });
-
-        // 可编辑字段（base_url / auth key）不得影响托管路由：
-        // 端点硬定向 api.x.ai，凭据是占位符（真 token 由 forwarder 注入）。
-        assert_eq!(
-            adapter.extract_base_url(&provider).unwrap(),
-            super::super::XAI_API_BASE_URL
-        );
-        let auth = adapter
-            .extract_auth(&provider)
-            .expect("managed auth placeholder");
-        assert_eq!(auth.api_key, "xai_oauth_placeholder");
-        assert_eq!(auth.strategy, AuthStrategy::XaiOAuth);
-    }
-
-    #[test]
-    fn xai_oauth_pins_native_responses_catalog_profile() {
-        let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("xai_oauth".to_string()),
-            // 即使 api_format 被改成 anthropic，catalog 画像也必须钉死原生 Responses
-            api_format: Some("anthropic".to_string()),
-            ..Default::default()
-        });
-
-        assert!(matches!(
-            resolve_codex_catalog_tool_profile(&provider),
-            crate::codex_config::CodexCatalogToolProfile::NativeResponses
-        ));
-    }
-
-    #[test]
-    fn namespace_flatten_gate_fires_for_xai_oauth_and_api_xai_responses() {
-        let mut xai = create_provider(json!({ "auth": {}, "config": "" }));
-        xai.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("xai_oauth".to_string()),
-            ..Default::default()
-        });
-        assert!(provider_needs_responses_namespace_flatten(&xai));
-
-        // API-key Grok cards (no xai_oauth meta) still talk to api.x.ai Responses.
+    fn namespace_flatten_gate_fires_for_api_xai_responses() {
+        // API-key Grok cards still talk to api.x.ai Responses.
         let grok_key = create_provider(json!({
             "auth": { "OPENAI_API_KEY": "sk-x" },
             "config": r#"

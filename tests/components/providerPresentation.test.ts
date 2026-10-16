@@ -256,17 +256,12 @@ describe("buildSwitchSections — route", () => {
     expect(item(fallback.sections, "backup").tone).toBeUndefined();
   });
 
-  it("keeps Codex official accounts out of the failover queue with a reason", () => {
+  it("keeps Codex official cards out of the failover queue with a reason", () => {
     // 后端 require_failover_provider 会拒绝；卡上要先说清楚，而不是点了没反应
-    const managed = provider("managed", {
+    const card = provider("legacy-official", {
+      id: "codex-official",
+      category: "official",
       settingsConfig: { auth: {}, config: "" },
-      meta: {
-        authBinding: {
-          source: "managed_account",
-          authProvider: "codex_oauth",
-          accountId: "acct",
-        },
-      },
     } as Partial<Provider>);
     const { sections, input } = build({
       app: "codex",
@@ -275,11 +270,11 @@ describe("buildSwitchSections — route", () => {
       routeId: "relay",
       failoverOn: true,
       queue: ["relay"],
-      providers: [relay, backup, managed],
+      providers: [relay, backup, card],
     });
 
-    expect(item(sections, "managed").dim).toBe(true);
-    expect(button(sections, "managed", "blocked").disabledReason).toBe(
+    expect(item(sections, "codex-official").dim).toBe(true);
+    expect(button(sections, "codex-official", "blocked").disabledReason).toBe(
       "providerCard.reason.noFailover",
     );
     button(sections, "backup", "queueAdd").onClick();
@@ -435,34 +430,29 @@ describe("buildSwitchSections — stack", () => {
     expect(setDefaultItem(sections, "account").disabledReason).toBeUndefined();
   });
 
-  it("never lets ChatGPT accounts be added in Codex Stack mode, even legacy cards without a category", () => {
-    const managed = provider("managed", {
+  it("keeps Codex official cards out of Stack mode additions", () => {
+    const card = provider("legacy-official", {
+      id: "codex-official",
+      category: "official",
       settingsConfig: { auth: {}, config: "" },
-      meta: {
-        authBinding: {
-          source: "managed_account",
-          authProvider: "codex_oauth",
-          accountId: "acct",
-        },
-      },
     } as Partial<Provider>);
     const { sections, input } = build({
       app: "codex",
       active: "stack",
       view: "stack",
-      providers: [relay, backup, managed],
+      providers: [relay, backup, card],
       routeId: "relay",
       stackMembers: new Map([["relay", 1]]),
     });
 
-    expect(item(sections, "managed").chips.map((c) => c.key)).toContain(
+    expect(item(sections, "codex-official").chips.map((c) => c.key)).toContain(
       "official",
     );
-    expect(button(sections, "managed", "add").disabledReason).toBe(
+    expect(button(sections, "codex-official", "add").disabledReason).toBe(
       "providerCard.reason.officialStack",
     );
-    setDefaultItem(sections, "managed").onSelect();
-    expect(input.actions.stackSetDefault).toHaveBeenCalledWith(managed);
+    setDefaultItem(sections, "codex-official").onSelect();
+    expect(input.actions.stackSetDefault).toHaveBeenCalledWith(card);
   });
 });
 

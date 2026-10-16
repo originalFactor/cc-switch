@@ -36,7 +36,7 @@ fn require_failover_provider(
 mod tests {
     use super::{require_failover_app, require_failover_provider};
     use crate::database::Database;
-    use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
+    use crate::provider::Provider;
     use serde_json::json;
 
     #[test]
@@ -55,14 +55,6 @@ mod tests {
             None,
         );
         official.category = Some("official".to_string());
-        official.meta = Some(ProviderMeta {
-            auth_binding: Some(AuthBinding {
-                source: AuthBindingSource::ManagedAccount,
-                auth_provider: Some("codex_oauth".to_string()),
-                account_id: Some("account-a".to_string()),
-            }),
-            ..Default::default()
-        });
         db.save_provider("codex", &official).expect("save official");
 
         assert!(require_failover_provider(&db, "codex", &official.id).is_err());

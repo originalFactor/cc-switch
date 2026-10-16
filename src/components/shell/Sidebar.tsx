@@ -13,7 +13,6 @@ import {
   Globe,
   History,
   Info,
-  KeyRound,
   Layers,
   LayoutGrid,
   Route,
@@ -208,7 +207,7 @@ function MainDirectory({
 }: DirectoryProps) {
   const { t } = useTranslation();
   const { hasUpdate } = useUpdate();
-  const { appStatus, todayCost, authNeedsAttention } = useSidebarStatus();
+  const { appStatus, todayCost } = useSidebarStatus();
   const apps = APP_IDS.filter((app) => visibleApps[app]);
   const onAppPage = isAppPage(view);
 
@@ -222,18 +221,11 @@ function MainDirectory({
     label: string;
     icon: IconComponent;
     trailing?: string;
-    alert?: string;
   }[] = [
     { page: "mcp", label: "MCP", icon: Server },
     { page: "skills", label: "Skills", icon: SkillsIcon },
     { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
     { page: "sessions", label: t("nav.sessions"), icon: History },
-    {
-      page: "auth",
-      label: t("nav.auth"),
-      icon: KeyRound,
-      alert: authNeedsAttention ? t("nav.authNeedsReauth") : undefined,
-    },
     {
       page: "usage",
       label: t("nav.usage"),
@@ -288,7 +280,6 @@ function MainDirectory({
             icon={item.icon}
             label={item.label}
             trailing={item.trailing}
-            alert={item.alert}
             onClick={() => onSelectPage(item.page)}
           />
         ))}

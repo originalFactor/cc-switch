@@ -1,7 +1,5 @@
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
-import { isOAuthProviderType } from "@/config/constants";
-import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
@@ -14,8 +12,7 @@ import {
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 
-export type CodexOfficialIdentity =
-  "native_login" | "managed_account" | "api_key";
+export type CodexOfficialIdentity = "native_login" | "api_key";
 
 const nonEmptyString = (value: unknown): boolean =>
   typeof value === "string" && value.trim().length > 0;
@@ -46,13 +43,9 @@ export function resolveCodexOfficialIdentity(
 ): CodexOfficialIdentity | null {
   if (appId !== "codex") return null;
 
-  const managedAccountId = resolveManagedAccountId(
-    provider.meta,
-    "codex_oauth",
-  )?.trim();
   const hasFixedOfficialId = provider.id === CODEX_OFFICIAL_PROVIDER_ID;
   if (hasFixedOfficialId && provider.category === "official") {
-    return managedAccountId ? "managed_account" : "native_login";
+    return "native_login";
   }
 
   const settings = provider.settingsConfig as Record<string, unknown>;
@@ -71,9 +64,6 @@ export function resolveCodexOfficialIdentity(
     return null;
   }
 
-  if (managedAccountId) {
-    return "managed_account";
-  }
   if (hasStoredCodexApiKey(settings)) {
     return provider.category === "official" ? "api_key" : null;
   }
@@ -83,8 +73,8 @@ export function resolveCodexOfficialIdentity(
 }
 
 /**
- * 官方账号卡（对应后端 `codex_direct::is_official`）：Codex 早期绑定托管账号的官方卡
- * 没有 category，按身份认。
+ * 官方账号卡（对应后端 `codex_direct::is_official`）：Codex 早期官方卡没有 category，
+ * 按身份认。
  */
 export function isOfficialAccount(
   appId: AppId,
@@ -113,14 +103,7 @@ export function supportsOfficialProxyTakeover(
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
   const identity = resolveCodexOfficialIdentity(appId, provider);
-  if (!identity || identity === "api_key") return false;
-  if (
-    provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
-    identity === "managed_account"
-  ) {
-    return true;
-  }
-  return true;
+  return identity != null && identity !== "api_key";
 }
 
 /**
@@ -133,8 +116,7 @@ export function supportsOfficialProxyTakeover(
  *
  * - Claude Desktop 的普通供应商按 direct/proxy 模式判定；托管 OAuth 没有
  *   direct 逃生口（后端同样拒绝），始终需要本地路由。
- * - claude / codex / grokbuild 的托管 OAuth 同样恒需路由；非 OAuth 则按
- *   各自原生格式及完整 URL 模式判断是否需要本地处理。
+ * - claude / codex / grokbuild 按各自原生格式及完整 URL 模式判断是否需要本地处理。
  */
 export function providerNeedsRouting(
   appId: AppId,
@@ -142,19 +124,13 @@ export function providerNeedsRouting(
 ): boolean {
   if (isOfficialAccount(appId, provider)) return false;
 
-  const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
-
-  // Desktop 普通供应商由表单模式决定；托管 OAuth 的 token 只能由代理注入。
   if (appId === "claude-desktop") {
-    return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
+    return provider.meta?.claudeDesktopMode === "proxy";
   }
 
   if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
     return false;
   }
-
-  // 托管 OAuth：凭据由代理注入，与 apiFormat 无关，必须接管。
-  if (isManagedOAuth) return true;
 
   if (appId === "claude") {
     const fmt = provider.meta?.apiFormat;

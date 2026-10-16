@@ -13,8 +13,6 @@
 //! `[model_providers]` 下 CC Switch 路由表以外的每张表。嵌在用户表里的模型名是关键字段，
 //! 不算全局改动。
 
-use std::sync::Arc;
-
 use serde_json::{Map, Value};
 use toml_edit::{DocumentMut, Item};
 
@@ -31,7 +29,6 @@ use crate::live::project::codex::{
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
 use crate::provider::{Provider, ProviderMeta};
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::store::AppState;
 
 use super::claude_editor::{ConflictPolicy, EditorView, InactiveField};
@@ -475,7 +472,6 @@ pub(crate) enum KeyFields<'a> {
 /// 把编辑器保存的改动写进 live。没有要写的就什么都不做。
 pub(crate) fn write_live(
     db: &Database,
-    manager: &Arc<CodexOAuthManager>,
     edits: &TomlEdits,
     key_fields: KeyFields<'_>,
 ) -> Result<(), AppError> {
@@ -487,7 +483,7 @@ pub(crate) fn write_live(
         } => {
             let owner = prev.map_or(Owner::None, Owner::Provider);
             let spec = Target::Direct(Some(target));
-            let prepared = codex_direct::prepare(manager, &owner, &spec)?;
+            let prepared = codex_direct::Prepared::default();
             let planned = codex_direct::plan(db, &owner, &spec, &prepared)?;
             codex_direct::run_with_edits(
                 db,

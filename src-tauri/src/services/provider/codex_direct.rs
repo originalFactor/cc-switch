@@ -1,14 +1,12 @@
 //! 写 Codex 的客户端文件：`config.toml` 只替换关键字段和独有字段，其余字节不碰；
-//! `auth.json`、模型目录、托管账号的登录标记、登录暂存和它在同一个操作里提交，崩溃后按
-//! pending 前滚或丢弃。
+//! `auth.json`、模型目录和登录暂存在同一个操作里提交，崩溃后按 pending 前滚或丢弃。
 //!
 //! 写 Codex live 的入口（切换、新增第一个供应商、编辑当前供应商、同步、统一供应商、
 //! 进入 / 退出代理）都走这里。不回填、不合并通用配置片段、不补回 MCP：这些设置本来就
 //! 留在 live 里。
 //!
 //! 分三步：
-//! 1. [`prepare`]：拿写锁之前做要联网的事（取托管账号的 token、采纳 Codex CLI 轮换过的
-//!    refresh token）；
+//! 1. [`prepare_official_rows`]：拿写锁之前做要联网的事（取官方模型行）；
 //! 2. [`plan`]：在内存里算出 `config.toml` 的补丁、模型目录和代理契约，行有问题就在这里
 //!    报错，什么都不写；
 //! 3. [`run`]：拿写锁，读 live 的 `auth.json` 决定它的去向（见 `codex_login`），再按
@@ -20,10 +18,9 @@ use toml_edit::{Item, Table, Value as TomlValue};
 use crate::app_config::AppType;
 use crate::codex_config::{
     codex_auth_has_credential_login_material, codex_config_auth_store_mode,
-    codex_disables_web_search, codex_live_auth_is_managed_chatgpt_login,
-    codex_managed_oauth_marker_bytes, extract_codex_auth_api_key, get_codex_auth_path,
-    get_codex_config_path, get_codex_managed_oauth_live_auth_marker_path,
-    get_codex_model_catalog_path, plan_codex_model_catalog, CodexAuthStoreMode,
+    codex_disables_web_search, extract_codex_auth_api_key, get_codex_auth_path,
+    get_codex_config_path, get_codex_model_catalog_path, plan_codex_model_catalog,
+    CodexAuthStoreMode,
 };
 use crate::codex_config::{
     plan_codex_stack_catalog, CodexCatalogRow, CodexStackCatalogMember, CodexStackRoute,
@@ -44,14 +41,10 @@ use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::stack::Member;
 use crate::mode::state::{Contract, PendingTarget};
 use crate::provider::Provider;
-use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::services::subscription::CodexKeychainLogin;
-use std::sync::Arc;
 
 use super::codex_login::{self, AuthInput, AuthPlan, AuthTarget, LoginStash, STASH_FILENAME};
 use super::codex_official_models::{self, NativeRows, OfficialLogin, OfficialSkip};
-use super::ProviderService;
 
 fn app() -> &'static str {
     AppType::Codex.as_str()
@@ -62,10 +55,6 @@ fn app() -> &'static str {
 pub(crate) fn is_official(provider: &Provider) -> bool {
     provider.category.as_deref() == Some("official")
         || crate::proxy::providers::is_codex_official_provider(provider)
-}
-
-fn managed_account(provider: &Provider) -> Option<String> {
-    ProviderService::managed_codex_oauth_account_id(provider)
 }
 
 /// 本地代理给 Codex 的地址（带 `/v1`），不需要代理在运行：官方直连时写休眠表用。
@@ -118,8 +107,7 @@ pub(crate) enum Target<'a> {
     },
 }
 
-/// live 现在是谁写进去的：删它带进来的独有字段、认出要切走的托管账号、判断用户是不是
-/// 登出了，都看它。
+/// live 现在是谁写进去的：删它带进来的独有字段、判断用户是不是登出了，都看它。
 #[derive(Clone, Copy)]
 pub(crate) enum Owner<'a> {
     Provider(&'a Provider),
@@ -141,13 +129,9 @@ impl<'a> Owner<'a> {
     }
 }
 
-/// 拿写锁之前准备好的托管账号凭据和官方模型行。
+/// 拿写锁之前准备好的官方模型行。
 #[derive(Default)]
 pub(crate) struct Prepared {
-    /// 目标托管账号和它的登录。
-    target_login: Option<(String, Value)>,
-    /// 要切走的托管账号，和采纳 CLI 轮换后记下的盘上 refresh token。
-    outgoing: Option<(String, CodexLiveAuthSwitchGuard)>,
     /// 官方做路由、又发布了 Stack 模型时目录里的官方行（[`prepare_official_rows`]）。
     native: Option<NativeRows>,
     /// 钥匙串里 Codex 的登录，在拿锁之前读好（见 [`prepare_official_rows`]）：钥匙串不归
@@ -162,50 +146,8 @@ fn target_provider<'a>(target: &Target<'a>) -> Option<&'a Provider> {
     }
 }
 
-fn target_account(target: &Target<'_>) -> Option<String> {
-    target_provider(target)
-        .filter(|provider| is_official(provider))
-        .and_then(managed_account)
-}
-
-/// 取目标托管账号的登录（必要时刷新 token），并在切走托管账号前采纳 Codex CLI 轮换过的
-/// refresh token。都可能联网，所以在拿写锁之前做。
-pub(crate) fn prepare(
-    manager: &Arc<CodexOAuthManager>,
-    owner: &Owner<'_>,
-    target: &Target<'_>,
-) -> Result<Prepared, AppError> {
-    let target_account = target_account(target);
-    let target_login = match &target_account {
-        Some(account) => Some((
-            account.clone(),
-            super::live::get_codex_managed_oauth_live_auth_value(manager.clone(), account.clone())?,
-        )),
-        None => None,
-    };
-    let outgoing = match owner
-        .provider()
-        .and_then(managed_account)
-        .filter(|account| target_account.as_ref() != Some(account))
-    {
-        Some(account) => {
-            let guard = super::live::prepare_codex_managed_oauth_live_auth_switch_away(
-                manager.clone(),
-                account.clone(),
-            )?;
-            Some((account, guard))
-        }
-        None => None,
-    };
-    Ok(Prepared {
-        target_login,
-        outgoing,
-        ..Prepared::default()
-    })
-}
-
 /// 官方做路由、又发布了 Stack 模型时，按操作之后 Codex 会用的登录取官方模型行。可能联网，
-/// 所以和 [`prepare`] 一样在拿写锁之前做；登录是按未加锁读到的内容预测的，拿锁后在
+/// 所以和 [`prepare_official_rows`] 一样在拿写锁之前做；登录是按未加锁读到的内容预测的，拿锁后在
 /// [`run_with_edits`] 里按真实输入再核对一次。
 ///
 /// 读钥匙串（`security` 可能等用户点授权框）和取官方行（跑 Codex 子进程、联网最多
@@ -276,7 +218,6 @@ pub(crate) fn predicted_official_login(
     .stash;
     let auth_plan = codex_login::plan(AuthInput {
         live: live.as_ref(),
-        live_is_managed: live_is_managed(prepared, live.as_ref()),
         third_party_keys: &planned.retired_keys,
         leaving_official: planned.leaving_official.as_ref(),
         target: auth_target(&planned.auth),
@@ -334,28 +275,6 @@ pub(crate) fn read_config_text() -> String {
         .unwrap_or_default()
 }
 
-/// live 的 `auth.json` 是不是这次涉及的托管账号的登录（切走时要清掉，不进暂存）。已被
-/// 删除的托管账号放弃了所有权：它留在盘上的登录按用户自己的登录处理。
-fn live_is_managed(prepared: &Prepared, live: Option<&Value>) -> bool {
-    let managed_accounts: Vec<&str> = prepared
-        .outgoing
-        .iter()
-        .filter(|(_, guard)| !matches!(guard, CodexLiveAuthSwitchGuard::MissingAccount))
-        .map(|(account, _)| account.as_str())
-        .chain(
-            prepared
-                .target_login
-                .iter()
-                .map(|(account, _)| account.as_str()),
-        )
-        .collect();
-    live.is_some_and(|auth| {
-        managed_accounts
-            .iter()
-            .any(|account| codex_live_auth_is_managed_chatgpt_login(auth, account))
-    })
-}
-
 fn auth_target(goal: &AuthGoal) -> AuthTarget<'_> {
     match goal {
         AuthGoal::ThirdParty => AuthTarget::ThirdParty {
@@ -363,7 +282,6 @@ fn auth_target(goal: &AuthGoal) -> AuthTarget<'_> {
         },
         AuthGoal::KeepNative => AuthTarget::ProxyThirdParty,
         AuthGoal::Official(row_auth) => AuthTarget::Official { row_auth },
-        AuthGoal::Managed(auth) => AuthTarget::Managed { auth },
     }
 }
 
@@ -371,7 +289,7 @@ fn project(provider: &Provider) -> Result<CodexProjection, AppError> {
     CodexProjection::of(&RowInput {
         settings: &provider.settings_config,
         official: is_official(provider),
-        proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
+        proxy_injected_oauth: false,
     })
 }
 
@@ -435,12 +353,8 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
     for provider in db.get_all_providers(app())?.values() {
         let auth = provider.settings_config.get("auth");
         if is_official(provider) {
-            if managed_account(provider).is_none() {
-                if let Some(auth) =
-                    auth.filter(|auth| codex_auth_has_credential_login_material(auth))
-                {
-                    facts.official_logins.push(auth.clone());
-                }
+            if let Some(auth) = auth.filter(|auth| codex_auth_has_credential_login_material(auth)) {
+                facts.official_logins.push(auth.clone());
             }
             continue;
         }
@@ -495,10 +409,9 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
 #[derive(Debug, Clone)]
 enum AuthGoal {
     ThirdParty,
-    /// 代理的第三方路由，或者没有直连供应商：不动原生登录，只清托管账号的登录。
+    /// 代理的第三方路由，或者没有直连供应商：不动原生登录。
     KeepNative,
     Official(Value),
-    Managed(Value),
 }
 
 /// 行里的 `auth`（没有时是空对象）。
@@ -555,14 +468,13 @@ pub(crate) fn plan(
     };
 
     let official = provider.is_some_and(is_official);
-    let managed_login = prepared.target_login.as_ref().map(|(_, auth)| auth.clone());
     let (route, stamp, auth) = match (target, &projection) {
         (Target::Direct(None), _) | (_, None) => (RouteWrite::Default, None, AuthGoal::KeepNative),
         (Target::Direct(Some(provider)), Some(projection)) => {
-            let auth = match &managed_login {
-                Some(login) => AuthGoal::Managed(login.clone()),
-                None if official => AuthGoal::Official(row_auth(provider)),
-                None => AuthGoal::ThirdParty,
+            let auth = if official {
+                AuthGoal::Official(row_auth(provider))
+            } else {
+                AuthGoal::ThirdParty
             };
             match &projection.route {
                 Route::Official if crate::settings::unify_codex_session_history() => {
@@ -596,10 +508,7 @@ pub(crate) fn plan(
             Some(_),
         ) => {
             if official {
-                let auth = match &managed_login {
-                    Some(login) => AuthGoal::Managed(login.clone()),
-                    None => AuthGoal::Official(row_auth(route)),
-                };
+                let auth = AuthGoal::Official(row_auth(route));
                 (
                     RouteWrite::OfficialProxy {
                         base_url: base_url.to_string(),
@@ -653,7 +562,7 @@ pub(crate) fn plan(
 
     let leaving_official = owner
         .provider()
-        .filter(|provider| is_official(provider) && managed_account(provider).is_none())
+        .filter(|provider| is_official(provider))
         .map(row_auth);
 
     let config = CodexConfigPatch {
@@ -673,7 +582,6 @@ pub(crate) fn plan(
         target,
         &config,
         catalog.as_deref(),
-        prepared,
         official_login.as_deref(),
     );
     Ok(Planned {
@@ -819,12 +727,11 @@ fn table_text(table: &Table) -> String {
 
 /// 代理契约：路由供应商在客户端那一侧的全部要求。摘要相同，换路由时客户端文件就不读
 /// 也不写。`requires_openai_auth` 跟着盘上的登录走，不算进契约；官方路由要的是谁的登录
-/// （托管账号，或 `official_login`：没绑托管账号的官方卡行里的账号）算进去。
+/// （`official_login`：没绑托管账号的官方卡行里的账号）算进去。
 fn contract_of(
     target: &Target<'_>,
     config: &CodexConfigPatch,
     catalog: Option<&[u8]>,
-    prepared: &Prepared,
     official_login: Option<&str>,
 ) -> Contract {
     let base_url = match target {
@@ -867,7 +774,6 @@ fn contract_of(
         "selector": selector,
         "table": table,
         "catalog": digest(catalog),
-        "managed": prepared.target_login.as_ref().map(|(account, _)| account),
         "login": official_login,
     });
     let key = digest(Some(
@@ -927,7 +833,7 @@ fn guarded(pre: Option<&[u8]>, then: WholeFile) -> Guarded {
 }
 
 /// 执行一次 Codex 写入：拿写锁，决定 `auth.json` 的去向，和 `config.toml`、模型目录、
-/// 托管账号标记、登录暂存一起提交，最后落定 `pending`（指针、模式状态）。
+/// 登录暂存一起提交，最后落定 `pending`（指针、模式状态）。
 pub(crate) fn run(
     db: &Database,
     op: &str,
@@ -952,11 +858,6 @@ pub(crate) fn run_with_edits(
     let write = AppWrite::begin(db, app())?;
     let store = &write.store;
 
-    // 切走的托管账号：采纳之后 CLI 又刷新了就停下，免得删掉新 token。
-    if let Some((account, outgoing)) = &prepared.outgoing {
-        outgoing.ensure_unchanged(account)?;
-    }
-
     // auth.json 读不了（比如被换成了目录）：不碰它，其余照常写。
     let auth_path = get_codex_auth_path();
     let (auth_pre, auth_readable) = match read_current(&auth_path) {
@@ -969,11 +870,6 @@ pub(crate) fn run_with_edits(
     let live_auth = auth_pre
         .as_deref()
         .map(|bytes| serde_json::from_slice::<Value>(bytes).unwrap_or(Value::Null));
-    let live_is_managed = live_is_managed(prepared, live_auth.as_ref());
-    let outgoing_missing = prepared
-        .outgoing
-        .as_ref()
-        .is_some_and(|(_, guard)| matches!(guard, CodexLiveAuthSwitchGuard::MissingAccount));
 
     let LoadedStash {
         stash,
@@ -983,7 +879,6 @@ pub(crate) fn run_with_edits(
     let preserve = crate::settings::preserve_codex_official_auth_on_switch();
     let auth_plan = codex_login::plan(AuthInput {
         live: live_auth.as_ref(),
-        live_is_managed,
         third_party_keys: &planned.retired_keys,
         leaving_official: planned.leaving_official.as_ref(),
         target: auth_target(&planned.auth),
@@ -1061,21 +956,6 @@ pub(crate) fn run_with_edits(
         });
     let auth_patch = auth_patch.transpose()?;
 
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
-    let marker_pre = read_current(&marker_path)?;
-    let marker_patch = match (&prepared.target_login, &auth_plan.auth) {
-        (Some((account, login)), Some(Some(written))) if written == login => {
-            codex_managed_oauth_marker_bytes(login, account)?
-                .map(|bytes| guarded(marker_pre.as_deref(), WholeFile::Write(bytes)))
-        }
-        _ if marker_pre.is_some()
-            && ((live_is_managed && auth_plan.auth == Some(None)) || outgoing_missing) =>
-        {
-            Some(guarded(marker_pre.as_deref(), WholeFile::Delete))
-        }
-        _ => None,
-    };
-
     let stash_patch = auth_plan
         .stash
         .as_ref()
@@ -1112,12 +992,6 @@ pub(crate) fn run_with_edits(
             patch,
         });
     }
-    if let Some(patch) = &marker_patch {
-        changes.push(FileChange {
-            file: LiveFile::private(&marker_path),
-            patch,
-        });
-    }
     if let Some(patch) = &stash_patch {
         changes.push(FileChange {
             file: LiveFile::private(store.file(STASH_FILENAME)),
@@ -1131,17 +1005,16 @@ pub(crate) fn run_with_edits(
     report
 }
 
-/// 直连写入：`prepare` → `plan` → `run`。
+/// 直连写入：`plan` → `run`。
 pub(crate) fn write_direct(
     db: &Database,
-    manager: &Arc<CodexOAuthManager>,
     op: &str,
     owner: Owner<'_>,
     target: Option<&Provider>,
     pending: PendingTarget,
 ) -> Result<OperationReport, AppError> {
     let target = Target::Direct(target);
-    let prepared = prepare(manager, &owner, &target)?;
+    let prepared = Prepared::default();
     let planned = plan(db, &owner, &target, &prepared)?;
     run(db, op, planned, &prepared, pending)
 }

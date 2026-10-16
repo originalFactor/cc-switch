@@ -1,33 +1,23 @@
 import { useMemo, useState, useEffect } from "react";
-import {
-  AlertTriangle,
-  GripVertical,
-  ChevronDown,
-  ChevronUp,
-} from "lucide-react";
+import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
-import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
-import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
-import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
-import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
+import { TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
-import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
@@ -172,32 +162,7 @@ export function ProviderCard({
 }: ProviderCardProps) {
   const { t } = useTranslation();
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
-  const managedCodexAccountId = resolveManagedAccountId(
-    provider.meta,
-    "codex_oauth",
-  )?.trim();
-  const {
-    data: codexAuthStatus,
-    isSuccess: isCodexAuthStatusSuccess,
-    isError: isCodexAuthStatusError,
-  } = useQuery({
-    queryKey: ["managed-auth-status", "codex_oauth"],
-    queryFn: () => authApi.authGetStatus("codex_oauth"),
-    enabled:
-      codexOfficialIdentity === "managed_account" &&
-      Boolean(managedCodexAccountId),
-    staleTime: 30_000,
-  });
-  const managedCodexAccount = codexAuthStatus?.accounts.find(
-    (account) => account.id === managedCodexAccountId,
-  );
   const manualNote = provider.notes?.trim() || undefined;
-  const providerNameIncludesAccountLogin = Boolean(
-    managedCodexAccount?.login &&
-    (provider.name.trim() === managedCodexAccount.login ||
-      provider.name.trim() ===
-        `OpenAI Official (${managedCodexAccount.login})`),
-  );
 
   const { data: health } = useProviderHealth(
     provider.id,
@@ -223,9 +188,7 @@ export function ProviderCard({
     return true;
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
-  const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
-  const usageEnabled =
-    provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
+  const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
   const isOfficial = isOfficialProvider(provider, appId);
   const supportsOfficialSubscription =
     isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
@@ -236,14 +199,7 @@ export function ProviderCard({
     supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
 
   const isCopilot =
-    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
-    provider.meta?.usage_script?.templateType === "github_copilot";
-  const isCodexOauth =
-    appId === "codex"
-      ? isBoundCodexOfficial
-      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
-  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
-  const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+    provider.meta?.usage_script?.templateType === TEMPLATE_TYPES.GITHUB_COPILOT;
   // 获取用量数据以判断是否有多套餐
   const shouldAutoQuery = isCurrent;
   const autoQueryInterval = shouldAutoQuery
@@ -349,60 +305,14 @@ export function ProviderCard({
             )}
           </div>
 
-          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+          {codexOfficialIdentity === "native_login" ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
-              {codexOfficialIdentity === "native_login" ? (
-                <span className="min-w-0 truncate" title={manualNote}>
-                  {manualNote ??
-                    t("codex.followCodexLoginDescription", {
-                      defaultValue: "账号会随 Codex CLI 当前登录变化",
-                    })}
-                </span>
-              ) : managedCodexAccount ? (
-                <>
-                  <span
-                    className="min-w-0 truncate"
-                    title={manualNote ?? managedCodexAccount.login}
-                  >
-                    {manualNote ??
-                      (providerNameIncludesAccountLogin
-                        ? t("codex.openAiAccount", {
-                            defaultValue: "OpenAI 账号",
-                          })
-                        : managedCodexAccount.login)}
-                  </span>
-                  {managedCodexAccount.reauth_required && (
-                    <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
-                      <AlertTriangle className="h-3.5 w-3.5" />
-                      {t("codexOauth.reauthBadge", "需要重新登录")}
-                    </span>
-                  )}
-                </>
-              ) : isCodexAuthStatusError ? (
-                <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">
-                    {t("codex.accountStatusUnavailable", {
-                      defaultValue: "无法读取账号信息",
-                    })}
-                  </span>
-                </span>
-              ) : isCodexAuthStatusSuccess ? (
-                <span className="inline-flex min-w-0 items-center gap-1 text-sm text-warning-text">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">
-                    {t("codex.boundAccountUnavailable", {
-                      defaultValue: "绑定的账号不可用",
-                    })}
-                  </span>
-                </span>
-              ) : (
-                <span className="min-w-0 truncate">
-                  {t("codex.accountLoading", {
-                    defaultValue: "正在加载账号…",
+              <span className="min-w-0 truncate" title={manualNote}>
+                {manualNote ??
+                  t("codex.followCodexLoginDescription", {
+                    defaultValue: "账号会随 Codex CLI 当前登录变化",
                   })}
-                </span>
-              )}
+              </span>
             </div>
           ) : displayUrl ? (
             <button
@@ -427,30 +337,7 @@ export function ProviderCard({
           <div className="max-w-[208px] text-end">
             <div className="flex items-center justify-end gap-1">
               {isCopilot ? (
-                <CopilotQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
-              ) : isCodexOauth ? (
-                !isBoundCodexOfficial || usageEnabled ? (
-                  <CodexOauthQuotaFooter
-                    meta={provider.meta}
-                    inline={true}
-                    isCurrent={isCurrent}
-                    autoQueryInterval={
-                      isBoundCodexOfficial
-                        ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
-                        : undefined
-                    }
-                  />
-                ) : null
-              ) : isXaiOauth ? (
-                <XaiOauthQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
+                <CopilotQuotaFooter inline={true} isCurrent={isCurrent} />
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
                   <SubscriptionQuotaFooter
@@ -513,10 +400,7 @@ export function ProviderCard({
             }
             isTesting={isTesting}
             onConfigureUsage={
-              (isOfficial && !supportsOfficialSubscription) ||
-              isCopilot ||
-              (isCodexOauth && !isBoundCodexOfficial) ||
-              isXaiOauth
+              (isOfficial && !supportsOfficialSubscription) || isCopilot
                 ? undefined
                 : () => onConfigureUsage(provider)
             }
