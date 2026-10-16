@@ -3,8 +3,40 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "index.html"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.json"
+      - "tsconfig.node.json"
+      - "vite.config.ts"
+      - "vitest.config.ts"
+      - "tailwind.config.cjs"
+      - "postcss.config.cjs"
+      - "components.json"
+      - "src-tauri/**"
+      - ".github/workflows/ci.yml"
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "index.html"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.json"
+      - "tsconfig.node.json"
+      - "vite.config.ts"
+      - "vitest.config.ts"
+      - "tailwind.config.cjs"
+      - "postcss.config.cjs"
+      - "components.json"
+      - "src-tauri/**"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 concurrency:
@@ -128,6 +160,17 @@ jobs:
           path: dist
           key: ${{ steps.dist-cache.outputs.cache-primary-key }}
 
+      # dist is platform-independent: upload it once from the Linux leg only, as
+      # a downloadable artifact and a handoff to the release workflow.
+      - name: Upload frontend dist
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 30
+          if-no-files-found: error
+
       - name: Check Rust formatting
         run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 
@@ -141,3 +184,48 @@ jobs:
 
       - name: Run tests
         run: cargo nextest run --manifest-path src-tauri/Cargo.toml --profile ci
+
+      # Unsigned installers for manual QA: no signing key, no updater artifacts.
+      # The signed installers are produced by the release workflow. A conf
+      # override turns off createUpdaterArtifacts so the missing private key
+      # does not abort the build.
+      - name: Build and bundle Tauri App
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node -e "const c=require('./src-tauri/tauri.conf.json');c.bundle.createUpdaterArtifacts=false;require('fs').writeFileSync('src-tauri/tauri.ci.conf.json',JSON.stringify(c,null,2))"
+          pnpm tauri build --bundles msi --config src-tauri/tauri.ci.conf.json
+          $msi = Get-ChildItem -Path src-tauri/target/release/bundle/msi -Recurse -Include *.msi -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($null -eq $msi) {
+            throw 'No Windows MSI found after bundling'
+          }
+          New-Item -ItemType Directory -Force -Path ci-assets | Out-Null
+          Copy-Item $msi.FullName "ci-assets/CC-Switch-Windows-x86_64.msi"
+
+      - name: Build and bundle Tauri App
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          node -e "const c=require('./src-tauri/tauri.conf.json');c.bundle.createUpdaterArtifacts=false;require('fs').writeFileSync('src-tauri/tauri.ci.conf.json',JSON.stringify(c,null,2))"
+          pnpm tauri build --bundles appimage,deb,rpm --config src-tauri/tauri.ci.conf.json
+          mkdir -p ci-assets
+          appimage=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1)
+          deb=$(find src-tauri/target/release/bundle -name "*.deb" | head -1)
+          rpm=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1)
+          [ -n "$appimage" ] || { echo "No AppImage" >&2; exit 1; }
+          [ -n "$deb" ] || { echo "No .deb" >&2; exit 1; }
+          [ -n "$rpm" ] || { echo "No .rpm" >&2; exit 1; }
+          cp "$appimage" ci-assets/CC-Switch-Linux-x86_64.AppImage
+          cp "$deb" ci-assets/CC-Switch-Linux-x86_64.deb
+          cp "$rpm" ci-assets/CC-Switch-Linux-x86_64.rpm
+
+      - name: Upload CI installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-installers-${{ runner.os }}
+          path: ci-assets/*
+          retention-days: 30
+          if-no-files-found: error
+
