@@ -18,7 +18,7 @@ export interface SearchFieldProps
 }
 
 /**
- * 搜索框（docs/design-system.html「输入」）：高 32、圆角 6、左侧 14px 放大镜，
+ * 搜索框：高 32、圆角 6、左侧 14px 放大镜，
  * 有字时右侧出现清除按钮；Esc 先清空，空了才交给外层（关抽屉 / 对话框）。
  */
 export const SearchField = React.forwardRef<HTMLInputElement, SearchFieldProps>(

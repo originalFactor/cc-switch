@@ -11,7 +11,7 @@
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/github/downloads/originalFactor/cc-switch-lite/total)](https://github.com/originalFactor/cc-switch-lite/releases/latest)
 
-**[Download](#download--installation) · [Quick Start](#quick-start) · [Features](#features) · [FAQ](#faq) · [User Manual](docs/user-manual/en/README.md)**
+**[Download](#download--installation) · [Quick Start](#quick-start) · [Features](#features) · [FAQ](#faq)**
 
 </div>
 
@@ -19,32 +19,15 @@
 
 AI coding tools like Claude Code, Codex, and Gemini CLI each have their own configuration format. Switching API providers means hand-editing JSON, TOML, YAML, or `.env` files, and MCP, Skills, and prompts have to be maintained separately in every tool.
 
-**CC Switch** brings all of this into a single desktop app: pick a preset, enter your key, and switch in one click. Switching replaces only the connection details — endpoint, key, and model — so plugins, hooks, MCP, and comments you added yourself stay as they are.
+**CC Switch** brings all of this into a single desktop app: enter the endpoint and key, and switch in one click. Switching replaces only the connection details — endpoint, key, and model — so plugins, hooks, MCP, and comments you added yourself stay as they are.
 
 - **One App, Five Tools** — Claude Code, Claude Desktop, Codex, Gemini CLI, and Grok Build
-- **No More Manual Editing** — 90+ provider presets including AWS Bedrock, NVIDIA NIM, and community relays
+- **No More Manual Editing** — Universal provider form: enter endpoint and key once; search models by name and domain, and the form knows providers like AWS Bedrock, NVIDIA NIM, and community relays
 - **Direct, Routing, or Aggregation — Your Choice** — Direct connects the tool straight to the provider; Routing forwards requests through your machine, converting API formats and failing over automatically, so you can use GPT in Claude Code and Claude in Codex; Aggregation puts models from several providers into one model list in Claude Code or Codex, and each request goes to the provider of the model you pick
 - **Centralized MCP, Skills & Prompts** — Add MCP servers and Skills once, then choose which tools to sync them to; prompts are maintained separately for each tool
 - **Sessions You Can Read** — Turns each tool's session logs into a reading view: what each turn did, which files changed, and which step failed, all at a glance
 - **Usage & Quotas at a Glance** — Track token usage and spending even without local routing; remaining subscription quota and account balances show right on provider cards and in the tray
 - **Cross-Platform** — Native desktop app for Windows, macOS, and Linux, built with Tauri 2
-
-## Screenshots
-
-<table>
-<tr>
-<td align="center" width="50%"><img src="assets/release-notes/v4.0.0/main-en.png" alt="Main interface: sidebar, Direct / Routing / Aggregation tabs, and provider cards" width="400"><br>Main Interface</td>
-<td align="center" width="50%"><img src="assets/release-notes/v4.0.0/apps-en.png" alt="Apps page: versions, installation, and upgrades for every AI coding tool in one place" width="400"><br>Apps Page</td>
-</tr>
-<tr>
-<td align="center"><img src="assets/release-notes/v4.0.0/agg-en.png" alt="Aggregation mode: one default provider plus several added providers" width="400"><br>Aggregation Mode</td>
-<td align="center"><img src="assets/release-notes/v4.0.0/agg-codex-en.png" alt="Codex's model picker listing models from several providers" width="400"><br>Aggregated Model List in Codex</td>
-</tr>
-<tr>
-<td align="center"><img src="assets/release-notes/v4.0.0/session-en.png" alt="Session reading view: step summaries, tool call details, and conversation outline" width="400"><br>Session Reading View</td>
-<td align="center"><img src="assets/release-notes/v4.0.0/usage-en.png" alt="Usage: heatmap and request logs" width="400"><br>Usage</td>
-</tr>
-</table>
 
 ## Download & Installation
 
@@ -94,20 +77,18 @@ Download the latest Linux build from the [Releases](../../releases) page:
 - `CC-Switch-v{version}-Linux-x86_64.rpm` / `-Linux-arm64.rpm` (Fedora and other RPM distros that ship WebKitGTK 4.1)
 - `CC-Switch-v{version}-Linux-x86_64.AppImage` / `-Linux-arm64.AppImage` (any distro meeting the requirements above)
 
-> **Flatpak**: Not included in official releases. You can build it yourself from the `.deb` — see [`flatpak/README.md`](flatpak/README.md) for instructions.
-
 ## Quick Start
 
 ### Basic Usage
 
-1. **Add Provider**: Select the tool you want to manage in the sidebar, then click "+" (Add Provider) in the top-right corner of the page → Choose a preset or create a custom configuration
+1. **Add Provider**: Select the tool you want to manage in the sidebar, then click "+" (Add Provider) in the top-right corner of the page → Fill in the endpoint and key (adding always creates a universal provider that syncs to the apps you enable) — no more picking from a preset list
 2. **Switch Provider**:
    - Main UI: Select provider → Click "Enable"
    - System Tray: One row per tool showing "name · mode · provider · quota"; click a provider name in its submenu to switch (Claude Code, Claude Desktop, Codex, Gemini CLI, and Grok Build)
 3. **Takes Effect**: Claude Code needs no restart; for Codex, Gemini CLI, and Grok Build, restart your terminal or the CLI tool; for Claude Desktop, restart the app itself (see FAQ)
 4. **Back to Official Login**: Switch to the built-in official provider in the list (e.g. "Claude Official"), restart the tool, then follow its login/OAuth flow
 5. **Routing & Aggregation (optional)**: The Claude Code, Codex, Gemini CLI, and Grok Build pages have "Direct" / "Routing" tabs at the top, and Claude Code and Codex also have "Aggregation". Clicking a tab only changes what you're looking at and doesn't touch your configuration; to actually switch, click "Start routing" or "Switch to Aggregation" on the page, and click "Back to direct" to return. Use Routing to use OpenAI- or Gemini-format providers in Claude Code, or Claude in Codex; use Aggregation to mix models from several providers in one model list
-6. **Manage Tools**: The "Apps" page in the sidebar shows each AI coding tool's version, install location, and source in one place; you can install, upgrade, or upgrade all, and choose which tools appear in the sidebar
+6. **Manage Tools**: The "Apps" page in the sidebar shows each AI coding tool's version, install location, and source in one place; you can install, upgrade, upgrade all, or uninstall (and pick which duplicate to remove when a tool is installed in several places), and choose which tools appear in the sidebar
 
 ### MCP, Prompts, Skills, Projects & Sessions
 
@@ -120,11 +101,7 @@ Download the latest Linux build from the [Releases](../../releases) page:
 
 > **Note**: On first launch, CC Switch automatically imports your existing Claude Code, Codex, Gemini CLI, and Grok Build configuration as a provider named `default` and adds an official provider for each of these tools and Claude Desktop, so nothing you had configured is lost.
 
-For detailed guides on every feature, check out the **[User Manual](docs/user-manual/en/README.md)**, covering provider management, MCP/Prompts/Skills, local routing & failover, and more.
-
 ## Features
-
-[Full Changelog](CHANGELOG.md) | [v4.0 Release Notes](docs/release-notes/v4.0.4-en.md)
 
 ### Supported Features by Tool
 
@@ -145,12 +122,12 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 ### Provider Management
 
-- **90+ provider presets** — Pick a preset and enter your key to add a provider, or create a custom configuration. The add panel lets you search by name (including Chinese names) and domain, and a vendor's different plans and regions are merged into one row
+- **Universal provider form** — Every provider you add is a universal provider: fill in the endpoint and key once, enable the apps it should sync to, and one configuration is shared by Claude Code, Claude Desktop, Codex, Gemini CLI, and Grok Build. The form searches models by name and domain, shows what the config file will look like after switching, and CC Switch automatically backs up each config file before rewriting it for the first time
 - **Key fields only** — Switching replaces only the connection details such as the endpoint, key, and model; plugins, hooks, MCP, settings you added yourself, and comments stay as they are. The editor shows what the config file will look like after switching, and CC Switch automatically backs up each config file before rewriting it for the first time
 - **Projects** — Save Claude Code's or Codex's current provider, MCP, Skills, and prompt files as a project (for Claude Desktop, only the provider is saved), then switch the whole setup in one click from the project switcher at the top of the page or from the tray; when you switch to another project, the current state is automatically saved back to the previous project. The project switcher is hidden by default; turn on "Show project switcher" in "Settings → General"
 - **Accounts (Beta)** — Sign in to multiple GitHub Copilot, ChatGPT, and xAI (Grok) accounts under "Accounts" in the sidebar and use those subscriptions as providers in Claude Code, Claude Desktop, and Codex (everything except Codex's OpenAI Official has to be used in Routing mode). Using a subscription outside the official client may violate the vendor's terms of service; assess the risk yourself
 - **Third-party providers for Claude Desktop** — Connect directly to Anthropic-compatible endpoints; for non-Claude models, choose "Model Mapping" to map tiers like Sonnet, Opus, and Haiku to the provider's actual models through local routing
-- **Universal providers** — One config syncs to Claude Code, Codex, and Gemini CLI
+- **Universal providers** — One config syncs to all five apps: Claude Code, Claude Desktop, Codex, Gemini CLI, and Grok Build
 - One-click switching, system tray quick switching (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), drag-and-drop sorting, import/export
 
 ### Local Routing & Failover
@@ -161,7 +138,6 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 - **Rectifier** — Automatically fixes certain requests that some upstreams can't handle (e.g. Thinking signatures, or falling back when images aren't supported)
 - Official providers (e.g. Claude Official) can't go through local routing (except Codex's OpenAI Official)
 - The routing service's status, listen address, and failover settings are all in "Settings → Local routing"
-- Guides: [Using GPT in Claude Code](docs/guides/claude-codex-routing-guide-en.md) · [Using Claude in Codex](docs/guides/codex-claude-routing-guide-en.md)
 
 ### Aggregation Mode
 
@@ -169,7 +145,6 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 - **Add and remove anytime** — Click "Add" or "Remove" on a provider card, then pick one provider as the default; requests that don't name an aggregated model go to it. Codex's OpenAI Official can only be the default provider; Claude official subscriptions are currently unsupported in Aggregation
 - **Notes** — Aggregation doesn't provide failover; Claude Code requires version 2.1.243 or later; Codex needs a restart after the aggregated list changes, while Claude Code doesn't. When you switch models within a session, the new model has to rebuild its prompt cache, so the first turn costs a bit more
 - Much of Aggregation mode's design draws on [opencodex](https://github.com/lidge-jun/opencodex) — thanks to its author and contributors
-- Documentation: [Aggregation mode manual](docs/user-manual/en/4-proxy/4.6-aggregation.md) · [Illustrated guide (Chinese)](docs/guides/aggregation-mode-guide-zh.md)
 
 ### MCP, Prompts & Skills
 
@@ -202,7 +177,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 <details>
 <summary><strong>Which AI tools does CC Switch support?</strong></summary>
 
-CC Switch supports five tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**. Each tool has dedicated provider presets and configuration management; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
+CC Switch supports five tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**. Each tool has its own provider management; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
 
 </details>
 
@@ -263,7 +238,7 @@ So for tools that use one active provider at a time (Claude Code, Claude Desktop
 <details>
 <summary><strong>How do I switch back to official login?</strong></summary>
 
-In CC Switch, the provider lists for Claude Code, Claude Desktop, Codex, Gemini CLI, and Grok Build each include a built-in official provider (**Claude Official**, **Claude Desktop Official**, **OpenAI Official**, **Google Official**, **Grok Official**); if you deleted it, add it back from the presets. After switching to the official provider, follow the tool's own login flow (e.g. `/login` in Claude Code, `codex login` for Codex), and then you can freely switch between the official provider and third-party providers.
+In CC Switch, the provider lists for Claude Code, Claude Desktop, Codex, Gemini CLI, and Grok Build each include a built-in official provider (**Claude Official**, **Claude Desktop Official**, **OpenAI Official**, **Google Official**, **Grok Official**). If you deleted it, create a universal provider for that app and bind the matching account under **Accounts** in the sidebar. After switching to the official provider, follow the tool's own login flow (e.g. `/login` in Claude Code, `codex login` for Codex), and then you can freely switch between the official provider and third-party providers.
 
 For Codex, you can also sign in to multiple ChatGPT accounts inside CC Switch via "Sign in with ChatGPT" and choose an "Account to use" for each **OpenAI Official** card, so switching between multiple Plus, Pro, or Team accounts takes one click; cards set to "Follow Codex login" keep using the Codex CLI's own login.
 
@@ -287,7 +262,7 @@ In Routing mode, switching changes the provider that routing uses; the provider 
 
 Yes, but you need to use Routing. When editing the provider, set "Upstream Format" under "Advanced Options" to match the provider's API: choose "OpenAI Chat Completions" for services that only offer a Chat Completions endpoint (as many local model servers do), "OpenAI Responses API" for services that offer a Responses endpoint, and "Gemini Native generateContent" for Gemini. Then click "Start routing" on the "Routing" tab of the Claude Code page. Choosing the wrong format or not starting routing usually results in a 404 or 405 error.
 
-Conversely, choosing "Anthropic Messages" as the "Upstream Format" in Codex or Grok Build lets you use Claude-format providers; this also requires Routing. See [Using GPT in Claude Code](docs/guides/claude-codex-routing-guide-en.md) and [Using Claude in Codex](docs/guides/codex-claude-routing-guide-en.md) for details.
+Conversely, choosing "Anthropic Messages" as the "Upstream Format" in Codex or Grok Build lets you use Claude-format providers; this also requires Routing.
 
 </details>
 
@@ -348,13 +323,9 @@ If you launch from a desktop icon, add it to the `.desktop` `Exec=` line (e.g. `
 
 </details>
 
-For more questions, see the [FAQ](docs/user-manual/en/5-faq/5.2-questions.md) in the User Manual.
-
 ## Contributing
 
 Issues and suggestions are welcome! Before developing a new feature, please open an issue to discuss the approach first; feature PRs that aren't a good fit for the project may be closed.
-
-For development setup, pre-submit checks, and architecture notes, see [CONTRIBUTING.md](CONTRIBUTING.md); for usage questions, check [SUPPORT.md](SUPPORT.md) first; report security vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 **Tech stack**: Tauri 2 · Rust · React 18 · TypeScript · SQLite
 

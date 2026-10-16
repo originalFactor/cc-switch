@@ -38,7 +38,7 @@ const buttonVariants = cva(
           "border border-transparent bg-stack-solid text-stack-on font-semibold hover:brightness-110",
       },
       size: {
-        // 旧尺寸都映射到 v7 的三档（docs/design-system.html「按钮」）：
+        // 旧尺寸都映射到 v7 的三档：
         // default = regular（32）、sm = compact（28）、icon = 32 见方，lg 只给少数大按钮（36）
         default:
           "h-8 px-3.5 transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",

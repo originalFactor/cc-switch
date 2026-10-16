@@ -4,7 +4,7 @@ import { CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * 说明卡（v7 第八轮「?」，规格见 docs/research/2026-09-30-ui-design-v7/HELP_BRIEF.md）。
+ * 说明卡（v7 第八轮「?」）。
  *
  * - 悬停 300ms 打开，移开 200ms 关闭（移进卡片不关）；键盘聚焦立即打开。
  *   只认键盘聚焦（:focus-visible）：弹层打开时 Radix 会把焦点自动放到里面第一个可聚焦元素，

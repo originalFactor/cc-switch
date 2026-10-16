@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * 输入框 / 文本域共用的外观（docs/design-system.html「输入」）：圆角 6、border-strong 描边，
+ * 输入框 / 文本域共用的外观：圆角 6、border-strong 描边，
  * 聚焦时描边换主题色 + 3px 光晕，出错时红描边。不能用 Input / Textarea 的原生控件直接拼这个。
  */
 export const fieldClass =

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for AI coding agents working in this repository. Human-facing docs live in
-[README.md](./README.md), [CONTRIBUTING.md](./CONTRIBUTING.md), and [docs/](./docs/).
+[README.md](./README.md) and [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Project overview
 
@@ -23,7 +23,6 @@ src/i18n/locales/    UI strings: zh.json, zh-TW.json, en.json, ja.json
 src-tauri/src/       Backend (Rust): commands/ -> services/ -> database/
 src-tauri/src/proxy/ Local routing: forwarding, format conversion, failover, billing
 tests/               Frontend tests (vitest); tests/msw/ holds the Tauri mocks
-docs/                User manual, guides, release notes
 ```
 
 ## Setup
@@ -137,8 +136,7 @@ back to English at runtime instead of failing the build, so verify the locale fi
   the Provider Presets section of [CONTRIBUTING.md](./CONTRIBUTING.md).
 - Keep changes scoped to the task. Do not reformat unrelated files, rename public APIs, or bump
   dependencies as a side effect.
-- Keep `README.md` and the four `docs/user-manual/` language trees consistent when behavior
-  described there changes.
+- Keep `README.md` consistent when behavior described there changes.
 
 ## Pull requests
 
