@@ -2,8 +2,9 @@ import * as React from "react";
 import * as SwitchPrimitives from "@radix-ui/react-switch";
 import { cn } from "@/lib/utils";
 
-export interface SwitchProps
-  extends React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root> {
+export interface SwitchProps extends React.ComponentPropsWithoutRef<
+  typeof SwitchPrimitives.Root
+> {
   /** default：30×18；sm：26×16，给表格里成排的开关用 */
   size?: "default" | "sm";
 }

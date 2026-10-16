@@ -104,14 +104,7 @@ export async function copilotIsAuthenticated(): Promise<boolean> {
  * Copilot 可用模型
  */
 export type CopilotReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "max"
-  | "ultra";
+  "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 export interface CopilotModel {
   id: string;

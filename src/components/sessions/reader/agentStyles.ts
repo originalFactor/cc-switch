@@ -10,8 +10,7 @@ import type { SessionAppId } from "../utils";
  */
 
 export type ReaderStyleId =
-  | Extract<SessionAppId, "claude" | "codex" | "gemini">
-  | "generic";
+  Extract<SessionAppId, "claude" | "codex" | "gemini"> | "generic";
 
 export interface AgentReaderStyle {
   id: ReaderStyleId;

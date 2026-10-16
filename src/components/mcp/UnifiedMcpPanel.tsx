@@ -810,8 +810,8 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                           .join(listSeparator);
                         const hasDocs = Boolean(
                           server.docs ||
-                            server.homepage ||
-                            mcpPresets.find((item) => item.id === id)?.docs,
+                          server.homepage ||
+                          mcpPresets.find((item) => item.id === id)?.docs,
                         );
                         return (
                           <li

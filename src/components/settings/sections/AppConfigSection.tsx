@@ -92,8 +92,7 @@ export function AppConfigSection({
         label=""
         value={
           settings[DIRECTORY_FIELD[app] as keyof SettingsFormState] as
-            | string
-            | undefined
+            string | undefined
         }
         resolvedValue={resolvedDirs[app]}
         placeholder={t(DIRECTORY_PLACEHOLDER[app])}

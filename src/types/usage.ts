@@ -188,13 +188,7 @@ export interface ProviderLimitStatus {
 }
 
 export type UsageRangePreset =
-  | "today"
-  | "1d"
-  | "7d"
-  | "14d"
-  | "30d"
-  | "all"
-  | "custom";
+  "today" | "1d" | "7d" | "14d" | "30d" | "all" | "custom";
 
 export interface UsageRangeSelection {
   preset: UsageRangePreset;

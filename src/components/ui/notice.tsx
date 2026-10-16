@@ -15,12 +15,7 @@ import { cn } from "@/lib/utils";
  * 应用页的通知槽（NoticeSlot）里排成一列，按严重程度从上到下。
  */
 export type NoticeTone =
-  | "neutral"
-  | "warning"
-  | "danger"
-  | "route"
-  | "stack"
-  | "direct";
+  "neutral" | "warning" | "danger" | "route" | "stack" | "direct";
 
 const TONE: Record<
   NoticeTone,

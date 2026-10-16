@@ -178,11 +178,7 @@ function entriesOf(map: Record<string, unknown>) {
 
 // ─── 粘贴识别 ────────────────────────────────────────────────────────────
 export type PasteFormat =
-  | "mcpServers"
-  | "codex"
-  | "codexToml"
-  | "single"
-  | "named";
+  "mcpServers" | "codex" | "codexToml" | "single" | "named";
 
 export interface PastedServer {
   /** 单个服务器对象没有名称时为空 */
@@ -191,8 +187,7 @@ export interface PastedServer {
 }
 
 export type PasteResult =
-  | { ok: true; format: PasteFormat; items: PastedServer[] }
-  | { ok: false };
+  { ok: true; format: PasteFormat; items: PastedServer[] } | { ok: false };
 
 function recognizeObject(obj: Record<string, unknown>): PasteResult {
   let items: PastedServer[] | null = null;
@@ -262,8 +257,7 @@ export type JsonParseError =
   | { kind: "maskedUnknown"; field: "env" | "headers"; key: string };
 
 export type JsonParseResult =
-  | { ok: true; spec: McpServerSpec }
-  | { ok: false; error: JsonParseError };
+  { ok: true; spec: McpServerSpec } | { ok: false; error: JsonParseError };
 
 function lineOfError(error: unknown, text: string): number | null {
   const message = String((error as Error)?.message ?? "");

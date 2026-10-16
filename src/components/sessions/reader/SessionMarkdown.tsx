@@ -149,8 +149,7 @@ const localPathTarget = (value: string) => {
 };
 
 type LinkTarget =
-  | { kind: "external"; url: string }
-  | { kind: "path"; path: string };
+  { kind: "external"; url: string } | { kind: "path"; path: string };
 
 const resolveLinkTargetValue = (value: string): LinkTarget | null => {
   const url = safeExternalUrl(value);
@@ -160,8 +159,7 @@ const resolveLinkTargetValue = (value: string): LinkTarget | null => {
 };
 
 type ImageTarget =
-  | { kind: "remote"; src: string }
-  | { kind: "path"; path: string };
+  { kind: "remote"; src: string } | { kind: "path"; path: string };
 
 const resolveImageTargetValue = (value: string): ImageTarget | null => {
   const src = safeRemoteImageUrl(value);

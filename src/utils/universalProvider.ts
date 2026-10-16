@@ -156,10 +156,7 @@ export type QuickModelSlot = "sonnet" | "opus" | "fable" | "haiku" | "default";
  * 写的时候按下面的映射转成各应用自己的值；应用不支持的组合直接跳过（不报错）。
  */
 export type QuickApiFormat =
-  | "anthropic"
-  | "openai_chat"
-  | "openai_responses"
-  | "gemini_native";
+  "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
 
 /** 快速配置 API 类型 → 各应用字段值。Claude 系两个字段同名同值。 */
 const QUICK_API_FORMAT_TO_CODEX: Record<
@@ -172,10 +169,7 @@ const QUICK_API_FORMAT_TO_CODEX: Record<
   gemini_native: undefined, // Codex 不认 Gemini 上游
 };
 
-const QUICK_API_FORMAT_TO_GROK: Record<
-  QuickApiFormat,
-  string | undefined
-> = {
+const QUICK_API_FORMAT_TO_GROK: Record<QuickApiFormat, string | undefined> = {
   anthropic: "anthropic_messages",
   openai_chat: "chat_completions",
   openai_responses: "responses",

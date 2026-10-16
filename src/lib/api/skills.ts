@@ -3,11 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppId } from "@/lib/api/types";
 
 export type AppType =
-  | "claude"
-  | "claude-desktop"
-  | "codex"
-  | "gemini"
-  | "grokbuild";
+  "claude" | "claude-desktop" | "codex" | "gemini" | "grokbuild";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
