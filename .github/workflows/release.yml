@@ -43,7 +43,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup pnpm
         env:
@@ -52,17 +52,6 @@ jobs:
           corepack enable
           corepack install
           pnpm --version
-
-      - name: Get pnpm store directory
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
@@ -163,8 +152,18 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      # The backend build embeds dist/index.html at compile time; the Vite output
+      # is what gets embedded, so re-serve a cached build instead of rebuilding.
+      - name: Cache frontend dist
+        id: dist-cache
+        uses: actions/cache@v5
+        with:
+          path: dist
+          key: ${{ runner.os }}-${{ runner.arch }}-dist-${{ hashFiles('src/**', 'tests/**', 'index.html', 'vite.config.ts', 'tailwind.config.cjs', 'postcss.config.cjs', 'package.json') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-dist-
 
       - name: Setup LLVM for Windows ARM64
         if: runner.os == 'Windows' && matrix.arch == 'arm64'
@@ -182,6 +181,10 @@ jobs:
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        if: steps.dist-cache.outputs.cache-hit != 'true'
+        run: pnpm build:renderer
 
       - name: Prepare Tauri signing key
         uses: ./.github/actions/prepare-tauri-signing-key
@@ -411,11 +414,25 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      # The backend build embeds dist/index.html at compile time; the Vite output
+      # is what gets embedded, so re-serve a cached build instead of rebuilding.
+      - name: Cache frontend dist
+        id: dist-cache
+        uses: actions/cache@v5
+        with:
+          path: dist
+          key: ${{ runner.os }}-${{ runner.arch }}-dist-${{ hashFiles('src/**', 'tests/**', 'index.html', 'vite.config.ts', 'tailwind.config.cjs', 'postcss.config.cjs', 'package.json') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-dist-
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        if: steps.dist-cache.outputs.cache-hit != 'true'
+        run: pnpm build:renderer
 
       # 编译只做一次：编译失败是确定性的，重试没有意义。签名和公证依赖 Apple 的服务，
       # 在 macos-release 里单独重试，不会再重编。
@@ -479,11 +496,25 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      # The backend build embeds dist/index.html at compile time; the Vite output
+      # is what gets embedded, so re-serve a cached build instead of rebuilding.
+      - name: Cache frontend dist
+        id: dist-cache
+        uses: actions/cache@v5
+        with:
+          path: dist
+          key: ${{ runner.os }}-${{ runner.arch }}-dist-${{ hashFiles('src/**', 'tests/**', 'index.html', 'vite.config.ts', 'tailwind.config.cjs', 'postcss.config.cjs', 'package.json') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-dist-
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        if: steps.dist-cache.outputs.cache-hit != 'true'
+        run: pnpm build:renderer
 
       - name: Prepare Tauri signing key
         uses: ./.github/actions/prepare-tauri-signing-key
