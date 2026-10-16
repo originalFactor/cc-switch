@@ -2723,7 +2723,6 @@ mod tests {
                 models.grokbuild = Some(GrokBuildModelConfig {
                     model: Some("grok-4.6".to_string()),
                     api_backend: Some("chat_completions".to_string()),
-                    ..Default::default()
                 })
             },
         );
